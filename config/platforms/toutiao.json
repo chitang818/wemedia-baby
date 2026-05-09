@@ -1,0 +1,39 @@
+{
+  "platform_name": "toutiao",
+  "display_name": "头条号",
+  "base_url": "https://mp.toutiao.com",
+  "login_url": "https://mp.toutiao.com",
+  "publish_url": "https://mp.toutiao.com/profile_v4/xigua/upload",
+  "supported_formats": {
+    "video": ["mp4", "mov", "avi", "mkv"]
+  },
+  "max_file_size": {
+    "video": 4294967296
+  },
+  "upload_timeout": 1800,
+  "publish_interval": {
+    "min": 60,
+    "max": 300
+  },
+  "limits": {
+    "title_max_length": 30,
+    "description_max_length": 2000,
+    "max_tags": 5
+  },
+  "anti_risk": {
+    "delay_jitter_ratio": 0.2,
+    "step_interval_base_seconds": 2,
+    "step_interval_jitter_seconds": 2,
+    "cooldown_after_frequent_seconds": 180,
+    "enable_human_like": true,
+    "enable_mouse_wander": true,
+    "enable_browse_before_action": true,
+    "browse_probability": 0.4,
+    "operation_delay_min_seconds": 1,
+    "operation_delay_max_seconds": 5,
+    "operation_delay_before_click": true,
+    "operation_delay_before_type": true,
+    "type_mistake_probability": 0.02
+  },
+  "status": "reserved"
+}

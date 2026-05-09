@@ -1,0 +1,20 @@
+{
+  "platform_name": "bilibili",
+  "display_name": "哔哩哔哩",
+  "base_url": "https://member.bilibili.com",
+  "login_url": "https://passport.bilibili.com/login",
+  "publish_url": "https://member.bilibili.com/platform/upload/video/frame",
+  "supported_formats": {
+    "video": ["mp4", "flv", "avi", "wmv", "mov", "webm", "mkv"]
+  },
+  "max_file_size": {
+    "video": 17179869184
+  },
+  "upload_timeout": 1800,
+  "publish_interval": {
+    "min": 60,
+    "max": 300
+  },
+  "selectors_file": "config/selectors/bilibili_selectors.json",
+  "status": "reserved"
+}

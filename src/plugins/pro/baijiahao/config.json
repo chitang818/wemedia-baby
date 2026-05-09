@@ -1,0 +1,15 @@
+{
+    "platform_id": "baijiahao",
+    "platform_name": "百家号",
+    "login_url": "https://baijiahao.baidu.com",
+    "publish_url": "https://baijiahao.baidu.com/builder/rc/edit?type=video",
+    "cookie_domain": ".baidu.com",
+    "cookie_keys": ["BDUSS", "STOKEN"],
+    "content_types": ["video"],
+    "limits": {
+        "title_max_length": 30,
+        "description_max_length": 5000,
+        "max_tags": 10,
+        "tag_max_length": 20
+    }
+}

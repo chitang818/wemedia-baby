@@ -1,0 +1,67 @@
+{
+  "platform": "douyin",
+  "version": "1.0.0",
+  "last_updated": "2025-12-30",
+  "selectors": {
+    "login": {
+      "login_button": "button.login-btn",
+      "qr_code_area": ".qr-code-container",
+      "phone_input": "input[type='tel']",
+      "password_input": "input[type='password']",
+      "submit_button": "button.submit-btn",
+      "login_indicators": {
+        "avatar": "div[class*='avatar']",
+        "user_info": "div[class*='user-info']",
+        "nickname": "span[class*='nickname']",
+        "profile": "div[class*='profile']",
+        "publish_button": "button[class*='publish']",
+        "upload_button": "button[class*='upload']"
+      }
+    },
+    "login_detection": {
+      "key_cookies": [
+        "sid_ucp_v1",
+        "sessionid_ss",
+        "sid_tt",
+        "sessionid",
+        "passport_csrf_token",
+        "passport_csrf_token_default",
+        "passport_mfa_token",
+        "passport_assist_user",
+        "passport_auth_mix_state",
+        "uid_tt",
+        "uid_tt_ss",
+        "ttwid"
+      ],
+      "min_cookie_count": 2,
+      "detection_methods": ["elements", "cookie", "url", "title"]
+    },
+    "publish": {
+      "publish_button": "button[class*='publish']",
+      "upload_video_button": "button.upload-video",
+      "upload_image_button": "button.upload-image",
+      "file_input": "input[type='file']",
+      "title_input": "input.title-input",
+      "description_textarea": "textarea.description",
+      "tags_input": "input.tags-input",
+      "submit_publish_button": "button.submit-publish",
+      "publish_success_indicator": ".publish-success"
+    },
+    "navigation": {
+      "creator_center": "a[href*='creator']",
+      "content_management": "a[href*='content']",
+      "publish_entry": "button.publish-entry"
+    }
+  },
+  "wait_selectors": {
+    "page_loaded": ".main-container",
+    "upload_complete": ".upload-complete",
+    "publish_success": ".publish-success"
+  },
+  "timeouts": {
+    "page_load": 30,
+    "element_wait": 10,
+    "upload_timeout": 1800
+  }
+}
+

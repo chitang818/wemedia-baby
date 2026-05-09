@@ -1,0 +1,84 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+*~
+
+# 数据文件 (需根据新架构调整)
+data/database.db
+data/database.db-journal
+data/cookies/
+data/keys/
+
+# 日志文件
+logs/
+
+# 配置文件
+# config/*.json (根据需求可能需要保留部分非敏感配置)
+config/license.key
+config/pro_config.json
+config/app_config.json
+.env
+
+# 闭源代码（本地保留，不推送公开仓库）
+src/proprietary/
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 打包文件与产物
+*.exe
+*.msi
+*.dmg
+dist_nuitka/
+*.build/
+# 误放在仓库根的 Nuitka 相关空目录（真实缓存在 %LOCALAPPDATA%\Nuitka\Cache）
+.nuitka-cache/
+tools/ffmpeg/
+
+# Gemini Agent
+.gemini/
+
+# Coverage
+htmlcov/
+.coverage
+
+# Nuitka 崩溃时可能落在仓库根目录的临时报告
+nuitka-crash-report.xml
+
+# pytest
+.pytest_cache/
+
+# pytest 运行产物（由 scripts/run_tests.py 生成，用于刷新 summary.html）
+test-reports/junit.xml

@@ -1,0 +1,20 @@
+{
+  "platform_name": "baijiahao",
+  "display_name": "百家号",
+  "base_url": "https://baijiahao.baidu.com",
+  "login_url": "https://baijiahao.baidu.com",
+  "publish_url": "https://baijiahao.baidu.com/builder/rc/edit?type=video",
+  "supported_formats": {
+    "video": ["mp4", "mov", "avi", "wmv", "flv", "mkv"]
+  },
+  "max_file_size": {
+    "video": 4294967296
+  },
+  "upload_timeout": 1800,
+  "publish_interval": {
+    "min": 60,
+    "max": 300
+  },
+  "selectors_file": "config/selectors/baijiahao_selectors.json",
+  "status": "active"
+}

@@ -1,0 +1,13 @@
+{
+    "platform_id": "kuaishou",
+    "platform_name": "快手",
+    "login_url": "https://cp.kuaishou.com/profile",
+    "cookie_domain": ".kuaishou.com",
+    "cookie_keys": ["userId", "bUserId", "kuaishou.web.cp.api_st", "kuaishou.web.cp.api_ph"],
+    "content_types": ["video"],
+    "limits": {
+        "title_max_length": 50,
+        "description_max_length": 1000,
+        "max_topics": 3
+    }
+}

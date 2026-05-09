@@ -1,0 +1,15 @@
+{
+    "platform_id": "bilibili",
+    "platform_name": "哔哩哔哩",
+    "login_url": "https://passport.bilibili.com/login",
+    "publish_url": "https://member.bilibili.com/platform/upload/video/frame",
+    "cookie_domain": ".bilibili.com",
+    "cookie_keys": ["SESSDATA", "bili_jct", "DedeUserID"],
+    "content_types": ["video"],
+    "limits": {
+        "title_max_length": 80,
+        "description_max_length": 2000,
+        "max_tags": 10,
+        "tag_max_length": 20
+    }
+}

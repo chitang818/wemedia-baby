@@ -1,0 +1,7 @@
+# -*- coding: utf-8 -*-
+"""位置扩展：与抖音「添加标签-位置」打卡/带货模式文案约定（全项目唯一来源）。"""
+
+LOCATION_MODE_CHECKIN = "打卡模式"
+LOCATION_MODE_SELLING = "带货模式"
+LOCATION_MODE_CHOICES = (LOCATION_MODE_CHECKIN, LOCATION_MODE_SELLING)
+LOCATION_MODE_CHOICES_SET = frozenset(LOCATION_MODE_CHOICES)

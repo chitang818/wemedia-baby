@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "description": "内置选择器 JSON 清单（供运维/热更新约定；运行时以各平台插件为准）",
+  "selectors": [
+    {
+      "platform": "douyin",
+      "path": "config/selectors/douyin_selectors.json"
+    }
+  ]
+}

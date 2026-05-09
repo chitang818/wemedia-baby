@@ -1,0 +1,23 @@
+{
+  "platform_name": "xiaohongshu",
+  "display_name": "小红书",
+  "base_url": "https://creator.xiaohongshu.com",
+  "login_url": "https://creator.xiaohongshu.com/login",
+  "publish_url": "https://creator.xiaohongshu.com/publish",
+  "supported_formats": {
+    "video": ["mp4", "mov"],
+    "image": ["jpg", "png"]
+  },
+  "max_file_size": {
+    "video": 1073741824,
+    "image": 10485760
+  },
+  "upload_timeout": 1800,
+  "publish_interval": {
+    "min": 60,
+    "max": 300
+  },
+  "selectors_file": "config/selectors/xiaohongshu_selectors.json",
+  "status": "reserved"
+}
+

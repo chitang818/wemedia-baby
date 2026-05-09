@@ -1,0 +1,447 @@
+/* 全局字体设置 */
+QWidget {
+    font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+    font-size: 14px;
+    color: {{TEXT_PRIMARY}};
+}
+
+/* 标题样式 */
+QLabel#TitleLabel {
+    font-size: 24px;
+    font-weight: bold;
+    color: {{TEXT_PRIMARY}};
+}
+QLabel#SubtitleLabel {
+    font-size: 18px;
+    font-weight: 600;
+    color: {{TEXT_PRIMARY}};
+}
+QLabel#BodyLabel {
+    font-size: 14px;
+    color: {{TEXT_PRIMARY}};
+}
+QLabel#CaptionLabel {
+    font-size: 12px;
+    color: {{TEXT_SECONDARY}};
+}
+
+/* 卡片容器样式 */
+QFrame#CardWidget {
+    background-color: {{BG_CARD}};
+    border: 1px solid {{BORDER_DEFAULT}};
+    border-radius: 8px;
+}
+
+/* 滚动条样式 */
+QScrollBar:vertical {
+    border: none;
+    background: transparent;
+    width: 8px;
+    margin: 0px 0px 0px 0px;
+}
+QScrollBar::handle:vertical {
+    background: {{SCROLL_HANDLE}};
+    min-height: 20px;
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical:hover {
+    background: {{BORDER_DEFAULT}};
+}
+QScrollBar::sub-line:vertical, QScrollBar::add-line:vertical {
+    border: none;
+    background: none;
+    height: 0px;
+}
+QScrollBar:horizontal {
+    border: none;
+    background: transparent;
+    height: 8px;
+    margin: 0px 0px 0px 0px;
+}
+QScrollBar::handle:horizontal {
+    background: {{SCROLL_HANDLE}};
+    min-width: 20px;
+    border-radius: 4px;
+}
+QScrollBar::handle:horizontal:hover {
+    background: {{BORDER_DEFAULT}};
+}
+QScrollBar::sub-line:horizontal, QScrollBar::add-line:horizontal {
+    border: none;
+    background: none;
+    width: 0px;
+}
+
+/* ToolTip：必须用主题占位色显式指定前景/背景。仅用 palette() 或只继承 QWidget{color} 时，
+   Windows 上部分控件（含 Fluent 按钮）悬停易出现原生黑底 + 深色字不可读。 */
+QToolTip {
+    color: {{TEXT_PRIMARY}};
+    background-color: {{BG_CARD}};
+    border: 1px solid {{BORDER_DEFAULT}};
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-size: 12px;
+}
+
+/* 列表和表格选中样式 */
+QTableWidget, QListWidget {
+    background-color: transparent;
+    border: none;
+    gridline-color: {{BORDER_DEFAULT}};
+}
+
+QTableWidget::item:selected, QListWidget::item:selected {
+    background-color: {{BG_SELECTED}};
+    color: {{TEXT_PRIMARY}};
+    border-radius: 4px;
+}
+
+QTableWidget::item:hover, QListWidget::item:hover {
+    background-color: {{BG_HOVER}};
+    border-radius: 4px;
+}
+
+QTableWidget::item:selected:hover, QListWidget::item:selected:hover {
+    background-color: {{BG_SELECTED_HOVER}};
+}
+
+/* Fluent RoundMenu 内下拉列表（ComboBox 的 #comboListWidget）：
+   全局 QListWidget::item 与库内 menu.qss 叠加后行高/边距错乱；库在加条目之前调用 setItemHeight(33)，
+   条目常为默认高度，与指示条绘制位置不一致，出现顶空白过大、文字偏底。 */
+RoundMenu MenuActionListWidget#comboListWidget::item {
+    margin-top: 0px;
+    margin-bottom: 0px;
+    padding: 5px 10px;
+    min-height: 33px;
+    max-height: 33px;
+}
+
+/* 仅 ComboBox 下拉：覆盖全局 QListWidget::item，与固定行高配套 */
+RoundMenu MenuActionListWidget#comboListWidget::item:selected {
+    background-color: {{BG_SELECTED}};
+    border-radius: 5px;
+    color: {{TEXT_PRIMARY}};
+}
+
+RoundMenu MenuActionListWidget#comboListWidget::item:hover {
+    background-color: {{BG_HOVER}};
+    border-radius: 5px;
+    color: {{TEXT_PRIMARY}};
+}
+
+RoundMenu MenuActionListWidget#comboListWidget::item:selected:hover {
+    background-color: {{BG_SELECTED_HOVER}};
+    border-radius: 5px;
+    color: {{TEXT_PRIMARY}};
+}
+
+/* 表头样式 (如果默认不适配) */
+QHeaderView::section {
+    background-color: transparent;
+    color: {{TEXT_SECONDARY}};
+    border: none;
+    border-right: 1px solid transparent;
+    padding: 4px;
+}
+
+/* 浏览器组件样式 */
+#browserToolbar {
+    background-color: {{BG_MAIN}};
+    border-top: 1px solid {{BORDER_DEFAULT}};
+}
+#urlEdit {
+    background-color: {{BG_HOVER}};
+    border: 1px solid {{BORDER_DEFAULT}};
+    border-radius: 16px;
+    padding: 6px 14px;
+    font-size: 13px;
+    color: {{TEXT_PRIMARY}};
+}
+#urlEdit:focus {
+    background-color: {{BG_CARD}};
+    border: 1px solid {{THEME_BLUE}};
+}
+#browserStatusBar {
+    background-color: {{BG_MAIN}};
+    border: none;
+}
+#statusLabel {
+    color: {{TEXT_SECONDARY}};
+    font-size: 11px;
+}
+#progressLabel {
+    color: {{THEME_BLUE}};
+    font-size: 11px;
+}
+
+/* 空白页提示组件 */
+EmptyBrowserWidget {
+    background-color: {{BG_MAIN}};
+    border-radius: 8px;
+}
+
+/* ── 发布列表底部四卡片：统一外观 ─────────────────────── */
+#PublishSettingsCard,
+#TaskOverviewCard,
+#TaskDescriptionCard,
+#PublishLogCard {
+    background-color: {{BG_CARD}};
+    border: 1px solid {{BORDER_DEFAULT}};
+    border-radius: 8px;
+}
+
+/* 统一卡片标题 */
+#UnifiedCardTitle {
+    font-size: 13px;
+    font-weight: 700;
+    color: {{TEXT_PRIMARY}};
+}
+
+/* ── 发布设置卡片 ────────────────────────────────────── */
+#SettingsCardSep {
+    color: {{BORDER_DEFAULT}};
+    margin: 2px 0;
+}
+#SettingsItem {
+    background: transparent;
+}
+#SettingsItemKey {
+    font-size: 11px;
+    color: {{TEXT_SECONDARY}};
+}
+#SettingsItemVal {
+    font-size: 13px;
+    font-weight: 600;
+    color: {{TEXT_PRIMARY}};
+}
+
+/* ── 任务说明卡片（状态徽章在标题栏右侧） ──────────────── */
+#TaskDescriptionStatusBadge {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: 8px;
+    min-height: 22px;
+    margin-left: 8px;
+}
+#TaskDescriptionStatusBadge[status_kind="none"] {
+    background-color: {{INPUT_BG}};
+    color: {{TEXT_SECONDARY}};
+    border: 1px solid {{BORDER_DEFAULT}};
+}
+#TaskDescriptionStatusBadge[status_kind="pending"] {
+    background-color: #FEF3C7;
+    color: #92400E;
+    border: 1px solid rgba(245, 158, 11, 0.5);
+}
+#TaskDescriptionStatusBadge[status_kind="running"] {
+    background-color: {{BG_SELECTED}};
+    color: {{THEME_BLUE}};
+    border: 1px solid rgba(0, 120, 212, 0.35);
+}
+#TaskDescriptionStatusBadge[status_kind="success"] {
+    background-color: #D1FAE5;
+    color: #047857;
+    border: 1px solid rgba(16, 185, 129, 0.45);
+}
+#TaskDescriptionStatusBadge[status_kind="failed"] {
+    background-color: #FEE2E2;
+    color: #B91C1C;
+    border: 1px solid rgba(239, 68, 68, 0.45);
+}
+
+/* 与发布日志 #LogTextEdit 同款的内嵌内容区（圆角边框 + 输入区背景） */
+#TaskDescriptionPanel {
+    background-color: {{INPUT_BG}};
+    border: 1px solid {{BORDER_DEFAULT}};
+    border-radius: 6px;
+}
+
+#TaskDescriptionScroll {
+    border: none;
+    background-color: transparent;
+}
+#TaskDescriptionScrollInner {
+    background-color: transparent;
+}
+
+/* 失败原因：独立横幅（状态以标题栏徽章为准，此处仅原因） */
+#TaskDescriptionFailBanner {
+    background-color: #FEF2F2;
+    border: 1px solid rgba(220, 38, 38, 0.4);
+    border-left: 4px solid #DC2626;
+    border-radius: 8px;
+    margin-bottom: 10px;
+}
+#TaskDescriptionFailIcon {
+    font-size: 20px;
+    color: #B91C1C;
+    min-width: 26px;
+    max-width: 26px;
+    padding-top: 1px;
+}
+#TaskDescriptionFailMessage {
+    font-size: 14px;
+    font-weight: 600;
+    color: #7F1D1D;
+    line-height: 1.55;
+    letter-spacing: 0.2px;
+}
+
+#TaskDescriptionSummary {
+    font-size: 13px;
+    font-weight: 500;
+    color: {{TEXT_PRIMARY}};
+    margin-bottom: 8px;
+}
+
+#TaskDescriptionSectionTitle {
+    font-size: 11px;
+    font-weight: 700;
+    color: {{TEXT_SECONDARY}};
+    letter-spacing: 0.5px;
+    margin-top: 0px;
+    margin-bottom: 4px;
+}
+
+#TaskDescriptionKVKey {
+    font-size: 12px;
+    font-weight: 500;
+    color: {{TEXT_SECONDARY}};
+    padding-top: 1px;
+}
+
+#TaskDescriptionKVVal {
+    font-size: 13px;
+    font-weight: 500;
+    color: {{TEXT_PRIMARY}};
+    line-height: 1.45;
+}
+
+#TaskDescriptionBodyTitle {
+    font-size: 11px;
+    font-weight: 700;
+    color: {{TEXT_SECONDARY}};
+    letter-spacing: 0.5px;
+    margin-top: 14px;
+    margin-bottom: 6px;
+}
+
+/* 面板内正文区：避免与外层 #TaskDescriptionPanel 双边框重叠 */
+#TaskDescriptionPanel #TaskDescriptionBody {
+    background-color: transparent;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 2px;
+    color: {{TEXT_PRIMARY}};
+    font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+#TaskDescriptionExtra[extra_kind="link"] {
+    font-size: 13px;
+    margin-top: 8px;
+    color: {{THEME_BLUE}};
+}
+
+/* ── 发布日志文本框 / 任务说明内嵌面板（视觉统一） ─────────── */
+#LogTextEdit,
+#TaskDescriptionPanel {
+    font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+}
+#LogTextEdit {
+    background-color: {{INPUT_BG}};
+    border: 1px solid {{BORDER_DEFAULT}};
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: {{TEXT_PRIMARY}};
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* 发布时间排期弹窗：配置区与滚动区无深色背景 */
+#PublishTimeScrollArea,
+#PublishTimeConfigSection {
+    background-color: transparent;
+}
+
+/* 发布时间排期弹窗：Tab 栏（批量/单次）区分明显 */
+#PublishTimePivot {
+    background-color: {{BG_HOVER}};
+    border: 1px solid {{BORDER_DEFAULT}};
+    border-radius: 8px;
+    padding: 4px;
+    min-height: 40px;
+}
+#PublishTimePivot QToolButton {
+    border: none;
+    border-radius: 6px;
+    padding: 8px 20px;
+    font-size: 13px;
+    color: {{TEXT_SECONDARY}};
+    background: transparent;
+}
+#PublishTimePivot QToolButton:hover {
+    color: {{TEXT_PRIMARY}};
+    background: rgba(255, 255, 255, 0.5);
+}
+#PublishTimePivot QToolButton:checked,
+#PublishTimePivot QToolButton[selected="true"] {
+    color: {{TEXT_PRIMARY}};
+    font-weight: 600;
+    background-color: {{BG_CARD}};
+}
+
+/* 发布时间排期弹窗：统计卡片 */
+#PublishTimeStatCard {
+    background-color: {{BG_CARD}};
+    border: 1px solid {{BORDER_DEFAULT}};
+    border-radius: 8px;
+    padding: 20px;
+}
+#PublishTimeStatCard #PublishTimeStatTitle {
+    font-size: 13px;
+    font-weight: 700;
+    color: {{TEXT_PRIMARY}};
+}
+#PublishTimeStatCard QLabel {
+    font-size: 12px;
+    color: {{TEXT_PRIMARY}};
+}
+#PublishTimeStatCard #PublishTimeStatCaption {
+    color: {{TEXT_SECONDARY}};
+}
+
+/* 发布时间排期弹窗：排期表格 */
+#PublishTimeTable {
+    background-color: transparent;
+    border: none;
+    gridline-color: {{BORDER_DEFAULT}};
+}
+
+/* 发布时间排期弹窗：时间胶囊 */
+#PublishTimeChip {
+    background-color: {{BG_HOVER}};
+    border-radius: 8px;
+}
+#PublishTimeChip .QLabel#BodyLabel {
+    color: {{TEXT_PRIMARY}};
+    font-size: 13px;
+}
+#PublishTimeChip QToolButton {
+    border: none;
+    color: {{TEXT_SECONDARY}};
+    border-radius: 9px;
+    background: rgba(0, 0, 0, 0.06);
+}
+#PublishTimeChip QToolButton:hover {
+    background: rgba(0, 0, 0, 0.12);
+}
+
+/* 发布时间排期弹窗：已选时间空态 */
+#PublishTimeEmptyTemplate {
+    font-size: 12px;
+    color: {{TEXT_SECONDARY}};
+    padding: 6px 0;
+}

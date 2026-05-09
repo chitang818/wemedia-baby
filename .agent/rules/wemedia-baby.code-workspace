@@ -1,0 +1,13 @@
+{
+  "folders": [
+    {
+      "path": "../..",
+    },
+    {
+      "path": "../../../WeMedia X-Ray",
+    },
+  ],
+  "settings": {
+    "powershell.cwd": "wemedia-baby",
+  },
+}

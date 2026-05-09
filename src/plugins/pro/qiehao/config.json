@@ -1,0 +1,18 @@
+{
+    "platform_id": "qiehao",
+    "platform_name": "企鹅号",
+    "login_url": "https://om.qq.com/",
+    "publish_url": "https://om.qq.com/video/videoPublish",
+    "creator_center_url": "https://om.qq.com/",
+    "cookie_domain": ".qq.com",
+    "cookie_keys": ["omtoken", "omuid", "uin"],
+    "content_types": ["video"],
+    "limits": {
+        "title_min_length": 6,
+        "title_max_length": 30,
+        "description_max_length": 2000,
+        "max_tags": 10,
+        "tag_max_length": 20,
+        "daily_publish_limit": 5
+    }
+}

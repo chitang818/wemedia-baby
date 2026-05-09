@@ -1,0 +1,76 @@
+# 媒小宝 - 依赖包列表
+# Python 3.12 (推荐) 或 3.10+
+# 安装: pip install -r requirements.txt
+
+# ============================================
+# 核心依赖 (必需)
+# ============================================
+
+# 界面框架（6.x 已包含 QtCharts，无需单独安装）
+PySide6>=6.4.0
+
+# UI 组件库（Fluent Design，须与 PySide6 配套）
+PySide6-Fluent-Widgets>=1.5.0
+
+# Qt 与 asyncio 事件循环集成（主程序与 UI 异步槽依赖）
+qasync>=0.27.0
+
+# 加密与安全
+cryptography>=41.0.0
+bcrypt>=4.0.0
+keyring>=24.0.0
+
+# 异步 I/O
+aiohttp>=3.9.0
+aiosqlite>=0.19.0
+aiofiles>=23.0.0
+aiocache>=0.12.0
+
+# ORM 与数据库迁移
+tortoise-orm>=0.21.0
+aerich>=0.7.0
+
+# 数据验证
+pydantic>=2.0.0
+
+# 任务调度
+APScheduler>=3.10.0
+
+# 浏览器自动化
+playwright>=1.40.0
+undetected-playwright>=0.3.0
+
+# 工具库
+Send2Trash>=1.8.0
+PyYAML>=6.0.0
+psutil>=5.9.0
+python-dateutil>=2.8.0
+
+# 视频处理
+ffmpeg-python>=0.2.0
+
+# ============================================
+# 可选依赖 (按需安装)
+# ============================================
+
+tenacity>=8.0.0
+pybreaker>=1.0.0
+watchdog>=3.0.0
+openpyxl>=3.1.0
+
+# ============================================
+# 开发 / 构建 (开发或打包时安装)
+# ============================================
+
+# 测试
+pytest>=7.4.3
+pytest-asyncio>=0.21.1
+pytest-cov>=4.1.0
+pytest-mock>=3.12.0
+pytest-html>=4.0.0
+
+# 打包：快速构建用 PyInstaller，正式构建用 Nuitka（见 scripts/build/）
+pyinstaller>=6.0.0
+nuitka>=2.0.0
+zstandard>=0.21.0
+ordered-set>=4.1.0

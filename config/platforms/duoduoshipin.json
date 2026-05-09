@@ -1,0 +1,25 @@
+{
+  "platform_name": "duoduoshipin",
+  "display_name": "多多视频",
+  "base_url": "https://live.pinduoduo.com",
+  "login_url": "https://live.pinduoduo.com/login/anchor",
+  "publish_url": "https://live.pinduoduo.com/creator/short-video",
+  "supported_formats": {
+    "video": ["mp4", "mov", "avi", "flv", "wmv", "mkv"]
+  },
+  "max_file_size": {
+    "video": 1073741824
+  },
+  "upload_timeout": 600,
+  "publish_interval": {
+    "min": 60,
+    "max": 300
+  },
+  "limits": {
+    "title_max_length": 30,
+    "description_max_length": 500,
+    "max_tags": 5,
+    "tag_max_length": 20
+  },
+  "status": "active"
+}

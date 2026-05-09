@@ -1,0 +1,27 @@
+{
+  "platform_name": "qiehao",
+  "display_name": "企鹅号",
+  "base_url": "https://om.qq.com",
+  "login_url": "https://om.qq.com/",
+  "publish_url": "https://om.qq.com/video/videoPublish",
+  "supported_formats": {
+    "video": ["mp4", "mov", "avi", "flv", "wmv", "mkv", "webm"]
+  },
+  "max_file_size": {
+    "video": 4294967296
+  },
+  "upload_timeout": 1200,
+  "publish_interval": {
+    "min": 60,
+    "max": 300
+  },
+  "limits": {
+    "title_min_length": 6,
+    "title_max_length": 30,
+    "description_max_length": 2000,
+    "max_tags": 10,
+    "tag_max_length": 20,
+    "daily_publish_limit": 5
+  },
+  "status": "active"
+}
