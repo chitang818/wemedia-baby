@@ -53,15 +53,19 @@ OSS vs Pro 功能对比（精简版）
 
 ![支持平台](resources/images/02-support-platform.png)
 
-**分组功能**
+单视频任务创建页面
 
-![分组功能](resources/images/03-grouping-function.png)
+![单视频任务创建](resources/images/03-grouping-function.png)
 
-**任务创建与发布列表（发布管理）**
+**批量视频任务创建**
+
+![批量发布任务创建](resources/images/04-批量发布任务创建.png)
+
+**发布列表（发布管理）**
 
 ![任务创建与发布列表](resources/images/04-publish-operation-interface.png)
 
-**视频管理**
+**媒体库**
 
 ![视频管理](resources/images/05-video-management.png)
 
