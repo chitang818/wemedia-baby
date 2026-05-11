@@ -15,6 +15,10 @@ from .base_page import BasePage
 
 
 try:
+    from config.feature_flags import FeatureFlags
+    if not FeatureFlags.is_pro_build():
+        raise Exception("Force open source mode")
+        
     from src.proprietary.ui.personal_center_page import PersonalCenterPage as _ImplPersonalCenterPage
     PersonalCenterPage = _ImplPersonalCenterPage
 except Exception:

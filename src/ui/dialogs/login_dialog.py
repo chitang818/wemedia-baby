@@ -13,6 +13,10 @@ from PySide6.QtCore import Signal
 
 
 try:
+    from config.feature_flags import FeatureFlags
+    if not FeatureFlags.is_pro_build():
+        raise Exception("Force open source mode")
+        
     from src.proprietary.ui.login_dialog import LoginDialog as _ImplLoginDialog
     LoginDialog = _ImplLoginDialog
 except Exception:
