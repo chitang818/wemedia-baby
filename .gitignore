@@ -49,12 +49,12 @@ config/auth_config.json
 .env
 
 # 闭源商业代码及内部文档（极其重要：禁止推送到公开的开源仓库）
+# 注意：src/services/auth/ 和 src/services/subscription/ 已改为开源包装层，不再忽略
+# 真实闭源实现均已迁移至 src/proprietary/（已在下方忽略）
 docs/
 src/proprietary/
 src/plugins/pro/
 src/pro_features/
-src/services/auth/
-src/services/subscription/
 
 # 操作系统
 .DS_Store
