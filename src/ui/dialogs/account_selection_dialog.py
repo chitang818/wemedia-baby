@@ -3,6 +3,7 @@
 文件路径：src/ui/dialogs/account_selection_dialog.py
 """
 import asyncio
+from typing import Any, Optional, Set
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QStackedWidget, QAbstractItemView, QApplication, QTableWidgetItem, QHeaderView, QGridLayout,
@@ -310,6 +311,12 @@ class AccountSelectionDialog(AppMessageBoxBase):
         self.selection_result = None
         self._selected_accounts = []
         self._selected_groups = []
+
+        # 单任务等场景：左侧标签仅筛选，不写入多选集合、不点亮确认
+        self._tags_filter_only = False
+        self._tag_filter_account_ids: Optional[Set[Any]] = None
+        self._tag_filter_group_ids: Optional[Set[Any]] = None
+        self._accounts_after_platform: list = []
         
         # 记录最后显示的提示条，防止重复弹出
         self._last_info_bar = None
@@ -424,7 +431,17 @@ class AccountSelectionDialog(AppMessageBoxBase):
                 child.style().unpolish(child)
                 child.style().polish(child)
 
-    def set_data(self, accounts, groups=None, show_group_nav=True, multi_select=False, ctrl_multi_select=False, initial_account_ids=None, initial_group_ids=None):
+    def set_data(
+        self,
+        accounts,
+        groups=None,
+        show_group_nav=True,
+        multi_select=False,
+        ctrl_multi_select=False,
+        initial_account_ids=None,
+        initial_group_ids=None,
+        tags_filter_only: bool = False,
+    ):
         """设置数据并初始化
         
         Args:
@@ -435,6 +452,7 @@ class AccountSelectionDialog(AppMessageBoxBase):
             ctrl_multi_select: 非 multi_select 时，是否允许 Ctrl+鼠标点击多选账号
             initial_account_ids: 初始勾选的账号 ID 列表
             initial_group_ids: 初始勾选的账号组 ID 列表
+            tags_filter_only: 为 True 且非多选时，左侧标签只筛选列表，须点右侧行才能确认
         """
         self.all_accounts = accounts
         self.groups = groups or []
@@ -443,6 +461,9 @@ class AccountSelectionDialog(AppMessageBoxBase):
         self._account_checked_ids = set(initial_account_ids or [])
         self._group_checked_ids = set(initial_group_ids or [])
         self._filtered_accounts = list(accounts or [])
+        self._tags_filter_only = bool(tags_filter_only) and (not multi_select)
+        self._tag_filter_account_ids = None
+        self._tag_filter_group_ids = None
         
         # 账号列表选择模式：多选时用 NoSelection + 行内复选框；否则支持单选或 Ctrl 多选
         if multi_select:
@@ -465,14 +486,14 @@ class AccountSelectionDialog(AppMessageBoxBase):
         self._pivot.addItem(
             routeKey="accounts",
             text="账号列表",
-            onClick=lambda: self._set_current_page(0),
+            onClick=lambda: self._set_current_page(0, True),
         )
         # 账号组（可选）
         if bool(show_group_nav):
             self._pivot.addItem(
                 routeKey="groups",
                 text="账号组",
-                onClick=lambda: self._set_current_page(1),
+                onClick=lambda: self._set_current_page(1, True),
             )
         
         # 渲染内容
@@ -547,13 +568,27 @@ class AccountSelectionDialog(AppMessageBoxBase):
         except Exception:
             pass
 
-    def _set_current_page(self, page_index: int) -> None:
-        """切换账号列表/账号组页面（由顶部 Tab 触发）。"""
+    def _set_current_page(self, page_index: int, clear_tag_filter_on_pivot: bool = True) -> None:
+        """切换账号列表/账号组页面（由顶部 Tab 或标签逻辑触发）。"""
+        try:
+            prev_idx = int(self.content_stack.currentIndex())
+        except Exception:
+            prev_idx = 0
         # 防御：未启用账号组时不允许切到 index=1
         if page_index not in (0, 1):
             page_index = 0
         if page_index == 1 and self.content_stack.count() < 2:
             page_index = 0
+
+        if (
+            getattr(self, "_tags_filter_only", False)
+            and clear_tag_filter_on_pivot
+            and prev_idx != page_index
+        ):
+            self._tag_filter_account_ids = None
+            self._tag_filter_group_ids = None
+            self._active_tag_id = None
+            self._clear_tags_highlight()
 
         self.content_stack.setCurrentIndex(page_index)
         # 以实际切页结果为准（部分环境下 setCurrentIndex 可能被防御逻辑回退）
@@ -571,6 +606,32 @@ class AccountSelectionDialog(AppMessageBoxBase):
             pass
         self._sync_pivot_selection()
         self._on_page_changed(actual_index)
+        if getattr(self, "_tags_filter_only", False):
+            self._recompute_filtered_accounts()
+            self._render_accounts()
+            self._render_groups()
+
+    def _recompute_filtered_accounts(self) -> None:
+        """在平台筛选结果上叠加「标签筛选」（仅 tags_filter_only 时生效）。"""
+        base = getattr(self, "_accounts_after_platform", None)
+        if base is None:
+            base = list(self.all_accounts or [])
+            self._accounts_after_platform = base
+        tids = getattr(self, "_tag_filter_account_ids", None)
+        if getattr(self, "_tags_filter_only", False) and tids is not None:
+            self._filtered_accounts = [a for a in base if a.get("id") in tids]
+        else:
+            self._filtered_accounts = list(base)
+
+    def _groups_for_table(self) -> list:
+        """账号组表格数据源（可叠加标签筛选）。"""
+        base = list(self.groups or [])
+        if not getattr(self, "_tags_filter_only", False):
+            return base
+        gids = getattr(self, "_tag_filter_group_ids", None)
+        if gids is None:
+            return base
+        return [g for g in base if g.get("id") in gids]
 
     def _load_tags_async(self):
         try:
@@ -614,23 +675,31 @@ class AccountSelectionDialog(AppMessageBoxBase):
         self._platform_filter.blockSignals(False)
 
     def _on_platform_filter_changed(self, text: str):
+        if getattr(self, "_tags_filter_only", False):
+            self._tag_filter_account_ids = None
+            self._tag_filter_group_ids = None
+            self._active_tag_id = None
+            self._clear_tags_highlight()
         self._apply_account_filter()
 
     def _apply_account_filter(self):
-        """根据平台筛选重渲染账号表格"""
+        """根据平台筛选重渲染账号表格（并可叠加标签筛选）"""
         from src.utils.platform_names import PLATFORM_ID_TO_NAME as platform_name_map
         wanted = self._platform_filter.currentText() if hasattr(self, "_platform_filter") else "全部"
         if wanted == "全部":
-            self._filtered_accounts = list(self.all_accounts or [])
+            self._accounts_after_platform = list(self.all_accounts or [])
         else:
             # wanted 为中文名，反查 platform_id
             pid = next((k for k, v in platform_name_map.items() if v == wanted), wanted)
-            self._filtered_accounts = [a for a in (self.all_accounts or []) if a.get("platform") == pid]
+            self._accounts_after_platform = [a for a in (self.all_accounts or []) if a.get("platform") == pid]
+        self._recompute_filtered_accounts()
         self._render_accounts()
         self._update_select_all_state()
         self._render_tags()
         self._refresh_account_tags_column()
         self._refresh_media_stats_from_cache()
+        if getattr(self, "_tags_filter_only", False):
+            self._render_groups()
 
     def _update_select_all_state(self):
         """根据当前筛选结果更新全选状态（两态）"""
@@ -1036,7 +1105,7 @@ class AccountSelectionDialog(AppMessageBoxBase):
 
         from src.utils.platform_names import get_platform_display_name
 
-        groups = list(self.groups or [])
+        groups = self._groups_for_table()
         t.setRowCount(len(groups))
         for row, group in enumerate(groups):
             # 序号
@@ -1147,8 +1216,11 @@ class AccountSelectionDialog(AppMessageBoxBase):
         self.selection_result = None
         if self._multi_select:
             self._on_multi_select_changed()
-        # 底部工具条：多选模式下在账号/账号组两页都显示（账号组选标签时也要看到统计与全选）
-        self._toolbar.setVisible(bool(self._multi_select and page_index in (0, 1)))
+        # 底部工具条：多选时账号/账号组两页都显示；单选时仅在「账号列表」页显示（含平台筛选）
+        if self._multi_select:
+            self._toolbar.setVisible(page_index in (0, 1))
+        else:
+            self._toolbar.setVisible(page_index == 0)
 
         is_accounts_page = bool(page_index == 0)
         is_groups_page = bool(page_index == 1)
@@ -1434,9 +1506,12 @@ class AccountSelectionDialog(AppMessageBoxBase):
         # 左侧标签面板：账号列表与账号组页都显示（提高空间利用与一致性）
         if hasattr(self, "_tags_panel") and self._tags_panel is not None:
             self._tags_panel.setVisible(True)
-            
-        visible_acc_ids = {a.get('id') for a in self._filtered_accounts if a.get('id') is not None}
-        visible_grp_ids = {g.get('id') for g in self.groups if g.get('id') is not None}
+
+        plat_acc = getattr(self, "_accounts_after_platform", None)
+        if plat_acc is None:
+            plat_acc = self._filtered_accounts or []
+        visible_acc_ids = {a.get("id") for a in plat_acc if a.get("id") is not None}
+        visible_grp_ids = {g.get("id") for g in (self.groups or []) if g.get("id") is not None}
         
         # 清空旧按钮
         while self._tags_layout.count():
@@ -1539,9 +1614,12 @@ class AccountSelectionDialog(AppMessageBoxBase):
 
     def _update_tags_ui(self):
         """根据当前的选中集合，更新快捷标签的高亮状态"""
-        visible_acc_ids = {a.get('id') for a in self._filtered_accounts if a.get('id') is not None}
-        visible_grp_ids = {g.get('id') for g in self.groups if g.get('id') is not None}
-        
+        plat_acc = getattr(self, "_accounts_after_platform", None)
+        if plat_acc is None:
+            plat_acc = self._filtered_accounts or []
+        visible_acc_ids = {a.get("id") for a in plat_acc if a.get("id") is not None}
+        visible_grp_ids = {g.get("id") for g in (self.groups or []) if g.get("id") is not None}
+
         # 若用户是通过“点击某个标签”进入的单选状态，则优先只高亮该标签，避免多个标签同时点亮造成困扰
         active_id = getattr(self, "_active_tag_id", None)
         if active_id is not None and active_id in getattr(self, "_tag_buttons", {}):
@@ -1550,6 +1628,16 @@ class AccountSelectionDialog(AppMessageBoxBase):
                 if btn.isChecked() != should:
                     btn.blockSignals(True)
                     btn.setChecked(should)
+                    btn.blockSignals(False)
+            return
+
+        if getattr(self, "_tags_filter_only", False):
+            for btn in list(getattr(self, "_tag_buttons", {}).values()):
+                if not isinstance(btn, TogglePushButton):
+                    continue
+                if btn.isChecked():
+                    btn.blockSignals(True)
+                    btn.setChecked(False)
                     btn.blockSignals(False)
             return
 
@@ -1582,13 +1670,46 @@ class AccountSelectionDialog(AppMessageBoxBase):
         """点击标签，快捷选中或取消包含的对象"""
         tag_acc_ids = {a.get('id') for a in tag.get('accounts', [])}
         tag_grp_ids = {g.get('id') for g in tag.get('groups', [])}
-        
-        visible_acc_ids = {a.get('id') for a in self._filtered_accounts if a.get('id') is not None}
-        visible_grp_ids = {g.get('id') for g in self.groups if g.get('id') is not None}
-        
+
+        plat_acc = getattr(self, "_accounts_after_platform", None)
+        if plat_acc is None:
+            plat_acc = self._filtered_accounts or []
+        visible_acc_ids = {a.get("id") for a in plat_acc if a.get("id") is not None}
+        visible_grp_ids = {g.get("id") for g in (self.groups or []) if g.get("id") is not None}
+
         valid_accs = tag_acc_ids & visible_acc_ids
         valid_grps = tag_grp_ids & visible_grp_ids
-        
+
+        if getattr(self, "_tags_filter_only", False):
+            self.selection_result = None
+            self.yesButton.setEnabled(False)
+            if not checked:
+                self._tag_filter_account_ids = None
+                self._tag_filter_group_ids = None
+                self._active_tag_id = None
+                self._clear_tags_highlight()
+                self._recompute_filtered_accounts()
+                self._render_accounts()
+                self._render_groups()
+                self._render_tags()
+                self.account_table.scrollToTop()
+                return
+            if valid_grps:
+                self._tag_filter_account_ids = None
+                self._tag_filter_group_ids = set(valid_grps)
+                self._set_current_page(1, False)
+            elif valid_accs:
+                self._tag_filter_account_ids = set(valid_accs)
+                self._tag_filter_group_ids = None
+                self._set_current_page(0, False)
+            else:
+                return
+            if self.content_stack.currentIndex() == 0:
+                self.account_table.scrollToTop()
+            else:
+                self.group_table.scrollToTop()
+            return
+
         if checked:
             # 体验优化：在「账号组」页点击标签但实际命中的是账号时，自动切回账号列表页；
             # 命中账号组时则切到账号组页，避免用户感觉“点击没反应”。

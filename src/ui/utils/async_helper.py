@@ -26,7 +26,9 @@
 
 import asyncio
 from typing import Any, Awaitable, Callable, Optional
-from PySide6.QtCore import QThread, Signal, QObject, QTimer
+
+from PySide6.QtCore import QThread, Signal, QObject, QTimer, Qt
+from PySide6.QtWidgets import QDialog
 import logging
 
 logger = logging.getLogger(__name__)
@@ -72,6 +74,35 @@ def run_async_from_ui(async_fn: Callable) -> Optional[asyncio.Task]:
     except Exception as e:
         logger.exception("run_async_from_ui 异常: %s", e)
         return None
+
+
+async def await_qdialog_finished(dialog: QDialog, *, window_modal: bool = True) -> int:
+    """显示 ``QDialog`` 并异步等待关闭，返回 ``finished(int)`` 的结果码（与 ``exec()`` 返回值含义一致）。
+
+    在 ``@asyncSlot`` / qasync 协程内请**勿**使用 ``dialog.exec()``：会进入 Qt 嵌套模态循环，
+    与 asyncio 任务调度冲突，常见报错 ``Cannot enter into task ... while another task ... is being executed``。
+    应改用 ``show()`` + 本函数 ``await``。
+
+    Args:
+        dialog: 已配置好的对话框实例（尚未 ``show`` / ``exec``）。
+        window_modal: 是否设为 ``WindowModal``，默认真以保持与常见 ``exec()`` 交互一致。
+
+    Returns:
+        ``QDialog.DialogCode`` 风格的整数码（Accepted / Rejected 等）。
+    """
+    if window_modal:
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+
+    loop = asyncio.get_event_loop()
+    future = loop.create_future()
+
+    def on_finished(code: int) -> None:
+        if not future.done():
+            future.set_result(int(code))
+
+    dialog.finished.connect(on_finished)
+    dialog.show()
+    return await future
 
 
 class AsyncWorker(QThread):

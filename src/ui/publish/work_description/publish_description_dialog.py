@@ -44,6 +44,7 @@ from src.infrastructure.common.config.app_config_keys import (
     KEY_BATCH_PUBLISH,
     BATCH_DECLARE_ORIGINAL,
     BATCH_PUBLISH_DESCRIPTION,
+    BATCH_WORK_DECLARATION,
 )
 from src.infrastructure.common.config.app_config_merge import merge_app_config, read_app_config_from_disk_sync
 from src.services.copywriting.copywriting_match_service import CopywritingMatchMode
@@ -143,6 +144,92 @@ def save_persisted_declare_original(checked: bool) -> None:
         run_async_from_ui(_save)
     except Exception as e:
         logger.warning("保存声明原创勾选失败: %s", e)
+
+
+def load_persisted_work_declaration() -> dict:
+    """读取批量页「作品申明」弹窗中的抖音/快手/小红书选项（与 privacy_settings 键一致）。"""
+    from src.domain.publish.work_declaration import (
+        DEFAULT_DOUYIN_VALUE,
+        DEFAULT_KUAISHOU_VALUE,
+        DEFAULT_XHS_CONTENT_ATTR,
+        KEY_DOUYIN,
+        KEY_DOUYIN_AUTO,
+        KEY_KUAISHOU,
+        KEY_KUAISHOU_AUTO,
+        KEY_XHS_CONTENT_ATTR,
+        KEY_XHS_CONTENT_ATTR_AUTO,
+        KEY_XHS_ORIGINAL,
+        normalize_douyin_value,
+        normalize_kuaishou_value,
+        normalize_xhs_content_attr,
+    )
+
+    bp = _batch_publish_root()
+    wd = bp.get(BATCH_WORK_DECLARATION)
+    if not isinstance(wd, dict):
+        return {
+            KEY_DOUYIN: DEFAULT_DOUYIN_VALUE,
+            KEY_KUAISHOU: DEFAULT_KUAISHOU_VALUE,
+            KEY_DOUYIN_AUTO: False,
+            KEY_KUAISHOU_AUTO: False,
+            KEY_XHS_ORIGINAL: False,
+            KEY_XHS_CONTENT_ATTR: DEFAULT_XHS_CONTENT_ATTR,
+            KEY_XHS_CONTENT_ATTR_AUTO: False,
+        }
+    return {
+        KEY_DOUYIN: normalize_douyin_value(str(wd.get(KEY_DOUYIN) or "") or None),
+        KEY_KUAISHOU: normalize_kuaishou_value(str(wd.get(KEY_KUAISHOU) or "") or None),
+        KEY_DOUYIN_AUTO: _read_pref_bool(wd.get(KEY_DOUYIN_AUTO), False),
+        KEY_KUAISHOU_AUTO: _read_pref_bool(wd.get(KEY_KUAISHOU_AUTO), False),
+        KEY_XHS_ORIGINAL: _read_pref_bool(wd.get(KEY_XHS_ORIGINAL), False),
+        KEY_XHS_CONTENT_ATTR: normalize_xhs_content_attr(
+            str(wd.get(KEY_XHS_CONTENT_ATTR) or "") or None
+        ),
+        KEY_XHS_CONTENT_ATTR_AUTO: _read_pref_bool(wd.get(KEY_XHS_CONTENT_ATTR_AUTO), False),
+    }
+
+
+def save_persisted_work_declaration(d: dict) -> None:
+    """保存批量页作品申明（抖音/快手/小红书枚举及自动设置开关）。"""
+    from src.domain.publish.work_declaration import (
+        KEY_DOUYIN,
+        KEY_DOUYIN_AUTO,
+        KEY_KUAISHOU,
+        KEY_KUAISHOU_AUTO,
+        KEY_XHS_CONTENT_ATTR,
+        KEY_XHS_CONTENT_ATTR_AUTO,
+        KEY_XHS_ORIGINAL,
+    )
+    from src.ui.utils.async_helper import run_async_from_ui
+
+    async def _save() -> None:
+        bp = _batch_publish_root_for_write()
+        cur = bp.get(BATCH_WORK_DECLARATION)
+        merged = dict(cur) if isinstance(cur, dict) else {}
+        if isinstance(d, dict):
+            if KEY_DOUYIN in d:
+                merged[KEY_DOUYIN] = d[KEY_DOUYIN]
+            if KEY_KUAISHOU in d:
+                merged[KEY_KUAISHOU] = d[KEY_KUAISHOU]
+            if KEY_DOUYIN_AUTO in d:
+                merged[KEY_DOUYIN_AUTO] = bool(d[KEY_DOUYIN_AUTO])
+            if KEY_KUAISHOU_AUTO in d:
+                merged[KEY_KUAISHOU_AUTO] = bool(d[KEY_KUAISHOU_AUTO])
+            if KEY_XHS_ORIGINAL in d:
+                merged[KEY_XHS_ORIGINAL] = bool(d[KEY_XHS_ORIGINAL])
+            if KEY_XHS_CONTENT_ATTR in d:
+                merged[KEY_XHS_CONTENT_ATTR] = str(d[KEY_XHS_CONTENT_ATTR] or "")
+            if KEY_XHS_CONTENT_ATTR_AUTO in d:
+                merged[KEY_XHS_CONTENT_ATTR_AUTO] = bool(d[KEY_XHS_CONTENT_ATTR_AUTO])
+        bp[BATCH_WORK_DECLARATION] = merged
+        ok = await merge_app_config(get_registered_config_center(), {KEY_BATCH_PUBLISH: bp})
+        if not ok:
+            logger.warning("保存作品申明失败: ConfigCenter 不可用")
+
+    try:
+        run_async_from_ui(_save)
+    except Exception as e:
+        logger.warning("保存作品申明失败: %s", e)
 
 
 def load_persisted_publish_description_prefs() -> dict:

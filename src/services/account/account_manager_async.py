@@ -20,6 +20,7 @@ from src.domain.repositories.account_repository_async import AccountRepositoryAs
 from src.utils.file_utils import ensure_directory_exists
 from src.utils.date_utils import get_current_datetime_str
 from src.infrastructure.common.path_manager import PathManager
+from src.infrastructure.common.material_library_manager import MaterialLibraryManager
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +58,6 @@ class AccountManagerAsync:
     async def _try_sync_material_library(self) -> None:
         """已配置媒体库时，同步「账号库」下账号与账号组素材目录；失败不抛给业务层。"""
         try:
-            from src.infrastructure.common.material_library_manager import MaterialLibraryManager
-
             await MaterialLibraryManager.sync_platform_account_tree()
         except Exception as e:
             self.logger.debug("同步媒体库目录树失败（可忽略）: %s", e)
@@ -582,7 +581,11 @@ class AccountManagerAsync:
                             platform_username,
                         )
                 except Exception as _rename_e:
-                    self.logger.warning("账号素材目录重命名失败: %s", _rename_e)
+                    self.logger.warning(
+                        "账号素材目录重命名失败: %s",
+                        _rename_e,
+                        exc_info=True,
+                    )
                 
                 # 发布更新事件
                 if self.event_bus:

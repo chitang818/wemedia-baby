@@ -9,9 +9,11 @@ from .publish_description_dialog import (
     clear_publish_description_dialog_session,
     load_persisted_declare_original,
     load_persisted_publish_description_prefs,
+    load_persisted_work_declaration,
     reset_persisted_publish_description_prefs,
     save_persisted_declare_original,
     save_persisted_publish_description_prefs,
+    save_persisted_work_declaration,
 )
 
 __all__ = [
@@ -21,6 +23,8 @@ __all__ = [
     "PublishDescriptionState",
     "load_persisted_declare_original",
     "save_persisted_declare_original",
+    "load_persisted_work_declaration",
+    "save_persisted_work_declaration",
     "load_persisted_publish_description_prefs",
     "save_persisted_publish_description_prefs",
     "clear_publish_description_dialog_session",

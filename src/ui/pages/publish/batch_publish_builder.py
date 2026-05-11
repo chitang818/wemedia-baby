@@ -11,10 +11,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.domain.publish.work_declaration import strip_non_wechat_original_declaration
 from src.ui.pages.publish.batch_preview_exclusion import PreviewExclusionSet
 from src.ui.pages.publish.batch_publish_targets import (
     BatchSelectedAccountsExpandResult,
@@ -68,19 +68,6 @@ def validate_tasks(tasks: List[Dict[str, Any]]) -> Optional[str]:
     return None
 
 
-def strip_non_wechat_original_declaration(tasks: List[Dict[str, Any]]) -> None:
-    """仅视频号支持声明原创，其他平台去除该标记（原地修改）。"""
-    for task in tasks:
-        if task.get("platform", "") != "wechat_video":
-            try:
-                ps = json.loads(task.get("privacy_settings", "{}"))
-                if ps.get("is_original"):
-                    ps["is_original"] = False
-                    task["privacy_settings"] = json.dumps(ps, ensure_ascii=False)
-            except Exception:
-                pass
-
-
 async def build_publish_tasks_for_batch(
     selected_accounts: List[Dict[str, Any]],
     video_list: List[Dict[str, Any]],
@@ -101,7 +88,7 @@ async def build_publish_tasks_for_batch(
       3. 排除过滤（与预览一致）
       4. 逐任务校验（文件存在 + 标题长度）
       5. 去重守卫（可选，需传入 publish_record_repo）
-      6. 原创声明剥离（非视频号）
+      6. 作品申明字段按平台裁剪（仅保留各任务对应平台的申明键）
 
     Args:
         selected_accounts: 批量页已选账号列表（含账号组占位）。
@@ -166,7 +153,7 @@ async def build_publish_tasks_for_batch(
             result.tasks = []
             return result
 
-    # Step 6: 原创声明剥离
+    # Step 6: privacy_settings 申明字段按平台裁剪
     strip_non_wechat_original_declaration(tasks)
 
     result.tasks = tasks

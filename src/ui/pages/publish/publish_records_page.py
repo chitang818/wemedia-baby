@@ -42,6 +42,10 @@ from src.ui.pages.publish.task_field_display import (
     format_cart_info_table_cell,
     task_field_str_or_dash,
 )
+from src.domain.publish.work_declaration import (
+    ellipsize,
+    format_work_declaration_table_cell,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -712,7 +716,7 @@ class PublishRecordsPage(BasePage):
             "作品标题",
             "作品描述",
             "定时时间",
-            "声明原创",
+            "作品申明",
             "音乐",
             "购物车",
             "团购",
@@ -743,7 +747,7 @@ class PublishRecordsPage(BasePage):
         self.records_table.setColumnWidth(self.COL_TITLE, 100)          # 作品标题  省略号截断
         self.records_table.setColumnWidth(self.COL_DESCRIPTION, 140)    # 作品描述  省略号截断
         self.records_table.setColumnWidth(self.COL_SCHEDULED_TIME, 120) # 定时时间  立即发布/排期
-        self.records_table.setColumnWidth(self.COL_ORIGINAL, 70)        # 声明原创  ✅/—
+        self.records_table.setColumnWidth(self.COL_ORIGINAL, 118)       # 作品申明
         self.records_table.setColumnWidth(self.COL_MUSIC, 100)          # 音乐      歌曲名/—
         self.records_table.setColumnWidth(self.COL_CART, 100)           # 购物车    短标题/✅/—
         self.records_table.setColumnWidth(self.COL_GROUP_BUY, 55)       # 团购      ✅/—
@@ -1152,15 +1156,15 @@ class PublishRecordsPage(BasePage):
         table.setItem(row, self.COL_SCHEDULED_TIME, item_sched)
 
         platform_id = (r.get("platform") or "").strip()
-        is_original = False
-        if platform_id == 'wechat_video':
-            try:
-                ps_raw = r.get('privacy_settings') or '{}'
-                ps = _json_module.loads(ps_raw) if isinstance(ps_raw, str) else (ps_raw or {})
-                is_original = bool(ps.get('is_original', False))
-            except Exception:
-                pass
-        item_orig = QTableWidgetItem("✅ 原创" if is_original else TASK_FIELD_EMPTY_DISPLAY)
+        try:
+            full_wd = format_work_declaration_table_cell(
+                platform_id, r.get("privacy_settings"), empty_display=TASK_FIELD_EMPTY_DISPLAY,
+            )
+        except Exception:
+            full_wd = TASK_FIELD_EMPTY_DISPLAY
+        short_wd = ellipsize(full_wd, 14)
+        item_orig = QTableWidgetItem(short_wd)
+        item_orig.setToolTip(full_wd if full_wd and full_wd != TASK_FIELD_EMPTY_DISPLAY else "")
         item_orig.setTextAlignment(_cell_center)
         table.setItem(row, self.COL_ORIGINAL, item_orig)
 

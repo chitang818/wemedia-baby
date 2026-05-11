@@ -35,7 +35,7 @@ class NavigateHomeStep(BasePublishStep):
     async def execute(self, page: Page, file_path: str, metadata: Dict[str, Any]) -> StepOutcome:
         await self._await_pause(metadata)
         logger.info(f"导航至抖音创作者首页: {self.home_url}")
-        USER_LOG.info(f"[步骤1/8 导航首页] ▶ 地址={self.home_url}")
+        USER_LOG.info(f"[步骤1/9 导航首页] ▶ 地址={self.home_url}")
 
         speed_rate = max(0.5, float(metadata.get("speed_rate", 1.0)))
         wait_after_nav = int(3000 * speed_rate)
@@ -45,7 +45,7 @@ class NavigateHomeStep(BasePublishStep):
 
             current_url = page.url
             logger.info(f"当前页面 URL: {current_url}")
-            USER_LOG.info(f"[步骤1/8 导航首页] ✓ 已打开 ({current_url})")
+            USER_LOG.info(f"[步骤1/9 导航首页] ✓ 已打开 ({current_url})")
 
             # 1. 检测风控拦截和登录弹窗
             for selector in Selectors.SECURITY["RISK_MODAL"]:

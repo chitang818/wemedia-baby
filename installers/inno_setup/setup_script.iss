@@ -20,7 +20,7 @@
 ; 快捷方式及安装完成"运行"按钮显示的中文名称
 #define MyAppShortcutName "媒小宝"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.2.9"
+  #define MyAppVersion "1.3.1"
 #endif
 #define MyAppPublisher "MediaBaby Team"
 #define MyAppURL "https://github.com/your-repo/wemedia-baby"
@@ -29,7 +29,7 @@
 #define MyAppUninstallRegSubKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\E6F78A12-3456-7890-ABCD-EF1234567890_is1"
 
 ; 动态判断快捷方式外部图标路径：PyInstaller(Fast)使用 _internal 内部环境层，Nuitka(Secure)使用根目录
-#if OutputPrefix == "Fast"
+#if Copy(OutputPrefix, 1, 4) == "Fast"
   #define IconFallbackPath "{app}\_internal\resources\icons\app.ico"
 #else
   #define IconFallbackPath "{app}\resources\icons\app.ico"

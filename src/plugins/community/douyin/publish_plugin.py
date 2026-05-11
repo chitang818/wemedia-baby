@@ -100,26 +100,28 @@ class DouyinPublishPlugin(PublishPluginInterface):
             from .steps.step_02_entry import EnterPublishEntryStep
             from .steps.step_03_upload import UploadMediaStep
             from .steps.step_04_description import MetadataFillStep
-            from .steps.step_08_submit import SubmitStep
+            from .steps.step_09_submit import SubmitStep
             from .steps.step_05_cover_video import CoverVideoStep
             from .steps.step_05_cover_image import CoverImageStep
-            from .steps.step_06b_extra_info import ExtraInfoCommonStep
-            from .steps.step_06a_music import SelectMusicStep
-            from .steps.step_06c_trending import TrendingStep
-            from .steps.step_07_settings import PublishSettingsStep
+            from .steps.step_06_work_declaration import WorkDeclarationStep
+            from .steps.step_07b_extra_info import ExtraInfoCommonStep
+            from .steps.step_07a_music import SelectMusicStep
+            from .steps.step_07c_trending import TrendingStep
+            from .steps.step_08_settings import PublishSettingsStep
             from .steps.step_runner import StepRunner, RunnerConfig
 
             file_type = (metadata.get("file_type") or "video").lower()
 
-            # 统一业务流程（视频/图文均为 8 步）：
+            # 统一业务流程（视频/图文均为 9 步）：
             # 步骤1 首页导航
             # 步骤2 进入发布页
             # 步骤3 上传文件
             # 步骤4 填写描述（标题/正文/话题）
             # 步骤5 封面设置（视频：CoverVideoStep；图文：CoverImageStep）
-            # 步骤6 扩展信息（视频：6b标签+6c热点；图文：6a音乐+6b标签+6c热点，子步骤内各自跳过无关字段）
-            # 步骤7 发布设置（定时/可见性/保存权限）
-            # 步骤8 点击发布
+            # 步骤6 作品申明（WorkDeclarationStep）
+            # 步骤7 扩展信息（视频：7b标签+7c热点；图文：7a音乐+7b标签+7c热点，子步骤内各自跳过无关字段）
+            # 步骤8 发布设置（定时/可见性/保存权限）
+            # 步骤9 点击发布
             #
             # 视频流程先填描述，利用这段时间让封面区渲染完毕，步骤5进入时直接点击无需等待
             steps = [
@@ -131,19 +133,21 @@ class DouyinPublishPlugin(PublishPluginInterface):
             if file_type == "video":
                 steps.append(MetadataFillStep())    # 步骤4
                 steps.append(CoverVideoStep())      # 步骤5
-                # 步骤6：视频扩展信息（6b标签 + 6c热点）
+                steps.append(WorkDeclarationStep())  # 步骤6
+                # 步骤7：视频扩展信息（6b标签 + 6c热点）
                 steps.append(ExtraInfoCommonStep())
                 steps.append(TrendingStep())
             else:
                 steps.append(MetadataFillStep())    # 步骤4
                 steps.append(CoverImageStep())      # 步骤5
-                # 步骤6：图文扩展信息（6a音乐 + 6b标签 + 6c热点）
+                steps.append(WorkDeclarationStep())  # 步骤6
+                # 步骤7：图文扩展信息（6a音乐 + 6b标签 + 6c热点）
                 steps.append(SelectMusicStep())
                 steps.append(ExtraInfoCommonStep())
                 steps.append(TrendingStep())
 
-            steps.append(PublishSettingsStep())  # 步骤7
-            steps.append(SubmitStep())           # 步骤8
+            steps.append(PublishSettingsStep())  # 步骤8
+            steps.append(SubmitStep())           # 步骤9
 
             # 关键选择器命中探针（失败时输出命中数，帮助快速定位页面改版）；发布层防风控配置
             # 音乐入口仅图文发布页存在，视频任务不注入 music_* 探针，避免误判为「在执行选音乐」

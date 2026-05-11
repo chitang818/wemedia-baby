@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QTableWidgetItem,
     QMenu,
+    QDialog,
 )
 
 from qfluentwidgets import (
@@ -46,7 +47,7 @@ from src.ui.pages.base_page import BasePage
 from src.ui.utils.fluent_tooltips import ToolTipPosition, apply_instructional_tooltip
 from src.ui.components.base_dialog import AppMessageBoxBase
 from src.ui.components.rubber_band_row_table import RubberBandRowSelectTable
-from src.ui.utils.async_helper import AsyncWorker
+from src.ui.utils.async_helper import AsyncWorker, await_qdialog_finished
 from src.infrastructure.common.material_library_manager import MaterialLibraryManager
 from src.infrastructure.common.media_library_assign import (
     AssignTargetType,
@@ -1179,7 +1180,8 @@ class ImageLibraryPage(BasePage):
 
         dialog = AccountSelectionDialog(self, header_title="选择分配对象")
         dialog.set_data(accounts, groups=groups, show_group_nav=True, multi_select=True)
-        if not dialog.exec():
+        code = await await_qdialog_finished(dialog)
+        if code != int(QDialog.DialogCode.Accepted):
             return None
 
         result = dialog.get_selected_result()

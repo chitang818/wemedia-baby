@@ -88,7 +88,7 @@ class TestStripOriginalDeclaration:
         tasks = [{"platform": "douyin", "privacy_settings": ps}]
         strip_non_wechat_original_declaration(tasks)
         result = json.loads(tasks[0]["privacy_settings"])
-        assert result["is_original"] is False
+        assert "is_original" not in result
 
     def test_wechat_keeps_original(self):
         ps = json.dumps({"is_original": True})
@@ -102,7 +102,75 @@ class TestStripOriginalDeclaration:
         tasks = [{"platform": "douyin", "privacy_settings": ps}]
         strip_non_wechat_original_declaration(tasks)
         result = json.loads(tasks[0]["privacy_settings"])
-        assert "is_original" not in result or result.get("is_original") is False
+        assert "is_original" not in result
+
+    def test_douyin_keeps_only_douyin_declaration(self):
+        ps = json.dumps({
+            "privacy": "public",
+            "is_original": True,
+            "douyin_work_declaration": "fiction",
+            "kuaishou_work_declaration": "ai_generated",
+            "douyin_work_declaration_auto": True,
+            "kuaishou_work_declaration_auto": False,
+        })
+        tasks = [{"platform": "douyin", "privacy_settings": ps}]
+        strip_non_wechat_original_declaration(tasks)
+        result = json.loads(tasks[0]["privacy_settings"])
+        assert result.get("douyin_work_declaration") == "fiction"
+        assert result.get("douyin_work_declaration_auto") is True
+        assert "is_original" not in result
+        assert "kuaishou_work_declaration" not in result
+        assert "kuaishou_work_declaration_auto" not in result
+
+    def test_kuaishou_keeps_only_kuaishou_declaration(self):
+        ps = json.dumps({
+            "privacy": "public",
+            "is_original": True,
+            "douyin_work_declaration": "none",
+            "kuaishou_work_declaration": "material_from_web",
+            "douyin_work_declaration_auto": True,
+            "kuaishou_work_declaration_auto": False,
+        })
+        tasks = [{"platform": "kuaishou", "privacy_settings": ps}]
+        strip_non_wechat_original_declaration(tasks)
+        result = json.loads(tasks[0]["privacy_settings"])
+        assert result.get("kuaishou_work_declaration") == "material_from_web"
+        assert result.get("kuaishou_work_declaration_auto") is False
+        assert "douyin_work_declaration" not in result
+        assert "douyin_work_declaration_auto" not in result
+        assert "is_original" not in result
+
+    def test_douyin_strips_xiaohongshu_keys(self):
+        ps = json.dumps({
+            "privacy": "public",
+            "xiaohongshu_is_original": True,
+            "xiaohongshu_content_attribute": "marketing",
+            "xiaohongshu_content_attribute_auto": False,
+        })
+        tasks = [{"platform": "douyin", "privacy_settings": ps}]
+        strip_non_wechat_original_declaration(tasks)
+        result = json.loads(tasks[0]["privacy_settings"])
+        assert "xiaohongshu_is_original" not in result
+        assert "xiaohongshu_content_attribute" not in result
+        assert "xiaohongshu_content_attribute_auto" not in result
+
+    def test_xiaohongshu_keeps_only_xhs_declaration(self):
+        ps = json.dumps({
+            "privacy": "public",
+            "is_original": True,
+            "douyin_work_declaration": "fiction",
+            "xiaohongshu_is_original": False,
+            "xiaohongshu_content_attribute": "ai_synthesis",
+            "xiaohongshu_content_attribute_auto": True,
+        })
+        tasks = [{"platform": "xiaohongshu", "privacy_settings": ps}]
+        strip_non_wechat_original_declaration(tasks)
+        result = json.loads(tasks[0]["privacy_settings"])
+        assert result.get("xiaohongshu_is_original") is False
+        assert result.get("xiaohongshu_content_attribute") == "ai_synthesis"
+        assert result.get("xiaohongshu_content_attribute_auto") is True
+        assert "is_original" not in result
+        assert "douyin_work_declaration" not in result
 
 
 # =========================================================================
@@ -203,7 +271,7 @@ class TestBuildPublishTasksForBatch:
             [_acc("douyin", "u1")], [_vid(str(f))], ["10:00"], COMMON, False, NO_EXCLUSION,
         )
         ps = json.loads(r.tasks[0]["privacy_settings"])
-        assert ps.get("is_original") is False
+        assert "is_original" not in ps
 
     @pytest.mark.asyncio
     async def test_dedup_with_mock_repo(self, tmp_path):

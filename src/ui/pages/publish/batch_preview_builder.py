@@ -136,6 +136,8 @@ def build_preview_tasks(
     result.n_time = n_time
     result.time_pill_text = "立即发布" if imm else None
 
+    common_ps = common_fields.get("privacy_settings") or "{}"
+
     # ---- 状态 4: empty — 未选账号 ----
     if n_acc == 0:
         result.branch = "empty"
@@ -163,7 +165,7 @@ def build_preview_tasks(
                 "scheduled_publish_time": "待配置",
                 "title": common_fields.get("title", "") or "",
                 "description": common_fields.get("description", "") or "",
-                "privacy_settings": "{}",
+                "privacy_settings": common_ps,
                 "cart_info": common_fields.get("cart_info", "") or "",
                 "anchor_info": common_fields.get("anchor_info", "") or "",
                 "poi_info": common_fields.get("poi_info", ""),
@@ -171,7 +173,7 @@ def build_preview_tasks(
                     "wechat_empty_location_open_picker"
                 ),
                 "platform_account_id": acc.get("id"),
-                # 供页面「声明原创」占位列判断账号组/视频号
+                # 供页面「作品申明」占位列判断账号组
                 "_type": acc.get("_type"),
                 "_group_data": acc.get("_group_data") if acc.get("_type") == "group" else None,
             }
@@ -220,7 +222,7 @@ def build_preview_tasks(
                     ),
                     "title": common_fields.get("title", "") or "",
                     "description": common_fields.get("description", "") or "",
-                    "privacy_settings": "{}",
+                    "privacy_settings": common_ps,
                     "cart_info": common_fields.get("cart_info", "") or "",
                     "anchor_info": common_fields.get("anchor_info", "") or "",
                     "poi_info": common_fields.get("poi_info", ""),
@@ -274,7 +276,7 @@ def build_preview_tasks(
                 ),
                 "title": common_fields.get("title", "") or "",
                 "description": common_fields.get("description", "") or "",
-                "privacy_settings": "{}",
+                "privacy_settings": common_ps,
                 "cart_info": common_fields.get("cart_info", "") or "",
                 "anchor_info": common_fields.get("anchor_info", "") or "",
                 "poi_info": common_fields.get("poi_info", ""),

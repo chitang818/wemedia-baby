@@ -10,6 +10,7 @@ import os
 import logging
 import json
 from pathlib import Path
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -34,20 +35,55 @@ class FeatureFlags:
     # 发行模式：OSS=开源版；PRO=闭源完整版；52POJIE=闭源离线特别版
     # 说明：这是“构建/分发维度”的能力开关，不等同于账号授权状态。
     _dist_mode: str | None = None
+    _dist_mode_source: str | None = None
 
     @classmethod
     def _read_dist_mode_file(cls) -> str:
         """从 config/dist_mode.json 读取发行模式（用于打包产物在用户机器上运行时的默认值）。"""
         try:
-            p = Path(__file__).resolve().parent / "dist_mode.json"
-            if not p.exists():
+            # 打包后（PyInstaller/Nuitka）源码模块位置与资源文件位置并不一致：
+            # - dist_mode.json 作为“资源文件”会落在安装目录的 config/dist_mode.json
+            # - feature_flags.py 可能位于打包的内部包体中，__file__ 推算会找不到 json
+            # 因此优先通过 PathManager 取资源路径；失败再回退到与当前文件同目录。
+            candidates: list[Path] = []
+
+            # 1) 优先：统一资源路径（兼容 PyInstaller/Nuitka/开发环境）
+            try:
+                from src.infrastructure.common.path_manager import PathManager
+
+                candidates.append(PathManager.get_resource_path("config/dist_mode.json"))
+            except Exception:
+                pass
+
+            # 2) 兜底：基于可执行文件的相对路径（某些打包/启动方式下更稳）
+            try:
+                exe_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path.cwd()
+                candidates.append(exe_dir / "config" / "dist_mode.json")
+                candidates.append(exe_dir / "_internal" / "config" / "dist_mode.json")
+            except Exception:
+                pass
+
+            # 3) 最后：与当前模块同目录（开发环境下通常可用）
+            try:
+                candidates.append(Path(__file__).resolve().parent / "dist_mode.json")
+            except Exception:
+                pass
+
+            p = next((x for x in candidates if isinstance(x, Path) and x.exists()), None)
+            if p is None:
+                cls._dist_mode_source = "missing"
                 return "OSS"
-            data = json.loads(p.read_text(encoding="utf-8"))
+
+            # 兼容 UTF-8 BOM（部分构建/工具链会把 JSON 写成 UTF-8 with BOM，json.loads 会报 Unexpected UTF-8 BOM）
+            data = json.loads(p.read_text(encoding="utf-8-sig"))
             v = str(data.get("dist_mode", "")).strip().upper()
             if v in {"OSS", "PRO", "52POJIE"}:
+                cls._dist_mode_source = str(p)
                 return v
+            cls._dist_mode_source = f"{p} (invalid value)"
             return "OSS"
-        except Exception:
+        except Exception as e:
+            cls._dist_mode_source = f"exception: {e}"
             return "OSS"
 
     @classmethod
@@ -58,6 +94,7 @@ class FeatureFlags:
         env = os.environ.get("APP_DIST_MODE", "").strip().upper()
         if env in {"OSS", "PRO", "52POJIE"}:
             cls._dist_mode = env
+            cls._dist_mode_source = "env:APP_DIST_MODE"
         else:
             cls._dist_mode = cls._read_dist_mode_file()
         return cls._dist_mode
@@ -66,7 +103,14 @@ class FeatureFlags:
     def refresh_dist_mode(cls) -> str:
         """刷新发行模式缓存（用于测试或运行中修改环境变量/文件后重新读取）。"""
         cls._dist_mode = None
+        cls._dist_mode_source = None
         return cls.get_dist_mode()
+
+    @classmethod
+    def debug_dist_mode(cls) -> dict:
+        """调试用：返回发行模式与来源（用于定位“安装后仍显示 OSS”问题）。"""
+        mode = cls.get_dist_mode()
+        return {"dist_mode": mode, "source": cls._dist_mode_source or ""}
     
     # 开源功能（Community Edition）- 默认启用
     COMMUNITY_FEATURES: Set[str] = {

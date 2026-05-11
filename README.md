@@ -154,7 +154,7 @@ WeMediaBaby/
 | `version.json`     | 版本号与更新说明；OTA 与 Gitee 展示以此为准                                          |
 | `CHANGELOG.md`     | 变更日志；发版脚本会向顶部追加新版本条目                                             |
 | `pytest.ini`       | pytest 配置（测试路径、`markers`、`basetemp` 等）                                |
-| `LICENSE`          | 开源许可证（以仓库内 `LICENSE` 为准）                                              |
+| `LICENSE`          | 软件许可证（PolyForm 非商业许可；以仓库内 `LICENSE` 为准）                         |
 
 ### 常用脚本（不在根目录）
 

@@ -120,11 +120,11 @@ class EnterPublishEntryStep(BasePublishStep):
                     await page.wait_for_timeout(int(600 * speed_rate))
                 if file_type == "video" and _is_video_publish_url(page.url or ""):
                     logger.info("已切换到发布页「视频」Tab（候选=%s）", sel)
-                    USER_LOG.info("[步骤2/8 进入发布页] ▶ 已切换到「视频」发布")
+                    USER_LOG.info("[步骤2/9 进入发布页] ▶ 已切换到「视频」发布")
                     return True
                 if file_type == "image" and _is_image_publish_url(page.url or ""):
                     logger.info("已切换到发布页「图文」Tab（候选=%s）", sel)
-                    USER_LOG.info("[步骤2/8 进入发布页] ▶ 已切换到「图文」发布")
+                    USER_LOG.info("[步骤2/9 进入发布页] ▶ 已切换到「图文」发布")
                     return True
             except Exception:
                 continue
@@ -192,7 +192,7 @@ class EnterPublishEntryStep(BasePublishStep):
                             url_before_click,
                             url_after_click,
                         )
-                        USER_LOG.info(f"[步骤2/8 进入发布页] ▶ 点击「{action_text}」（已进入发布路由）")
+                        USER_LOG.info(f"[步骤2/9 进入发布页] ▶ 点击「{action_text}」（已进入发布路由）")
                         break
 
                     if url_after_click and url_after_click != url_before_click:
@@ -239,7 +239,7 @@ class EnterPublishEntryStep(BasePublishStep):
                                     page, file_type, metadata, config, speed_rate
                                 )
                             entered = True
-                            USER_LOG.info("[步骤2/8 进入发布页] ▶ 通过「高清发布」入口进入（已切换 Tab）")
+                            USER_LOG.info("[步骤2/9 进入发布页] ▶ 通过「高清发布」入口进入（已切换 Tab）")
                             break
                     except Exception:
                         continue
@@ -260,7 +260,7 @@ class EnterPublishEntryStep(BasePublishStep):
                 await page.wait_for_timeout(wait_ms)
             current_url = page.url
             logger.info(f"点击发布入口后 URL: {current_url}")
-            USER_LOG.info(f"[步骤2/8 进入发布页] ▶ 进入 {current_url}")
+            USER_LOG.info(f"[步骤2/9 进入发布页] ▶ 进入 {current_url}")
         except Exception:
             current_url = ""
 

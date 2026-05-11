@@ -7,11 +7,13 @@ from typing import Optional, List, Dict, Any, Set, Tuple
 import logging
 from datetime import datetime, date, timedelta
 
+from tortoise.functions import Max
+
 from .base_repository_async import BaseRepositoryAsync
 from src.infrastructure.storage.orm_models.publish_record import PublishRecord
 from src.infrastructure.storage.orm_models.platform_account import PlatformAccount
 from src.infrastructure.storage.retry import retry_on_locked
-from src.utils.date_utils import format_schedule_time_st_str
+from src.utils.date_utils import format_schedule_time_st_str, merge_latest_publish_display_time
 
 logger = logging.getLogger(__name__)
 
@@ -450,27 +452,63 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
         await self._attach_account_group_names([data])
         return data
 
-    async def get_latest_scheduled_time_by_account_ids(self, account_ids: List[int]) -> Dict[int, str]:
-        """按账号批量查询已发布任务中最晚的 scheduled_publish_time。"""
+    async def get_latest_publish_display_time_by_account_ids(self, account_ids: List[int]) -> Dict[int, str]:
+        """按账号批量查询账号管理「已发布最晚时间」展示值。
+
+        对已成功的任务：同一账号下取
+        max(MAX(定时任务的 scheduled_publish_time), MAX(立即发布任务的 updated_at))，
+        再格式化为 YYYY-MM-DD HH:mm。立即发布任务无定时字段，成功时刻由 update_status 写入 updated_at。
+        """
         if not account_ids:
             return {}
         try:
-            out: Dict[int, str] = {}
-            for acc_id in account_ids:
-                rec = await (
-                    PublishRecord.filter(
-                        platform_account_id=int(acc_id),
-                        status="success",
-                        scheduled_publish_time__not_isnull=True,
-                    )
-                    .order_by("-scheduled_publish_time")
-                    .first()
+            ids = sorted({int(x) for x in account_ids})
+            sched_rows = await (
+                PublishRecord.filter(
+                    platform_account_id__in=ids,
+                    status="success",
+                    scheduled_publish_time__not_isnull=True,
                 )
-                if rec and rec.scheduled_publish_time:
-                    out[int(acc_id)] = format_schedule_time_st_str(rec.scheduled_publish_time)
+                .group_by("platform_account_id")
+                .annotate(max_sched=Max("scheduled_publish_time"))
+                .values("platform_account_id", "max_sched")
+            )
+            imm_rows = await (
+                PublishRecord.filter(
+                    platform_account_id__in=ids,
+                    status="success",
+                    scheduled_publish_time__isnull=True,
+                )
+                .group_by("platform_account_id")
+                .annotate(max_imm=Max("updated_at"))
+                .values("platform_account_id", "max_imm")
+            )
+
+            sched_by_acc: Dict[int, datetime] = {}
+            for row in sched_rows:
+                pid = row.get("platform_account_id")
+                ms = row.get("max_sched")
+                if pid is not None and ms is not None:
+                    sched_by_acc[int(pid)] = ms
+
+            imm_by_acc: Dict[int, datetime] = {}
+            for row in imm_rows:
+                pid = row.get("platform_account_id")
+                mi = row.get("max_imm")
+                if pid is not None and mi is not None:
+                    imm_by_acc[int(pid)] = mi
+
+            out: Dict[int, str] = {}
+            for aid in set(sched_by_acc.keys()) | set(imm_by_acc.keys()):
+                merged = merge_latest_publish_display_time(
+                    sched_by_acc.get(aid),
+                    imm_by_acc.get(aid),
+                )
+                if merged:
+                    out[aid] = merged
             return out
         except Exception as e:
-            self.handle_error(e, "get_latest_scheduled_time_by_account_ids")
+            self.handle_error(e, "get_latest_publish_display_time_by_account_ids")
             return {}
 
     async def _attach_account_group_names(self, records: List[Dict[str, Any]]) -> None:

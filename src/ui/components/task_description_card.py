@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import html
-import json
 from typing import Optional, Dict, Any
 
 from PySide6.QtCore import Qt
@@ -327,13 +326,16 @@ class TaskDescriptionCard(QFrame):
         row += 1
         self._add_grid_row(row, "文件", file_path)
         row += 1
-        if platform_raw == "wechat_video":
+        if platform_raw in ("wechat_video", "douyin", "kuaishou"):
             try:
-                ps = json.loads(record.get("privacy_settings") or "{}")
-                is_o = bool(ps.get("is_original", False))
+                from src.domain.publish.work_declaration import format_work_declaration_table_cell
+
+                wd = format_work_declaration_table_cell(
+                    platform_raw, record.get("privacy_settings"), empty_display="—",
+                )
             except Exception:
-                is_o = False
-            self._add_grid_row(row, "声明原创", "是" if is_o else "否")
+                wd = "—"
+            self._add_grid_row(row, "作品申明", wd)
             row += 1
 
         self._body.setPlainText(task_field_str_or_dash(desc))

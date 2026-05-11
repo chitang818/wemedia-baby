@@ -3,8 +3,12 @@
 模块：src/domain/repositories/publish_record_repository_async.py
 """
 import os
+from datetime import datetime
+
 import pytest
+
 from src.domain.repositories.publish_record_repository_async import PublishRecordRepositoryAsync
+from src.infrastructure.storage.orm_models.publish_record import PublishRecord
 from src.infrastructure.storage.orm_models.user import User
 
 
@@ -143,3 +147,95 @@ class TestPublishRecordRepositoryCRUD:
         assert os.path.normpath("/tmp/pending.mp4") in paths
         assert os.path.normpath("/tmp/failed.mp4") in paths
         assert os.path.normpath("/tmp/success.mp4") not in paths
+
+
+class TestLatestPublishDisplayTimeByAccount:
+    """账号管理「已发布最晚时间」：定时 MAX(scheduled) 与立即 MAX(updated_at) 合并。"""
+
+    @pytest.mark.asyncio
+    async def test_scheduled_success_only(self, repo):
+        repo_obj, uid = repo
+        acc_id = 9001
+        rid = await repo_obj.create(
+            user_id=uid,
+            platform_username="sched_only",
+            platform="douyin",
+            file_path="/tmp/a.mp4",
+            file_type="video",
+            platform_account_id=acc_id,
+            scheduled_publish_time=datetime(2026, 6, 10, 8, 30),
+        )
+        await repo_obj.update_status(rid, "success")
+        out = await repo_obj.get_latest_publish_display_time_by_account_ids([acc_id])
+        assert out.get(acc_id) == "2026-06-10 08:30"
+
+    @pytest.mark.asyncio
+    async def test_immediate_success_uses_updated_at(self, repo):
+        repo_obj, uid = repo
+        acc_id = 9002
+        rid = await repo_obj.create(
+            user_id=uid,
+            platform_username="imm_only",
+            platform="douyin",
+            file_path="/tmp/b.mp4",
+            file_type="video",
+            platform_account_id=acc_id,
+        )
+        await repo_obj.update_status(rid, "success")
+        await PublishRecord.filter(id=rid).update(updated_at=datetime(2026, 8, 15, 9, 0))
+        out = await repo_obj.get_latest_publish_display_time_by_account_ids([acc_id])
+        assert out.get(acc_id) == "2026-08-15 09:00"
+
+    @pytest.mark.asyncio
+    async def test_merge_prefers_later_immediate_completion(self, repo):
+        repo_obj, uid = repo
+        acc_id = 9003
+        r_sched = await repo_obj.create(
+            user_id=uid,
+            platform_username="mix_s",
+            platform="douyin",
+            file_path="/tmp/c.mp4",
+            file_type="video",
+            platform_account_id=acc_id,
+            scheduled_publish_time=datetime(2026, 5, 8, 6, 27),
+        )
+        await repo_obj.update_status(r_sched, "success")
+        r_imm = await repo_obj.create(
+            user_id=uid,
+            platform_username="mix_i",
+            platform="douyin",
+            file_path="/tmp/d.mp4",
+            file_type="video",
+            platform_account_id=acc_id,
+        )
+        await repo_obj.update_status(r_imm, "success")
+        await PublishRecord.filter(id=r_imm).update(updated_at=datetime(2026, 7, 1, 12, 0))
+        out = await repo_obj.get_latest_publish_display_time_by_account_ids([acc_id])
+        assert out.get(acc_id) == "2026-07-01 12:00"
+
+    @pytest.mark.asyncio
+    async def test_merge_prefers_scheduled_when_later(self, repo):
+        repo_obj, uid = repo
+        acc_id = 9004
+        r_sched = await repo_obj.create(
+            user_id=uid,
+            platform_username="late_s",
+            platform="douyin",
+            file_path="/tmp/e.mp4",
+            file_type="video",
+            platform_account_id=acc_id,
+            scheduled_publish_time=datetime(2026, 9, 1, 10, 0),
+        )
+        await repo_obj.update_status(r_sched, "success")
+        r_imm = await repo_obj.create(
+            user_id=uid,
+            platform_username="late_i",
+            platform="douyin",
+            file_path="/tmp/f.mp4",
+            file_type="video",
+            platform_account_id=acc_id,
+        )
+        await repo_obj.update_status(r_imm, "success")
+        await PublishRecord.filter(id=r_imm).update(updated_at=datetime(2026, 7, 1, 12, 0))
+        out = await repo_obj.get_latest_publish_display_time_by_account_ids([acc_id])
+        assert out.get(acc_id) == "2026-09-01 10:00"

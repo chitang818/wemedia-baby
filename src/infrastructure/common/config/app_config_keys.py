@@ -13,6 +13,8 @@ KEY_UI = "ui"
 
 # batch_publish 子键
 BATCH_DECLARE_ORIGINAL = "declare_original"
+# 批量页「作品申明」弹窗：抖音/快手枚举（与 privacy_settings 键名一致）
+BATCH_WORK_DECLARATION = "work_declaration"
 BATCH_AUTO_MATCH = "auto_match"
 BATCH_PUBLISH_DESCRIPTION = "publish_description"
 BATCH_MEDIA_ASSIGN = "media_assign"

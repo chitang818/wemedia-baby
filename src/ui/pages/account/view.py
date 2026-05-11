@@ -460,7 +460,7 @@ class AccountPage(BasePage):
                             int(a.get("id")) for a in (accounts or [])
                             if isinstance(a, dict) and a.get("id") is not None
                         ]
-                        latest_publish_map = await PublishRecordRepositoryAsync().get_latest_scheduled_time_by_account_ids(account_ids)
+                        latest_publish_map = await PublishRecordRepositoryAsync().get_latest_publish_display_time_by_account_ids(account_ids)
                     except Exception as _lp_e:
                         logger.debug("加载账号最晚发布时间失败: %s", _lp_e)
                     

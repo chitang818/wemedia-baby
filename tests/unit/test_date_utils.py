@@ -12,6 +12,7 @@ from src.utils.date_utils import (
     add_minutes,
     is_date_expired,
     format_schedule_time_st_str,
+    merge_latest_publish_display_time,
     get_datetime_diff_seconds,
     DATETIME_FORMAT,
     DATE_FORMAT,
@@ -114,6 +115,29 @@ class TestFormatScheduleTimeStStr:
 
     def test_empty_string_returns_none(self):
         assert format_schedule_time_st_str("") is None
+
+
+class TestMergeLatestPublishDisplayTime:
+    def test_both_none(self):
+        assert merge_latest_publish_display_time(None, None) is None
+
+    def test_scheduled_only(self):
+        dt = datetime(2026, 5, 8, 6, 27)
+        assert merge_latest_publish_display_time(dt, None) == "2026-05-08 06:27"
+
+    def test_immediate_only(self):
+        dt = datetime(2026, 5, 10, 14, 0)
+        assert merge_latest_publish_display_time(None, dt) == "2026-05-10 14:00"
+
+    def test_picks_later_scheduled(self):
+        sched = datetime(2026, 6, 1, 12, 0)
+        imm = datetime(2026, 5, 10, 14, 0)
+        assert merge_latest_publish_display_time(sched, imm) == "2026-06-01 12:00"
+
+    def test_picks_later_immediate(self):
+        sched = datetime(2026, 5, 8, 6, 27)
+        imm = datetime(2026, 5, 10, 14, 0)
+        assert merge_latest_publish_display_time(sched, imm) == "2026-05-10 14:00"
 
 
 class TestGetDatetimeDiffSeconds:

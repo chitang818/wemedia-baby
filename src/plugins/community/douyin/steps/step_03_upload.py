@@ -61,7 +61,7 @@ class UploadMediaStep(BasePublishStep):
     async def _upload_video(self, page: Page, file_path: str, metadata: Dict[str, Any]) -> Optional[PublishResult]:
         logger.info("===== 开始上传视频文件 =====")
         base = os.path.basename(str(file_path))
-        USER_LOG.info(f"[步骤3/8 上传视频/图文] ▶ 开始 文件={base} 路径={file_path}")
+        USER_LOG.info(f"[步骤3/9 上传视频/图文] ▶ 开始 文件={base} 路径={file_path}")
 
         # 唯一方案：通过 FILE_INPUT 的第一个选择器直接 set_input_files
         first_selector = Selectors.PUBLISH["FILE_INPUT"][0]
@@ -80,7 +80,7 @@ class UploadMediaStep(BasePublishStep):
         """等待视频上传完成：仅当页面出现「重新上传」区域（label.upload-btn-PdfuUv）时判定为成功。"""
         max_wait_seconds = int(metadata.get("upload_timeout_seconds") or 180)
         logger.info("等待视频上传/转码就绪（最长 %s 分钟），检测「重新上传」按钮是否出现...", max_wait_seconds // 60)
-        USER_LOG.info("[步骤3/8 上传视频/图文] 正在上传中，等待上传成功（最长 %d 秒）…", max_wait_seconds)
+        USER_LOG.info("[步骤3/9 上传视频/图文] 正在上传中，等待上传成功（最长 %d 秒）…", max_wait_seconds)
         speed_rate = max(0.5, float(metadata.get("speed_rate", 1.0)))
         # 唯一判定：出现 label.upload-btn-PdfuUv（重新上传）即代表视频已上传成功
         success_marker = ", ".join(Selectors.PUBLISH["VIDEO_UPLOAD_SUCCESS_MARKER"])
@@ -88,14 +88,14 @@ class UploadMediaStep(BasePublishStep):
             await self._await_pause(metadata)
             if await page.locator(success_marker).count() > 0:
                 logger.info("检测到「重新上传」按钮已出现，视频上传成功")
-                USER_LOG.info("[步骤3/8 上传视频/图文] ✓ 上传成功")
+                USER_LOG.info("[步骤3/9 上传视频/图文] ✓ 上传成功")
                 return None
 
             elapsed = i * 2
             if i % 30 == 0:
                 logger.info(f"等待上传中... ({elapsed}s/{max_wait_seconds}s)")
             if i > 0 and i % 15 == 0:
-                USER_LOG.info("[步骤3/8 上传视频/图文] 正在上传中，已等待 %d 秒，等待「重新上传」按钮出现…", elapsed)
+                USER_LOG.info("[步骤3/9 上传视频/图文] 正在上传中，已等待 %d 秒，等待「重新上传」按钮出现…", elapsed)
             config = metadata.get("anti_risk_config") or {}
             try:
                 from src.infrastructure.anti_risk.delays import random_delay
@@ -112,7 +112,7 @@ class UploadMediaStep(BasePublishStep):
         logger.info("===== 开始上传图文图片 =====")
         image_paths = _parse_image_paths(file_path, metadata)
         base = os.path.basename(str(image_paths[0])) if image_paths else ""
-        USER_LOG.info(f"[步骤3/8 上传视频/图文] ▶ 开始 图文数量={len(image_paths)} 文件示例={base} 路径={file_path}")
+        USER_LOG.info(f"[步骤3/9 上传视频/图文] ▶ 开始 图文数量={len(image_paths)} 文件示例={base} 路径={file_path}")
 
         if not image_paths:
             return PublishResult(success=False, error_message="图文上传失败: 未提供图片路径")
@@ -149,21 +149,21 @@ class UploadMediaStep(BasePublishStep):
     async def _wait_for_images_upload_complete(self, page: Page, metadata: Dict[str, Any]) -> Optional[PublishResult]:
         max_wait_seconds = int(metadata.get("image_upload_timeout_seconds") or 180)
         logger.info("等待图文上传完成：检测「清空并重新上传」按钮（最长 %s 分钟）...", max_wait_seconds // 60)
-        USER_LOG.info("[步骤3/8 上传视频/图文] 正在上传图文，等待「清空并重新上传」出现（最长 %d 秒）…", max_wait_seconds)
+        USER_LOG.info("[步骤3/9 上传视频/图文] 正在上传图文，等待「清空并重新上传」出现（最长 %d 秒）…", max_wait_seconds)
         speed_rate = max(0.5, float(metadata.get("speed_rate", 1.0)))
 
         for i in range(max_wait_seconds // 2):
             await self._await_pause(metadata)
             if await self._image_upload_success_visible(page):
                 logger.info("已检测到「清空并重新上传」按钮，图文上传成功")
-                USER_LOG.info("[步骤3/8 上传视频/图文] ✓ 上传成功")
+                USER_LOG.info("[步骤3/9 上传视频/图文] ✓ 上传成功")
                 return None
 
             elapsed = i * 2
             if i % 10 == 0:
                 logger.info(f"等待图文上传就绪... ({elapsed}s/{max_wait_seconds}s)")
             if i > 0 and i % 15 == 0:
-                USER_LOG.info("[步骤3/8 上传视频/图文] 正在上传图文，已等待 %d 秒，等待「清空并重新上传」…", elapsed)
+                USER_LOG.info("[步骤3/9 上传视频/图文] 正在上传图文，已等待 %d 秒，等待「清空并重新上传」…", elapsed)
             config = metadata.get("anti_risk_config") or {}
             try:
                 from src.infrastructure.anti_risk.delays import random_delay

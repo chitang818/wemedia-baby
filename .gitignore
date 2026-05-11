@@ -50,8 +50,12 @@ config/pro_config.json
 config/app_config.json
 .env
 
-# 闭源代码（本地保留，不推送公开仓库）
-src/proprietary/
+# 闭源商业代码及内部文档（极其重要：禁止推送到公开的开源仓库）
+docs/
+src/plugins/pro/
+src/pro_features/
+src/services/auth/
+src/services/subscription/
 
 # 操作系统
 .DS_Store

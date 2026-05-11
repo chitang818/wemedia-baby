@@ -1049,6 +1049,14 @@ def _run_smoke_test() -> int:
     print("  媒小宝 冒烟测试 (--smoke-test)")
     print("=" * 60)
 
+    # 发行模式（PRO/OSS）探测：用于定位“安装后仍显示 OSS”的问题
+    try:
+        from config.feature_flags import FeatureFlags
+        info = FeatureFlags.debug_dist_mode() if hasattr(FeatureFlags, "debug_dist_mode") else {"dist_mode": FeatureFlags.get_dist_mode(), "source": ""}
+        print(f"  [INFO] dist_mode = {info.get('dist_mode')}  source = {info.get('source')}")
+    except Exception as e:
+        print(f"  [WARN] dist_mode 探测失败: {e}")
+
     modules = [
         # 页面工厂中的动态导入
         "src.ui.pages.workspace_page",
@@ -1100,7 +1108,14 @@ def _run_smoke_test() -> int:
     print()
 
     # 检查关键资源（目录用 exe 旁路径；单文件与 data_dirs 一致）
-    base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+    # PyInstaller(one-dir) 的资源通常位于 _internal；Nuitka 位于 exe 同级；开发环境位于仓库根目录
+    try:
+        from src.infrastructure.common.path_manager import PathManager as _PM
+        _PM._resource_dir = None
+        base = _PM.get_resource_dir()
+    except Exception:
+        base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+
     resources = ["config", "resources"]
     missing_res = []
     for r in resources:
@@ -1111,10 +1126,12 @@ def _run_smoke_test() -> int:
         else:
             print(f"  [OK] 资源目录: {p}")
 
-    from src.infrastructure.common.path_manager import PathManager as _PM
-
-    _PM._resource_dir = None
-    _stealth = _PM.get_resource_path("src/resources/scripts/stealth/stealth.js")
+    try:
+        from src.infrastructure.common.path_manager import PathManager as _PM
+        _PM._resource_dir = None
+        _stealth = _PM.get_resource_path("src/resources/scripts/stealth/stealth.js")
+    except Exception:
+        _stealth = base / "src" / "resources" / "scripts" / "stealth" / "stealth.js"
     if not _stealth.exists():
         missing_res.append(str(_stealth))
         print(f"  [MISSING] 抗检测脚本 stealth.js: {_stealth}")
@@ -1141,6 +1158,14 @@ def _run_smoke_test() -> int:
 if __name__ == "__main__":
     if "--smoke-test" in sys.argv:
         sys.exit(_run_smoke_test())
+    if "--print-dist-mode" in sys.argv:
+        try:
+            from config.feature_flags import FeatureFlags
+            print(FeatureFlags.get_dist_mode())
+            sys.exit(0)
+        except Exception as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
 
     import threading
 

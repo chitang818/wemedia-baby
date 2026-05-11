@@ -180,6 +180,25 @@ def format_schedule_time_st_str(value: Optional[Any]) -> Optional[str]:
     return s[:16] if len(s) >= 16 else s
 
 
+def merge_latest_publish_display_time(
+    scheduled_max: Optional[datetime],
+    immediate_max: Optional[datetime],
+) -> Optional[str]:
+    """账号管理「已发布最晚时间」合并逻辑：定时成功记录的最晚 scheduled 与立即成功记录的最晚完成时间取较晚者。
+
+    Args:
+        scheduled_max: 已成功任务中带定时发布时间时的 MAX(scheduled_publish_time)
+        immediate_max: 已成功立即发布任务时的 MAX(updated_at)（发布成功时写入）
+
+    Returns:
+        格式化后的 "YYYY-MM-DD HH:mm"，两者皆无时返回 None
+    """
+    candidates = [t for t in (scheduled_max, immediate_max) if t is not None]
+    if not candidates:
+        return None
+    return format_schedule_time_st_str(max(candidates))
+
+
 def get_datetime_diff_seconds(dt1: datetime, dt2: datetime) -> int:
     """计算两个日期时间之间的秒数差
     

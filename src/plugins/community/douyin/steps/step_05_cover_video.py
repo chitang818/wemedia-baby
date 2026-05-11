@@ -43,17 +43,17 @@ class CoverVideoStep(BasePublishStep):
         if cover_path and cover_type != "custom":
             cover_type = "custom"
         logger.info("===== 视频封面设置 =====")
-        USER_LOG.info("[步骤5/8 视频封面] ▶ 尝试设置")
+        USER_LOG.info("[步骤5/9 视频封面] ▶ 尝试设置")
 
         # 【方向二】AI 智能推荐封面：仅在主页面红框区域（AI智能推荐封面）内点击第一个推荐缩略图，不进弹窗
         if cover_type == "ai":
             if await self._try_click_ai_recommend_cover(page, metadata):
                 if await self._wait_cover_success_indicator(page, metadata):
-                    USER_LOG.info("[步骤5/8 视频封面] ✓ 已选择AI智能推荐封面")
+                    USER_LOG.info("[步骤5/9 视频封面] ✓ 已选择AI智能推荐封面")
                     return None
                 return PublishResult(success=False, error_message="已点击AI推荐封面，但未检测到「封面效果检测通过」")
             logger.error("未能在主页面「AI智能推荐封面」区域找到可点击缩略图")
-            USER_LOG.error("[步骤5/8 视频封面] ✖ 失败（找不到AI封面）")
+            USER_LOG.error("[步骤5/9 视频封面] ✖ 失败（找不到AI封面）")
             return PublishResult(success=False, error_message="AI智能推荐封面未找到或无法点击，任务宣告失败！")
 
         # 【方向一】本地/首帧：点击「选择封面」（竖封面3:4 或 横封面4:3 上方）→ 进弹窗操作
@@ -71,7 +71,7 @@ class CoverVideoStep(BasePublishStep):
         btn = await self._resolve_vertical_cover_entry(page)
         if btn is None:
             logger.error("未解析到竖封面「选择封面」入口")
-            USER_LOG.error("[步骤5/8 视频封面] ✖ 失败：未找到「选择封面」入口")
+            USER_LOG.error("[步骤5/9 视频封面] ✖ 失败：未找到「选择封面」入口")
             return PublishResult(success=False, error_message="未找到竖封面「选择封面」入口")
 
         modal_opened = False
@@ -91,7 +91,7 @@ class CoverVideoStep(BasePublishStep):
                 logger.warning("点击封面入口异常: %s", e)
 
             if await self._wait_cover_modal_visible(page, timeout_ms=3000):
-                USER_LOG.info("[步骤5/8 视频封面] ▶ 已成功激活封面弹窗")
+                USER_LOG.info("[步骤5/9 视频封面] ▶ 已成功激活封面弹窗")
                 modal_opened = True
                 break
             logger.info("弹窗未就绪，准备第 %d 次重试", attempt + 2)
@@ -104,7 +104,7 @@ class CoverVideoStep(BasePublishStep):
             return result
 
         logger.error("未找到竖封面「选择封面」入口或点击后弹窗未打开")
-        USER_LOG.error("[步骤5/8 视频封面] ✖ 失败：未打开封面设置弹窗")
+        USER_LOG.error("[步骤5/9 视频封面] ✖ 失败：未打开封面设置弹窗")
         return PublishResult(
             success=False,
             error_message="未找到竖封面「选择封面」入口或点击后弹窗未打开",
@@ -202,27 +202,27 @@ class CoverVideoStep(BasePublishStep):
         用 Playwright wait_for 事件驱动，任一指示符出现立即返回。"""
         selectors = Selectors.PUBLISH.get("COVER_SUCCESS_INDICATOR") or []
         if not selectors:
-            USER_LOG.warning("[步骤5/8 视频封面] 未配置 COVER_SUCCESS_INDICATOR，无法判定封面是否成功")
+            USER_LOG.warning("[步骤5/9 视频封面] 未配置 COVER_SUCCESS_INDICATOR，无法判定封面是否成功")
             return False
-        USER_LOG.info("[步骤5/8 视频封面] 等待「封面效果检测通过」…（最长 %d 秒）", timeout_ms // 1000)
+        USER_LOG.info("[步骤5/9 视频封面] 等待「封面效果检测通过」…（最长 %d 秒）", timeout_ms // 1000)
 
         # 先尝试 wait_for（事件驱动，毫秒级响应）
         for sel in selectors:
             try:
                 await page.locator(sel).first.wait_for(state="visible", timeout=timeout_ms)
                 if await self._see_cover_warning_indicator(page):
-                    USER_LOG.info("[步骤5/8 视频封面] ✓ 封面已设置（存在质量提醒，继续流程）")
+                    USER_LOG.info("[步骤5/9 视频封面] ✓ 封面已设置（存在质量提醒，继续流程）")
                 else:
-                    USER_LOG.info("[步骤5/8 视频封面] ✓ 封面效果检测通过")
+                    USER_LOG.info("[步骤5/9 视频封面] ✓ 封面效果检测通过")
                 return True
             except Exception:
                 # 该候选未命中，继续试下一条
                 if await self._see_cover_success_indicator(page):
-                    USER_LOG.info("[步骤5/8 视频封面] ✓ 封面效果检测通过")
+                    USER_LOG.info("[步骤5/9 视频封面] ✓ 封面效果检测通过")
                     return True
 
         logger.warning("等待封面成功提示超时（%d ms）", timeout_ms)
-        USER_LOG.warning("[步骤5/8 视频封面] ✖ 封面效果检测超时，封面可能未生效")
+        USER_LOG.warning("[步骤5/9 视频封面] ✖ 封面效果检测超时，封面可能未生效")
         return False
 
     async def _try_click_ai_recommend_cover(self, page: Page, metadata: Dict[str, Any]) -> bool:
@@ -245,24 +245,173 @@ class CoverVideoStep(BasePublishStep):
         return False
 
     async def _dismiss_vertical_cover_promo_if_present(self, page: Page) -> bool:
-        """若出现「设置竖封面获更多流量」推荐弹窗，则点击「设置竖封面」进入竖封面设置并关闭推荐弹窗。返回是否曾处理过该弹窗。"""
+        """若出现「设置竖封面获更多流量」推荐弹窗：优先关闭/暂不设置（不切换竖封面），避免挡横封面流程；否则再点「设置竖封面」。"""
         for sel in (Selectors.PUBLISH.get("COVER_VERTICAL_PROMO_MODAL") or []):
+            try:
+                group = page.locator(sel)
+                n = await group.count()
+                if n == 0:
+                    continue
+                for idx in range(n):
+                    try:
+                        modal = group.nth(idx)
+                        if not await modal.is_visible():
+                            continue
+                        try:
+                            title = modal.get_by_text("设置竖封面获更多流量").first
+                            if await title.count() == 0 or not await title.is_visible():
+                                continue
+                        except Exception:
+                            continue
+
+                        # 优先：右上角关闭（与横封面推广弹窗一致）
+                        try:
+                            close_btn = modal.get_by_label("关闭").first
+                            if await close_btn.count() > 0 and await close_btn.is_visible():
+                                await close_btn.click()
+                                logger.info("已点击「关闭」处理「设置竖封面获更多流量」弹窗")
+                                USER_LOG.info("[步骤5/9 视频封面] 已关闭「设置竖封面获更多流量」弹窗")
+                                await page.wait_for_timeout(800)
+                                return True
+                        except Exception:
+                            pass
+
+                        try:
+                            x_btn = modal.get_by_role("button", name=re.compile(r"^[×xX]$")).first
+                            if await x_btn.count() > 0 and await x_btn.is_visible():
+                                await x_btn.click()
+                                logger.info("已点击「×」处理「设置竖封面获更多流量」弹窗")
+                                USER_LOG.info("[步骤5/9 视频封面] 已关闭「设置竖封面获更多流量」弹窗")
+                                await page.wait_for_timeout(800)
+                                return True
+                        except Exception:
+                            pass
+
+                        try:
+                            skip_btn = modal.get_by_role("button", name="暂不设置").first
+                            if await skip_btn.count() > 0 and await skip_btn.is_visible():
+                                await skip_btn.click()
+                                logger.info("已点击「暂不设置」处理「设置竖封面获更多流量」弹窗")
+                                USER_LOG.info("[步骤5/9 视频封面] 已关闭「设置竖封面获更多流量」弹窗（暂不设置）")
+                                await page.wait_for_timeout(800)
+                                return True
+                        except Exception:
+                            pass
+
+                        # 最后兜底：点击「设置竖封面」进入竖封面（旧行为，仍可关闭推广层）
+                        try:
+                            v_btn = modal.get_by_role("button", name="设置竖封面").first
+                            if await v_btn.count() > 0 and await v_btn.is_visible():
+                                await v_btn.click()
+                                logger.info("已点击「设置竖封面」处理「设置竖封面获更多流量」弹窗")
+                                USER_LOG.info("[步骤5/9 视频封面] 已处理「设置竖封面获更多流量」弹窗（点击设置竖封面）")
+                                await page.wait_for_timeout(800)
+                                return True
+                        except Exception:
+                            pass
+
+                        for btn_sel in (Selectors.PUBLISH.get("COVER_VERTICAL_PROMO_BTN") or []):
+                            try:
+                                if ">>" in btn_sel:
+                                    parts = [p.strip() for p in btn_sel.split(">>")]
+                                    btn = modal
+                                    for part in parts[1:]:
+                                        btn = btn.locator(part)
+                                    btn = btn.first
+                                else:
+                                    btn = modal.locator(btn_sel).first
+                                if await btn.count() > 0 and await btn.is_visible():
+                                    await btn.click()
+                                    logger.info("已点击「设置竖封面」关闭推荐弹窗（selector=%s）", btn_sel)
+                                    USER_LOG.info("[步骤5/9 视频封面] 已处理「设置竖封面获更多流量」弹窗（点击设置竖封面）")
+                                    await page.wait_for_timeout(800)
+                                    return True
+                            except Exception:
+                                continue
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+        return False
+
+    async def _dismiss_horizontal_cover_traffic_promo_if_present(self, page: Page) -> bool:
+        """若出现「设置横封面获更多流量」弹窗，则优先关闭；关闭不可用时点「设置横封面」进入流程，避免卡住。"""
+        for sel in (Selectors.PUBLISH.get("COVER_HORIZONTAL_TRAFFIC_PROMO_MODAL") or []):
             try:
                 modal = page.locator(sel).first
                 if await modal.count() == 0 or not await modal.is_visible():
                     continue
-                for btn_sel in (Selectors.PUBLISH.get("COVER_VERTICAL_PROMO_BTN") or []):
+
+                # 保险：确认标题文案存在，避免误关其它 dialog
+                try:
+                    title = modal.get_by_text("设置横封面获更多流量").first
+                    if await title.count() == 0 or not await title.is_visible():
+                        continue
+                except Exception:
+                    continue
+
+                # 优先按 DOM 报告：右上角 aria-label=关闭 的按钮
+                try:
+                    close_btn = modal.get_by_label("关闭").first
+                    if await close_btn.count() > 0 and await close_btn.is_visible():
+                        await close_btn.click()
+                        logger.info("已点击「关闭」处理「设置横封面获更多流量」弹窗")
+                        USER_LOG.info("[步骤5/9 视频封面] 已关闭「设置横封面获更多流量」弹窗")
+                        await page.wait_for_timeout(800)
+                        return True
+                except Exception:
+                    pass
+
+                # 兜底：部分版本 close 可能是「×」文本按钮
+                try:
+                    x_btn = modal.get_by_role("button", name=re.compile(r"^[×xX]$")).first
+                    if await x_btn.count() > 0 and await x_btn.is_visible():
+                        await x_btn.click()
+                        logger.info("已点击「×」处理「设置横封面获更多流量」弹窗")
+                        USER_LOG.info("[步骤5/9 视频封面] 已关闭「设置横封面获更多流量」弹窗")
+                        await page.wait_for_timeout(800)
+                        return True
+                except Exception:
+                    pass
+
+                # 兜底：尝试使用配置的关闭选择器（如果未来不再提供 aria-label）
+                for btn_sel in (Selectors.PUBLISH.get("COVER_HORIZONTAL_TRAFFIC_PROMO_CLOSE") or []):
                     try:
-                        # 弹窗内按钮必须在弹窗容器 scope 内定位
                         btn = modal.locator(btn_sel).first
                         if await btn.count() > 0 and await btn.is_visible():
                             await btn.click()
-                            logger.info("已点击「设置竖封面」关闭推荐弹窗")
-                            USER_LOG.info("[步骤5/8 视频封面] 已处理「设置竖封面获更多流量」弹窗，点击设置竖封面")
+                            logger.info("已点击关闭按钮（selector=%s）处理「设置横封面获更多流量」弹窗", btn_sel)
+                            USER_LOG.info("[步骤5/9 视频封面] 已关闭「设置横封面获更多流量」弹窗")
                             await page.wait_for_timeout(800)
                             return True
                     except Exception:
                         continue
+
+                # 兜底：直接点击弹窗内「设置横封面」进入横封面设置（你提到的替代方案）
+                for btn_sel in (Selectors.PUBLISH.get("COVER_HORIZONTAL_TRAFFIC_PROMO_PRIMARY_BTN") or []):
+                    try:
+                        btn = modal.locator(btn_sel).first
+                        if await btn.count() > 0 and await btn.is_visible():
+                            await btn.click()
+                            logger.info("已点击「设置横封面」处理「设置横封面获更多流量」弹窗")
+                            USER_LOG.info("[步骤5/9 视频封面] 已处理「设置横封面获更多流量」弹窗（点击设置横封面）")
+                            await page.wait_for_timeout(800)
+                            return True
+                    except Exception:
+                        continue
+
+                # 再兜底：点击「暂不设置」也会关闭弹窗（与报告一致）
+                try:
+                    skip_btn = modal.get_by_role("button", name="暂不设置").first
+                    if await skip_btn.count() > 0 and await skip_btn.is_visible():
+                        await skip_btn.click()
+                        logger.info("已点击「暂不设置」处理「设置横封面获更多流量」弹窗")
+                        USER_LOG.info("[步骤5/9 视频封面] 已关闭「设置横封面获更多流量」弹窗（暂不设置）")
+                        await page.wait_for_timeout(800)
+                        return True
+                except Exception:
+                    pass
+
                 break
             except Exception:
                 continue
@@ -273,10 +422,12 @@ class CoverVideoStep(BasePublishStep):
     ) -> Optional[PublishResult]:
         await self._await_pause(metadata)
         logger.info("封面弹窗已打开（视频），按配置执行: %s", cover_type)
-        USER_LOG.info("[步骤5/8 视频封面] ▶ 弹窗已打开，选择并确认")
+        USER_LOG.info("[步骤5/9 视频封面] ▶ 弹窗已打开，选择并确认")
 
-        # 有几率先出现「设置竖封面获更多流量」推荐弹窗，若出现则先点击「设置竖封面」再继续
+        # 有几率先出现「设置竖封面获更多流量」推荐弹窗：优先关闭/暂不设置，避免挡后续横封面流程
         await self._dismiss_vertical_cover_promo_if_present(page)
+        # 有的账号会弹出「设置横封面获更多流量」弹窗遮挡操作，先尝试关闭
+        await self._dismiss_horizontal_cover_traffic_promo_if_present(page)
 
         # 封面主弹窗 scope：弹窗内所有按钮/输入框都必须从此 scope 内查找
         cover_modal_scope: Optional[Locator] = None
@@ -289,14 +440,14 @@ class CoverVideoStep(BasePublishStep):
             except Exception:
                 continue
         if cover_modal_scope is None:
-            logger.warning("[步骤5/8 视频封面] 未找到封面弹窗 scope，按规范放弃弹窗内定位操作")
+            logger.warning("[步骤5/9 视频封面] 未找到封面弹窗 scope，按规范放弃弹窗内定位操作")
             return PublishResult(success=False, error_message="封面弹窗未就绪，无法按规范定位弹窗内按钮")
 
         # 分支一：本地图片封面 —— 点击上传封面 → 上传封面图片 → 上传成功后点击完成
         if cover_type == "custom" and cover_path:
             ok = await self._handle_cover_upload_local(page, cover_modal_scope, cover_path)
             if ok:
-                USER_LOG.info("[步骤5/8 视频封面] ✓ 已上传本地封面并确认")
+                USER_LOG.info("[步骤5/9 视频封面] ✓ 已上传本地封面并确认")
                 return None
             logger.warning("本地封面上传未成功，尝试首帧兜底")
 
@@ -305,6 +456,9 @@ class CoverVideoStep(BasePublishStep):
         # 1. 弹窗打开后点击「设置横封面」→ 弹窗切换到横封面卡片（图2）
         # 2. 点击「完成」→ 触发封面检测，主页面出现「封面效果检测通过」（图3）
         clicked_horizontal = False
+        # 弹窗可能在此时“晚出现”并遮挡按钮，点击前再扫一次
+        await self._dismiss_vertical_cover_promo_if_present(page)
+        await self._dismiss_horizontal_cover_traffic_promo_if_present(page)
         for sel in (Selectors.PUBLISH.get("COVER_HORIZONTAL_BTN") or []):
             try:
                 btn = cover_modal_scope.locator(sel).first
@@ -312,7 +466,7 @@ class CoverVideoStep(BasePublishStep):
                     await btn.click()
                     clicked_horizontal = True
                     logger.info("弹窗内已点击「设置横封面」: %s", sel)
-                    USER_LOG.info("[步骤5/8 视频封面] 已点击「设置横封面」")
+                    USER_LOG.info("[步骤5/9 视频封面] 已点击「设置横封面」")
                     break
             except Exception:
                 continue
@@ -322,6 +476,9 @@ class CoverVideoStep(BasePublishStep):
             return PublishResult(success=False, error_message="视频封面设置失败，未找到「设置横封面」按钮")
 
         # 等待「完成」按钮出现（横封面卡片切换后才出现），用 wait_for 事件驱动
+        # 在等待前再扫一次：有的账号会在切换横封面卡片后弹出引导弹窗
+        await self._dismiss_vertical_cover_promo_if_present(page)
+        await self._dismiss_horizontal_cover_traffic_promo_if_present(page)
         confirm_loc: Optional[Locator] = None
         for sel in (Selectors.PUBLISH.get("COVER_CONFIRM_BTN") or []):
             try:
@@ -329,13 +486,17 @@ class CoverVideoStep(BasePublishStep):
                 await loc.wait_for(state="visible", timeout=3000)
                 confirm_loc = loc
                 logger.info("已检测到「完成」按钮: %s", sel)
-                USER_LOG.info("[步骤5/8 视频封面] 已跳转到设置横封面卡片")
+                USER_LOG.info("[步骤5/9 视频封面] 已跳转到设置横封面卡片")
                 break
             except Exception:
                 continue
 
         if confirm_loc is None:
             logger.warning("未检测到「完成」按钮，尝试直接点击")
+
+        # 点击「完成」前再扫一次（竖向推广弹窗常在横封面 Tab 上出现）
+        await self._dismiss_vertical_cover_promo_if_present(page)
+        await self._dismiss_horizontal_cover_traffic_promo_if_present(page)
 
         # 点击「完成」
         clicked_confirm = False
@@ -346,7 +507,7 @@ class CoverVideoStep(BasePublishStep):
                     await btn.click()
                     clicked_confirm = True
                     logger.info("已点击「完成」按钮")
-                    USER_LOG.info("[步骤5/8 视频封面] 已点击「完成」")
+                    USER_LOG.info("[步骤5/9 视频封面] 已点击「完成」")
                     break
             except Exception:
                 continue
@@ -357,7 +518,7 @@ class CoverVideoStep(BasePublishStep):
 
         # 立即检测一次（弹窗关闭后封面检测可能瞬间完成）
         if await self._see_cover_success_indicator(page):
-            USER_LOG.info("[步骤5/8 视频封面] ✓ 封面设置成功")
+            USER_LOG.info("[步骤5/9 视频封面] ✓ 封面设置成功")
         return None
 
     async def _handle_cover_upload_local(self, page: Page, modal_scope: Locator, cover_path: str) -> bool:
@@ -384,6 +545,9 @@ class CoverVideoStep(BasePublishStep):
 
                     found_confirm = False
                     # 弹窗内固定顺序（图1→图2→图3）：先点「设置横封面」→ 等待 → 再点「完成」才触发封面检测
+                    # 弹窗可能在此时弹出并遮挡按钮，点击前先关闭
+                    await self._dismiss_vertical_cover_promo_if_present(page)
+                    await self._dismiss_horizontal_cover_traffic_promo_if_present(page)
                     for hor_sel in (Selectors.PUBLISH.get("COVER_HORIZONTAL_BTN") or []):
                         try:
                             btn_h = modal_scope.locator(hor_sel).first
@@ -393,6 +557,9 @@ class CoverVideoStep(BasePublishStep):
                                 break
                         except Exception:
                             continue
+
+                    await self._dismiss_vertical_cover_promo_if_present(page)
+                    await self._dismiss_horizontal_cover_traffic_promo_if_present(page)
 
                     for confirm_sel in Selectors.PUBLISH.get("COVER_CONFIRM_BTN", []):
                         try:

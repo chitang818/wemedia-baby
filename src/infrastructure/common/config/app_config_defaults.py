@@ -10,11 +10,24 @@ from __future__ import annotations
 import copy
 from typing import Any, Dict
 
+from src.domain.publish.work_declaration import (
+    DEFAULT_DOUYIN_VALUE,
+    DEFAULT_KUAISHOU_VALUE,
+    DEFAULT_XHS_CONTENT_ATTR,
+    KEY_DOUYIN,
+    KEY_DOUYIN_AUTO,
+    KEY_KUAISHOU,
+    KEY_KUAISHOU_AUTO,
+    KEY_XHS_CONTENT_ATTR,
+    KEY_XHS_CONTENT_ATTR_AUTO,
+    KEY_XHS_ORIGINAL,
+)
 from src.infrastructure.common.config.app_config_keys import (
     BATCH_PUBLISH_DESCRIPTION,
     BATCH_LOCATION,
     BATCH_LOCATION_POI_INFO,
     BATCH_LOCATION_WX_OPEN_PICKER,
+    BATCH_WORK_DECLARATION,
     KEY_BATCH_PUBLISH,
     KEY_PUBLISH_LIST,
     KEY_SINGLE_PUBLISH,
@@ -69,6 +82,15 @@ def default_app_config_skeleton() -> Dict[str, Any]:
                 "match_mode": "standard",
                 "random_category_id": None,
                 "copywriting_assign_strategy": "round_robin",
+            },
+            BATCH_WORK_DECLARATION: {
+                KEY_DOUYIN: DEFAULT_DOUYIN_VALUE,
+                KEY_KUAISHOU: DEFAULT_KUAISHOU_VALUE,
+                KEY_DOUYIN_AUTO: False,
+                KEY_KUAISHOU_AUTO: False,
+                KEY_XHS_ORIGINAL: False,
+                KEY_XHS_CONTENT_ATTR: DEFAULT_XHS_CONTENT_ATTR,
+                KEY_XHS_CONTENT_ATTR_AUTO: False,
             },
         },
         KEY_SINGLE_PUBLISH: {

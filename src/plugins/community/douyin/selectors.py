@@ -202,12 +202,34 @@ class Selectors:
             "text=/去设置.*横/",
         ],
         # 步骤5 有几率出现的「设置竖封面获更多流量」推荐弹窗：弹窗容器（class 含 verticalSupportDualCoverModal）
-        "COVER_VERTICAL_PROMO_MODAL": ["div.dy-creator-content-modal-content[class*='verticalSupportDualCoverModal']", "div[role='dialog']:has-text('设置竖封面获更多流量')"],
+        # 部分版本无 verticalSupportDualCoverModal / 无 role=dialog，用通用 modal + 文案兜底（步骤内会再结合「暂不设置」等排他）
+        "COVER_VERTICAL_PROMO_MODAL": [
+            "div.dy-creator-content-modal-content[class*='verticalSupportDualCoverModal']",
+            "div[role='dialog']:has-text('设置竖封面获更多流量')",
+            "div.dy-creator-content-modal-content:has-text('设置竖封面获更多流量')",
+        ],
         # 步骤5 上述推荐弹窗内的「设置竖封面」按钮（红底，点击后进入竖封面设置）
         "COVER_VERTICAL_PROMO_BTN": [
             "div.dy-creator-content-modal-content[class*='verticalSupportDualCoverModal'] >> span.semi-button-content:has-text('设置竖封面')",
             "div[role='dialog']:has-text('设置竖封面获更多流量') >> button:has-text('设置竖封面')",
             "div[role='dialog']:has-text('设置竖封面获更多流量') >> span.semi-button-content:has-text('设置竖封面')",
+        ],
+        # 步骤5 有几率出现的「设置横封面获更多流量」推荐弹窗（视频发布页封面环节自动弹出）
+        # DOM 报告稳定特征：role=dialog 且包含标题文案「设置横封面获更多流量」
+        "COVER_HORIZONTAL_TRAFFIC_PROMO_MODAL": [
+            "div[role='dialog']:has-text('设置横封面获更多流量')",
+            # 部分账号/版本可能未标注 role=dialog，兜底按通用 modal 容器 + 标题文案匹配
+            "div.dy-creator-content-modal-content:has-text('设置横封面获更多流量')",
+        ],
+        # 上述弹窗内右上角关闭按钮（aria-label=关闭）；步骤内也会用 get_by_label 做同等兜底
+        "COVER_HORIZONTAL_TRAFFIC_PROMO_CLOSE": [
+            "button[aria-label='关闭']",
+        ],
+        # 上述弹窗内主按钮「设置横封面」（若关闭按钮不可用，可直接点主按钮进入横封面设置）
+        "COVER_HORIZONTAL_TRAFFIC_PROMO_PRIMARY_BTN": [
+            "button:has-text('设置横封面')",
+            "span.semi-button-content:has-text('设置横封面')",
+            "text=/设置\\s*横封面/",
         ],
         # 步骤5 唯一匹配：设置竖封面页面的「完成」按钮
         # 真实 DOM：<button class="semi-button semi-button-primary semi-button-light primary-RstHX_"><span class="semi-button-content">完成</span></button>
@@ -242,7 +264,7 @@ class Selectors:
             "div.title-owSXGj:has-text('横/竖双封面缺失')",
             "div.suggest-uyKWlF:has(div.title-owSXGj:has-text('横/竖双封面缺失'))",
         ],
-        # 步骤6 图文：扩展信息「选择音乐」/ 选完后「修改音乐」
+        # 步骤7 图文：扩展信息「选择音乐」/ 选完后「修改音乐」
         # OpenClaw 20260405：入口为 role=button（报告 e411/e414）；旧版为 span.action-Q1y01k，两套都保留
         # 2026-04 实测 /content/post/image：左侧为字段名「选择音乐」，灰色条右侧铅笔旁才是可点入口（勿点整条灰条）。
         # 优先 container-right + span.action；通用 button 可能点到错误节点，放后。
@@ -268,7 +290,7 @@ class Selectors:
             "span.action-Q1y01k:has-text('修改音乐')",
             "[ref=e326]",  # 同上，修改音乐 ref 备选
         ],
-        # 音乐抽屉内搜索框（用于填关键字等；「抽屉是否已打开」判定见 step_06a_music._is_music_panel_open，勿用 type=search 等宽泛项）
+        # 音乐抽屉内搜索框（用于填关键字等；「抽屉是否已打开」判定见 step_07a_music._is_music_panel_open，勿用 type=search 等宽泛项）
         "MUSIC_PANEL_SEARCH_INPUT": [
             "input[placeholder='搜索音乐']",
             'input[placeholder*="搜索音乐"]',
@@ -286,32 +308,45 @@ class Selectors:
             "[ref=e929]",   # 旧报告 ref，备用
             "[ref=e1106]",
         ],
-        # 步骤6 音乐面板分类标签页（推荐/热门榜/收藏/飙升榜/原创榜/卡点/纯音乐/旅行/DJ/搞笑/流行/伤感）
+        # 步骤7 音乐面板分类标签页（推荐/热门榜/收藏/飙升榜/原创榜/卡点/纯音乐/旅行/DJ/搞笑/流行/伤感）
         # DOM 报告 20260405：标签页 role='tab'，ref=e648（推荐）/e649（热门榜）/e650（收藏）
         "MUSIC_PANEL_TABS": [
             "[role='tab']",
             "div[role='tablist'] [role='tab']",
         ],
-        # 步骤6 音乐面板：已选后显示的音乐名称区域（DOM 报告 20260405：ref=e406/e407）
+        # 步骤7 音乐面板：已选后显示的音乐名称区域（DOM 报告 20260405：ref=e406/e407）
         "MUSIC_SELECTED_NAME": [
             "[ref=e406]",   # 20260405 报告已选音乐显示区 ref
             "[ref=e407]",
             "[ref=e939]",   # 旧报告 ref，备用
             "[ref=e1343]",
         ],
-        # 步骤6 音乐面板：已选后显示的音乐时长区域（DOM 报告 20260405：ref=e1032）
+        # 步骤7 音乐面板：已选后显示的音乐时长区域（DOM 报告 20260405：ref=e1032）
         "MUSIC_SELECTED_DURATION": [
             "[ref=e1032]",  # 20260405 报告已选音乐时长 ref
             "[ref=e940]",
             "[ref=e1344]",
         ],
-        # 步骤6 音乐面板关闭按钮（DOM 报告 20260405：ref=e627）
+        # 步骤7 音乐面板关闭按钮（DOM 报告 20260405：ref=e627）
         "MUSIC_PANEL_CLOSE_BTN": [
             "[ref=e627]",   # 20260405 报告关闭按钮 ref
             "[ref=e538]",
             "[ref=e951]",
         ],
-        # 步骤6 视频扩展信息「添加标签」行（OpenClaw 抖音_视频发布DOM分析报告 §3.3）
+        # 步骤6 作品申明（step_06_work_declaration）— OpenClaw 20260511：button 入口 → dialog → radio → 确定
+        "WORK_DECLARATION_ROW_PLACEHOLDER": "请选择自主声明",
+        "WORK_DECLARATION_PLACEHOLDER_VARIANTS": (
+            "请选择自主声明",
+            "请选择自主申明",
+        ),
+        # 弹窗：Semi 为 div[role=modal]（见日志 semi-modal-wrap），不一定是 role=dialog
+        "WORK_DECLARATION_DIALOG_TITLE": "对作品内容添加声明",
+        "WORK_DECLARATION_DIALOG_CONFIRM_BTN": "确定",
+        "WORK_DECLARATION_DIALOG_CANCEL_BTN": "取消",
+        # 视频发布页实测：占位在 div.selectText-* 内，点击热区在含 controlWrapper-* 的祖先节点（非 div.semi-select）
+        "WORK_DECLARATION_ENTRY_SELECT_TEXT_CLASS_SUBSTR": "selectText",
+        "WORK_DECLARATION_ENTRY_CONTROL_WRAPPER_CLASS_SUBSTR": "controlWrapper",
+        # 步骤7 视频扩展信息「添加标签」行（OpenClaw 抖音_视频发布DOM分析报告 §3.3）
         # 结构：类型下拉（位置/团购/购物车/小程序）→ 打卡|带货 下拉（选「位置」时出现）→ 主输入框
         "EXTRA_ADD_TAG_LOCATION_INPUT": [
             "input[placeholder='输入地理位置']",
@@ -345,7 +380,7 @@ class Selectors:
             "[role='option']",
             "div[role='option']",
         ],
-        # 步骤8：发布按钮（L1 role/name=发布 由代码直接调用 get_by_role；L2 文案匹配；L3 哈希 class 易碎置后）
+        # 步骤9：发布按钮（L1 role/name=发布 由代码直接调用 get_by_role；L2 文案匹配；L3 哈希 class 易碎置后）
         # 说明：哈希类（primary-cECiOJ、button-dhlUZE 等）随版本变更会失效，优先用语义选择器
         "SUBMIT_BTN": [
             # Semi UI 主按钮：type=submit 或带 primary class
@@ -368,7 +403,7 @@ class Selectors:
 
 
     # ==========================================
-    # 4. 风控及异常（唯一匹配，步骤1/8 用）
+    # 4. 风控及异常（唯一匹配，步骤1/9 用）
     # ==========================================
     SECURITY = {
         # 步骤1 唯一匹配：风控/账号异常弹窗
@@ -394,7 +429,7 @@ class Selectors:
             "text=作品管理",
             "div:has-text('作品管理')",
         ],
-        # 步骤8 发布成功 Toast（多候选兜底，Toast 消失极快需尽快捕获）
+        # 步骤9 发布成功 Toast（多候选兜底，Toast 消失极快需尽快捕获）
         # 优先精确类名选择器，再退到文案匹配
         "SUCCESS_TOAST": "span.semi-toast-content-text:has-text('发布成功')",
         "SUCCESS_TOAST_ALT": [
@@ -406,7 +441,7 @@ class Selectors:
     }
 
     # ==========================================
-    # 6. 发布设置（步骤7，唯一匹配 DOM 见对照表）
+    # 6. 发布设置（步骤8，唯一匹配 DOM 见对照表）
     # ==========================================
     SETTINGS = {
         # 谁可以看：<label class="radio-d4zkru"> 内 <input class="radio-native-p6VBGt" value=0/2/1>
@@ -485,14 +520,14 @@ class Selectors:
         # step_05_cover_video.py：封面区域标记
         "COVER_AREA_MARKER": ["div.cover-Jg3T4p", "text=设置封面"],
         "COVER_AREA_PANEL": ["#DCPF div.cover-Jg3T4p", "div.cover-Jg3T4p"],
-        # step_06a_music.py：搜索框回退备选（与 MUSIC_PANEL_SEARCH_INPUT 兼容）
+        # step_07a_music.py：搜索框回退备选（与 MUSIC_PANEL_SEARCH_INPUT 兼容）
         "MUSIC_SEARCH_INPUT_TYPE": "input[type='search']",
-        # step_08_submit.py：发布成功 Toast 备用选择器
+        # step_09_submit.py：发布成功 Toast 备用选择器
         "TOAST_SUCCESS_ALT": [
             ".semi-toast-success:has-text('发布成功')",
             "text='发布成功'",
         ],
-        # step_07_settings.py：定时发布时间输入备选（日期选择器降级）
+        # step_08_settings.py：定时发布时间输入备选（日期选择器降级）
         "SCHEDULE_DATE_PICKER_ALT": [
             ".semi-datepicker-input input",
             "input.semi-input[placeholder='日期和时间']",

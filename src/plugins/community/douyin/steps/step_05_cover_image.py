@@ -3,7 +3,7 @@
 步骤5：图文封面（主链挂载，默认立即完成）
 文件路径: src/plugins/community/douyin/steps/step_05_cover_image.py
 
-默认：平台以首张上传图为封面，本步不操作 DOM，直接返回成功（与 Runner 的「步骤5/8 图文封面」日志一致）。
+默认：平台以首张上传图为封面，本步不操作 DOM，直接返回成功（与 Runner 的「步骤5/9 图文封面」日志一致）。
 仅在以下情况才执行原有点击/弹窗逻辑：
   - `metadata["image_cover_interactive"] is True`（强制走完整交互，含 first_frame 点首张）
   - 或 `cover_type == "custom"` 且提供 `cover_path`

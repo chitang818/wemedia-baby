@@ -38,6 +38,10 @@ from src.ui.pages.publish.task_field_display import (
     format_cart_info_table_cell,
     task_field_str_or_dash,
 )
+from src.domain.publish.work_declaration import (
+    ellipsize,
+    format_work_declaration_table_cell,
+)
 
 from .publish_records_page import (
     PublishRecordsPage,
@@ -163,7 +167,7 @@ class PublishRecycleBinPage(BasePage):
                 "作品标题",
                 "作品描述",
                 "发布时间",
-                "声明原创",
+                "作品申明",
                 "购物车",
                 "团购",
                 "位置",
@@ -192,7 +196,7 @@ class PublishRecycleBinPage(BasePage):
         self.records_table.setColumnWidth(8, 100)   # 作品标题
         self.records_table.setColumnWidth(9, 140)   # 作品描述
         self.records_table.setColumnWidth(10, 120)  # 发布时间
-        self.records_table.setColumnWidth(11, 70)   # 声明原创
+        self.records_table.setColumnWidth(11, 118)  # 作品申明
         self.records_table.setColumnWidth(12, 100)  # 购物车    短标题/✅/—
         self.records_table.setColumnWidth(13, 55)   # 团购      ✅/—
         self.records_table.setColumnWidth(14, 88)   # 位置
@@ -358,17 +362,17 @@ class PublishRecycleBinPage(BasePage):
 
             platform_id = (r.get("platform") or "").strip()
             try:
-                import json
-
-                ps_raw = r.get("privacy_settings") or "{}"
-                ps = json.loads(ps_raw)
-                is_original = (
-                    bool(ps.get("is_original", False)) if platform_id == "wechat_video" else False
+                full_wd = format_work_declaration_table_cell(
+                    platform_id,
+                    r.get("privacy_settings"),
+                    empty_display=TASK_FIELD_EMPTY_DISPLAY,
                 )
             except Exception:
-                is_original = False
-            original_display = "✅ 原创" if is_original else TASK_FIELD_EMPTY_DISPLAY
-            table.setItem(row, 11, QTableWidgetItem(original_display))
+                full_wd = TASK_FIELD_EMPTY_DISPLAY
+            short_wd = ellipsize(full_wd, 14)
+            item_wd = QTableWidgetItem(short_wd)
+            item_wd.setToolTip(full_wd if full_wd and full_wd != TASK_FIELD_EMPTY_DISPLAY else "")
+            table.setItem(row, 11, item_wd)
 
             cart_info = (r.get("cart_info") or "").strip()
             table.setItem(

@@ -90,23 +90,23 @@ def _log_description_topic_preprocess(description: str, tags_meta: List[str]) ->
             )
 
     USER_LOG.info(
-        "[步骤4/8 作品描述] ▶ 预处理：从文案解析到 %d 个话题「%s」",
+        "[步骤4/9 作品描述] ▶ 预处理：从文案解析到 %d 个话题「%s」",
         len(parsed),
         _format_topics_for_log(parsed),
     )
     if meta_norm:
         USER_LOG.info(
-            "[步骤4/8 作品描述] ▶ 预处理：任务携带 tags %d 项「%s」",
+            "[步骤4/9 作品描述] ▶ 预处理：任务携带 tags %d 项「%s」",
             len(meta_norm),
             _format_topics_for_log(meta_norm),
         )
     else:
         USER_LOG.info(
-            "[步骤4/8 作品描述] ▶ 预处理：任务未单独携带 tags（仅以文案为准）"
+            "[步骤4/9 作品描述] ▶ 预处理：任务未单独携带 tags（仅以文案为准）"
         )
     if len(parsed) != len(meta_norm):
         USER_LOG.warning(
-            "[步骤4/8 作品描述] ⚠ 文案解析话题数(%d) 与 tags 项数(%d) 不一致，请查任务配置/文案库",
+            "[步骤4/9 作品描述] ⚠ 文案解析话题数(%d) 与 tags 项数(%d) 不一致，请查任务配置/文案库",
             len(parsed),
             len(meta_norm),
         )
@@ -211,7 +211,7 @@ class MetadataFillStep(BasePublishStep):
             title_to_fill = title_to_fill[:_DOUYIN_TITLE_MAX]
             logger.warning("作品标题超过 %d 字已截断为: '%s'", _DOUYIN_TITLE_MAX, title_to_fill)
             USER_LOG.info(
-                "[步骤4/8 作品描述] ⚠ 标题超过 %d 字（原长 %d 字），已自动截取前 %d 字填写",
+                "[步骤4/9 作品描述] ⚠ 标题超过 %d 字（原长 %d 字），已自动截取前 %d 字填写",
                 _DOUYIN_TITLE_MAX,
                 len(title.strip()),
                 _DOUYIN_TITLE_MAX,
@@ -234,13 +234,13 @@ class MetadataFillStep(BasePublishStep):
                             await title_input.type(title_to_fill, delay=max(10, int(30 * speed_rate)))
                         logger.info(f"已填写标题: {selector}")
                         t_display = title_to_fill[:25] + "..." if len(title_to_fill) > 25 else title_to_fill or "（空）"
-                        USER_LOG.info(f"[步骤4/8 作品描述] ▶ 标题已填写：{t_display}")
+                        USER_LOG.info(f"[步骤4/9 作品描述] ▶ 标题已填写：{t_display}")
                         title_filled = True
                         break
                 except Exception:
                     continue
             if not title_filled:
-                USER_LOG.error("[步骤4/8 作品描述] ✗ 未找到标题输入框，终止发布")
+                USER_LOG.error("[步骤4/9 作品描述] ✗ 未找到标题输入框，终止发布")
                 return PublishResult(success=False, error_message="未找到标题输入框", failed_step="步骤4/作品描述")
 
         # 作品简介输入框：只使用 DESC_EDITOR 中第一个选择器（按 file_type 排序后取首个）
@@ -314,7 +314,7 @@ class MetadataFillStep(BasePublishStep):
                         )
                         if not (actual_text or "").strip():
                             logger.error("作品简介写入后验证失败：innerText 为空（sel=%s）", selector)
-                            USER_LOG.error("[步骤4/8 作品描述] ✗ 作品简介写入验证失败（innerText 为空），终止发布")
+                            USER_LOG.error("[步骤4/9 作品描述] ✗ 作品简介写入验证失败（innerText 为空），终止发布")
                             return PublishResult(success=False, error_message="作品简介写入验证失败：innerText 为空", failed_step="步骤4/作品描述")
                     except Exception as ve:
                         logger.warning("innerText 验证异常（sel=%s）: %s", selector, ve)
@@ -323,11 +323,11 @@ class MetadataFillStep(BasePublishStep):
                     desc_part = (description or title or "").strip()
                     desc_display = (desc_part[:35] + "...") if len(desc_part) > 35 else (desc_part or "（空）")
                     tag_count = len(tags) if isinstance(tags, list) and tags else 0
-                    USER_LOG.info(f"[步骤4/8 作品描述] ✓ 作品简介已填写：{desc_display}，已确认话题数={tag_count}")
+                    USER_LOG.info(f"[步骤4/9 作品描述] ✓ 作品简介已填写：{desc_display}，已确认话题数={tag_count}")
                     return None
             except Exception as e:
                 logger.warning(f"使用选择器 {selector} 填写失败: {e}")
                 continue
 
-        USER_LOG.error("[步骤4/8 作品描述] ✗ 未找到作品描述编辑器，终止发布")
+        USER_LOG.error("[步骤4/9 作品描述] ✗ 未找到作品描述编辑器，终止发布")
         return PublishResult(success=False, error_message="未找到作品描述编辑器", failed_step="步骤4/作品描述")

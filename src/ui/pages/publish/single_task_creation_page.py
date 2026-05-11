@@ -10,11 +10,12 @@
 from typing import Optional, List, Literal, Dict, Any, Tuple
 import json
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QFileDialog, QComboBox, QTextEdit, QLineEdit,
-    QFrame, QScrollArea, QButtonGroup, QDialog
+    QFrame, QScrollArea, QButtonGroup, QDialog, QStackedWidget,
+    QSizePolicy,
 )
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QFontMetrics, QPixmap
 from PySide6.QtCore import (
     Qt,
     Signal,
@@ -31,14 +32,29 @@ import os
 import asyncio
 
 from qfluentwidgets import (
-    CardWidget, SubtitleLabel, BodyLabel, PrimaryPushButton, 
+    CardWidget, SubtitleLabel, BodyLabel, PrimaryPushButton,
     PushButton, FluentIcon, IconWidget, LineEdit, TextEdit,
     ComboBox, ProgressRing, InfoBar, InfoBarPosition,
     TimePicker, CheckBox, SmoothScrollArea,
     ImageLabel, RadioButton, StateToolTip, SwitchButton,
-    isDarkTheme
+    isDarkTheme,
 )
 FLUENT_WIDGETS_AVAILABLE = True
+
+# 单条页「作品申明」堆叠页顺序（与 _create_work_declaration_settings_row 一致）
+_SINGLE_WD_PAGE_PROMPT = 0
+_SINGLE_WD_PAGE_MIXED = 1
+_SINGLE_WD_PAGE_WECHAT = 2
+_SINGLE_WD_PAGE_DOUYIN = 3
+_SINGLE_WD_PAGE_KUAISHOU = 4
+_SINGLE_WD_PAGE_XIAOHONGSHU = 5
+
+# 发布设置卡片：标签列、控件间距、下拉宽度（权限与作品申明共用，视觉对齐）
+_SETTINGS_LABEL_WIDTH = 72   # 四字标签 + 余量
+_SETTINGS_ROW_GAP = 14       # 行与行之间的竖向间距
+_SETTINGS_H_GAP = 10         # 标签与内容区之间 / 同行控件之间
+_SETTINGS_COMBO_WIDTH = 220  # 下拉框统一宽度（权限 & 申明）
+_WORK_DECLARATION_COMBO_WIDTH = _SETTINGS_COMBO_WIDTH
 
 from src.ui.components.fast_calendar_picker import create_fast_calendar_picker
 from src.ui.utils.fluent_tooltips import ToolTipPosition, apply_instructional_tooltip
@@ -698,6 +714,7 @@ class SingleTaskCreationPage(BasePage):
         
         # 将滚动区域添加到BasePage的内容布局中
         self.content_layout.addWidget(self.scroll_area)
+        self._refresh_work_declaration_ui()
 
     # ---------- UI 搭建：卡片与区块 (_create_*_card) ----------
     def _create_preview_card(self) -> QWidget:
@@ -854,30 +871,52 @@ class SingleTaskCreationPage(BasePage):
         cover_row.addSpacing(10) # 进一步拉开距离
         cover_row.addWidget(self.btn_browse_cover)
         cover_row.addWidget(self.btn_ai_cover) # 添加AI封面按钮
-        # 单视频：封面操作按钮右侧 — 按文件名作品编号从标准文案库带出标题与描述（与批量「标准文案库」规则一致）
+        cover_row.addWidget(self.cover_path_label, 1)
+        layout.addLayout(cover_row)
+        
+        return card
+    
+    def _create_description_card(self) -> QWidget:
+        """创建作品描述独立卡片"""
+        card = CardWidget(self)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
+        
+        # 标题 (作品描述)
+        title = SubtitleLabel("作品描述", card)
+        layout.addWidget(title)
+
+        # 单视频：文案库自动匹配（开关与模式在描述卡片内，与标题/简介输入区相邻）
         self._copywriting_auto_switch = None
         if not self._is_image_mode:
             cw_wrap = QWidget(card)
             cw_l = QHBoxLayout(cw_wrap)
             cw_l.setContentsMargins(0, 0, 0, 0)
-            cw_l.setSpacing(6)
+            cw_l.setSpacing(8)
             lbl_cw = BodyLabel("文案匹配", card)
             lbl_cw.setStyleSheet(f"color: {_theme_colors()['hint_text']};")
             self._copywriting_auto_switch = SwitchButton(card)
             self._copywriting_auto_switch.setOnText("开")
             self._copywriting_auto_switch.setOffText("关")
 
-            # 模式选择下拉框
             self._copywriting_mode_combo = ComboBox(card)
-            self._copywriting_mode_combo.setFixedWidth(100)
             self._copywriting_mode_combo.addItem("标准库", userData=CopywritingMatchMode.STANDARD)
             self._copywriting_mode_combo.addItem("随机(全库)", userData=CopywritingMatchMode.RANDOM_ALL)
             self._copywriting_mode_combo.addItem("随机(分类)", userData=CopywritingMatchMode.RANDOM_CATEGORY)
-            
-            # 随机分类下拉框
+            # Fluent ComboBox 为按钮绘制文案，固定过窄会截断「随机(全库)」等选项
+            _cw_fm = QFontMetrics(card.font())
+            _mode_text_w = max(
+                _cw_fm.horizontalAdvance(t)
+                for t in ("标准库", "随机(全库)", "随机(分类)")
+            )
+            self._copywriting_mode_combo.setMinimumWidth(_mode_text_w + 44)
+
             self._copywriting_category_combo = ComboBox(card)
-            self._copywriting_category_combo.setFixedWidth(120)
             self._copywriting_category_combo.hide()
+            self._copywriting_category_combo.setMinimumWidth(
+                max(160, _cw_fm.horizontalAdvance("选择分类...") + 44)
+            )
 
             _tip_cw = (
                 "开启后，自动填充作品标题与描述。\n"
@@ -894,43 +933,25 @@ class SingleTaskCreationPage(BasePage):
             cw_l.addWidget(self._copywriting_auto_switch, 0, Qt.AlignmentFlag.AlignVCenter)
             cw_l.addWidget(self._copywriting_mode_combo, 0, Qt.AlignmentFlag.AlignVCenter)
             cw_l.addWidget(self._copywriting_category_combo, 0, Qt.AlignmentFlag.AlignVCenter)
-            
-            cover_row.addWidget(cw_wrap, 0, Qt.AlignmentFlag.AlignVCenter)
-            
-            # 初始化状态
+            cw_l.addStretch(1)
+            layout.addWidget(cw_wrap)
+
             self._copywriting_auto_switch.blockSignals(True)
             self._copywriting_auto_switch.setChecked(load_persisted_single_auto_match_copywriting())
             self._copywriting_auto_switch.blockSignals(False)
-            
+
             mode = load_persisted_single_copywriting_match_mode()
             idx = self._copywriting_mode_combo.findData(mode)
             if idx >= 0:
                 self._copywriting_mode_combo.setCurrentIndex(idx)
-            
+
             self._copywriting_auto_switch.checkedChanged.connect(self._on_copywriting_auto_switch_changed)
             self._copywriting_mode_combo.currentIndexChanged.connect(self._on_copywriting_mode_changed)
             self._copywriting_category_combo.currentIndexChanged.connect(self._on_copywriting_category_changed)
-            
-            # 初始刷新分类列表和可见性
+
             QTimer.singleShot(0, self._refresh_copywriting_categories_async)
             self._update_copywriting_ui_visibility()
-        
-        cover_row.addWidget(self.cover_path_label, 1)
-        layout.addLayout(cover_row)
-        
-        return card
-    
-    def _create_description_card(self) -> QWidget:
-        """创建作品描述独立卡片"""
-        card = CardWidget(self)
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
-        
-        # 标题 (作品描述)
-        title = SubtitleLabel("作品描述", card)
-        layout.addWidget(title)
-        
+
         # 一体化容器
         entry_container = QFrame(card)
         entry_container.setObjectName("EntryContainer")
@@ -946,7 +967,7 @@ class SingleTaskCreationPage(BasePage):
             }}
         """)
         container_layout = QVBoxLayout(entry_container)
-        container_layout.setContentsMargins(16, 8, 16, 8)
+        container_layout.setContentsMargins(10, 4, 10, 4)
         container_layout.setSpacing(0)
         
         # (1) 标题行: 输入框 + 字数
@@ -954,7 +975,7 @@ class SingleTaskCreationPage(BasePage):
         self.title_edit = LineEdit(entry_container)
             
         self.title_edit.setPlaceholderText("填写作品标题，为作品获得更多流量")
-        self.title_edit.setStyleSheet("border: none; background: transparent; font-size: 14px; padding: 6px 0;")
+        self.title_edit.setStyleSheet("border: none; background: transparent; font-size: 14px; padding: 2px 0;")
         
         title_count_label = QLabel(f"0/{TITLE_MAX_LENGTH}", entry_container)
         title_count_label.setStyleSheet(f"color: {tc['count_text']}; font-size: 12px;")
@@ -967,21 +988,23 @@ class SingleTaskCreationPage(BasePage):
         line = QFrame(entry_container)
         line.setFrameShape(QFrame.HLine)
         line.setFrameShadow(QFrame.Plain)
-        line.setStyleSheet(f"background-color: {tc['separator']}; max-height: 1px; margin: 4px 0;")
+        line.setStyleSheet(f"background-color: {tc['separator']}; max-height: 1px; margin: 1px 0;")
         container_layout.addWidget(line)
         
         # (3) 描述文本区（QTextEdit 支持富文本，用于 #关键词+空格 话题高亮）
         self.desc_edit = QTextEdit(entry_container)
         self.desc_edit.setPlaceholderText("添加作品描述")
         self.desc_edit.setAcceptRichText(True)
-        self.desc_edit.setStyleSheet("border: none; background: transparent; font-size: 14px; padding: 10px 0;")
-        self.desc_edit.setMinimumHeight(80)
-        self.desc_edit.setMaximumHeight(160)
+        self.desc_edit.setStyleSheet("border: none; background: transparent; font-size: 14px; padding: 2px 0;")
+        # 更矮的编辑区：长文在框内滚动
+        self.desc_edit.setMinimumHeight(36)
+        self.desc_edit.setMaximumHeight(72)
+        self.desc_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         container_layout.addWidget(self.desc_edit)
         
         # (4) 底部工具栏: 话题、@常用词 + 话题数 + 字数统计
         toolbar_hbox = QHBoxLayout()
-        toolbar_hbox.setContentsMargins(0, 4, 0, 0)
+        toolbar_hbox.setContentsMargins(0, 0, 0, 0)
         
         self.btn_topic = PushButton("#添加话题", entry_container)
         self.btn_mention = PushButton("@好友", entry_container)
@@ -1303,60 +1326,592 @@ class SingleTaskCreationPage(BasePage):
         self._sync_location_entry_enabled_for_intent()
 
     def _create_settings_card(self) -> QWidget:
-        """创建发布设置卡片"""
+        """创建发布设置卡片。
+
+        三行表单：设置权限 / 作品申明 / 发布时间，共用标签列宽度与间距常量。
+        """
         card = CardWidget(self)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(20)
-        
-        LABEL_WIDTH = 100 # 左侧标签统一宽度
-        
-        # 标题 (发布设置)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(_SETTINGS_ROW_GAP)
+
+        # 标题
         title = SubtitleLabel("发布设置", card)
         layout.addWidget(title)
 
-        # --- 5. 权限设置 ---
+        # ── 第 1 行：设置权限 ──
         perm_row = QHBoxLayout()
+        perm_row.setContentsMargins(0, 0, 0, 0)
+        perm_row.setSpacing(_SETTINGS_H_GAP)
         perm_label = BodyLabel("设置权限", card)
-            
-        perm_label.setFixedWidth(LABEL_WIDTH)
-        
-        perm_vbox_row = QHBoxLayout()
+        perm_label.setFixedWidth(_SETTINGS_LABEL_WIDTH)
         self.privacy_combo = ComboBox(card)
+        self.privacy_combo.addItems(["公开可见", "好友可见", "私密"])
+        self.privacy_combo.setFixedWidth(_SETTINGS_COMBO_WIDTH)
         save_label = "允许他人保存作品" if self._is_image_mode else "允许保存视频"
         self.allow_download_check = CheckBox(save_label, card)
-        self.is_original_check = CheckBox("声明原创", card)
-        
-        self.privacy_combo.setFixedWidth(120)
-        self.privacy_combo.addItems(["公开可见", "好友可见", "私密"])
         self.allow_download_check.setChecked(True)
+        perm_row.addWidget(perm_label)
+        perm_row.addWidget(self.privacy_combo)
+        perm_row.addWidget(self.allow_download_check)
+        perm_row.addStretch(1)
+        layout.addLayout(perm_row)
+
+        # ── 第 2 行：作品申明 ──
+        self._create_work_declaration_settings_row(card, layout)
+
+        # ── 第 3 行：发布时间 ──
+        schedule_row = QHBoxLayout()
+        schedule_row.setContentsMargins(0, 0, 0, 0)
+        schedule_row.setSpacing(_SETTINGS_H_GAP)
+        schedule_label = BodyLabel("发布时间", card)
+        schedule_label.setFixedWidth(_SETTINGS_LABEL_WIDTH)
+        schedule_content = QVBoxLayout()
+        schedule_content.setContentsMargins(0, 0, 0, 0)
+        schedule_content.setSpacing(0)
+        self._init_schedule_ui(schedule_content, card)
+        schedule_row.addWidget(schedule_label)
+        schedule_row.addLayout(schedule_content, 1)
+        layout.addLayout(schedule_row)
+
+        return card
+
+    def _create_work_declaration_settings_row(
+        self, card: QWidget, layout: QVBoxLayout
+    ) -> None:
+        """发布设置内「作品申明」行：左侧标签 + QStackedWidget 切换各平台控件。"""
+        from src.domain.publish.work_declaration import (
+            DOUYIN_CHOICES,
+            KUAISHOU_CHOICES,
+            XHS_CONTENT_ATTR_CHOICES,
+        )
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(_SETTINGS_H_GAP)
+        wd_label = BodyLabel("作品申明", card)
+        wd_label.setFixedWidth(_SETTINGS_LABEL_WIDTH)
+        self._wd_stack = QStackedWidget(card)
+        self._wd_stack.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
+        )
+
+        # ---------- 各平台页面（统一 QHBoxLayout，零边距）----------
+
+        def _page_hbox(parent: QWidget) -> tuple:
+            w = QWidget(parent)
+            h = QHBoxLayout(w)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(_SETTINGS_H_GAP)
+            return w, h
+
+        # 0 - 未选账号
+        p0, p0l = _page_hbox(card)
+        self._wd_stack_prompt_label = BodyLabel("请先选择发布账号", p0)
+        self._wd_stack_prompt_label.setStyleSheet("color: #888;")
+        p0l.addWidget(self._wd_stack_prompt_label)
+        p0l.addStretch(1)
+        self._wd_stack.addWidget(p0)
+
+        # 1 - 多平台账号组
+        p1, p1l = _page_hbox(card)
+        _p1t = BodyLabel("组内含多平台，将按各平台已保存的申明分别生效", p1)
+        _p1t.setStyleSheet("color: #888;")
+        p1l.addWidget(_p1t)
+        p1l.addStretch(1)
+        self._wd_stack.addWidget(p1)
+
+        # 2 - 视频号
+        p2, p2l = _page_hbox(card)
+        self.is_original_check = CheckBox("申明原创", p2)
+        apply_instructional_tooltip(
+            "仅对视频号发布任务生效。",
+            self.is_original_check,
+            position=ToolTipPosition.BOTTOM,
+        )
         self.is_original_check.blockSignals(True)
         self.is_original_check.setChecked(load_persisted_single_declare_original())
         self.is_original_check.blockSignals(False)
         self.is_original_check.stateChanged.connect(self._persist_single_declare_original)
+        p2l.addWidget(self.is_original_check)
+        p2l.addStretch(1)
+        self._wd_stack.addWidget(p2)
 
-        perm_vbox_row.addWidget(self.privacy_combo)
-        perm_vbox_row.addWidget(self.allow_download_check)
-        perm_vbox_row.addWidget(self.is_original_check)
-        perm_vbox_row.addStretch()
-        
-        perm_row.addWidget(perm_label)
-        perm_row.addLayout(perm_vbox_row)
-        layout.addLayout(perm_row)
+        # 3 - 抖音
+        p3, p3l = _page_hbox(card)
+        self._wd_dy_auto = CheckBox("发布时自动勾选", p3)
+        apply_instructional_tooltip(
+            "勾选后发布时自动在网页上选中对应申明",
+            self._wd_dy_auto,
+            position=ToolTipPosition.BOTTOM,
+        )
+        self._wd_dy_combo = ComboBox(p3)
+        apply_instructional_tooltip(
+            "与抖音发布页「作品申明」选项一致",
+            self._wd_dy_combo,
+            position=ToolTipPosition.BOTTOM,
+        )
+        for val, text in DOUYIN_CHOICES:
+            self._wd_dy_combo.addItem(text, userData=val)
+        self._wd_dy_combo.setFixedWidth(_SETTINGS_COMBO_WIDTH)
+        p3l.addWidget(self._wd_dy_auto)
+        p3l.addWidget(self._wd_dy_combo)
+        p3l.addStretch(1)
+        self._wd_stack.addWidget(p3)
 
-        # --- 6. 定时发布 ---
-        schedule_row = QHBoxLayout()
-        schedule_label = BodyLabel("发布时间", card)
-        schedule_label.setFixedWidth(LABEL_WIDTH)
-        
-        schedule_content_vbox = QVBoxLayout()
-        self._init_schedule_ui(schedule_content_vbox, card)
-        
-        schedule_row.addWidget(schedule_label)
-        schedule_row.addLayout(schedule_content_vbox)
-        layout.addLayout(schedule_row)
-        
-        return card
+        # 4 - 快手
+        p4, p4l = _page_hbox(card)
+        self._wd_ks_auto = CheckBox("发布时自动勾选", p4)
+        apply_instructional_tooltip(
+            "勾选后发布时自动在网页上选中对应申明",
+            self._wd_ks_auto,
+            position=ToolTipPosition.BOTTOM,
+        )
+        self._wd_ks_combo = ComboBox(p4)
+        apply_instructional_tooltip(
+            "与快手发布页申明类选项一致",
+            self._wd_ks_combo,
+            position=ToolTipPosition.BOTTOM,
+        )
+        for val, text in KUAISHOU_CHOICES:
+            self._wd_ks_combo.addItem(text, userData=val)
+        self._wd_ks_combo.setFixedWidth(_SETTINGS_COMBO_WIDTH)
+        p4l.addWidget(self._wd_ks_auto)
+        p4l.addWidget(self._wd_ks_combo)
+        p4l.addStretch(1)
+        self._wd_stack.addWidget(p4)
+
+        # 5 - 小红书
+        p5, p5l = _page_hbox(card)
+        self._wd_xhs_orig = CheckBox("申明原创", p5)
+        apply_instructional_tooltip(
+            "与「内容属性」无关，可分别设置",
+            self._wd_xhs_orig,
+            position=ToolTipPosition.BOTTOM,
+        )
+        self._wd_xhs_attr_auto = CheckBox("属性自动勾选", p5)
+        apply_instructional_tooltip(
+            "勾选后发布时自动设置内容属性",
+            self._wd_xhs_attr_auto,
+            position=ToolTipPosition.BOTTOM,
+        )
+        self._wd_xhs_combo = ComboBox(p5)
+        apply_instructional_tooltip(
+            "小红书发布页「内容属性」选项",
+            self._wd_xhs_combo,
+            position=ToolTipPosition.BOTTOM,
+        )
+        for val, text in XHS_CONTENT_ATTR_CHOICES:
+            self._wd_xhs_combo.addItem(text, userData=val)
+        self._wd_xhs_combo.setFixedWidth(_SETTINGS_COMBO_WIDTH)
+        p5l.addWidget(self._wd_xhs_orig)
+        p5l.addWidget(self._wd_xhs_attr_auto)
+        p5l.addWidget(self._wd_xhs_combo)
+        p5l.addStretch(1)
+        self._wd_stack.addWidget(p5)
+
+        # 信号连接
+        self._wd_dy_combo.currentIndexChanged.connect(self._on_wd_douyin_user_changed)
+        self._wd_dy_auto.toggled.connect(self._on_wd_douyin_auto_toggled)
+        self._wd_ks_combo.currentIndexChanged.connect(self._on_wd_kuaishou_user_changed)
+        self._wd_ks_auto.toggled.connect(self._on_wd_kuaishou_auto_toggled)
+        self._wd_xhs_orig.stateChanged.connect(self._on_wd_xiaohongshu_user_changed)
+        self._wd_xhs_attr_auto.toggled.connect(self._on_wd_xhs_attr_auto_toggled)
+        self._wd_xhs_combo.currentIndexChanged.connect(self._on_wd_xiaohongshu_user_changed)
+
+        row.addWidget(wd_label)
+        row.addWidget(self._wd_stack, 1)
+        layout.addLayout(row)
+        self._update_work_declaration_auto_combos_enabled()
+
+    def _work_declaration_effective_context(self) -> str:
+        """返回当前应展示的作品申明上下文：平台 id、mixed、none。"""
+        sel = getattr(self, "selected_account", None)
+        if not sel or not isinstance(sel, dict):
+            return "none"
+        if sel.get("type") == "account":
+            acc = sel.get("data") or {}
+            p = (acc.get("platform") or "").strip()
+            return p if p else "none"
+        if sel.get("type") == "group":
+            grp = sel.get("data") or {}
+            plats: List[str] = []
+            for a in grp.get("accounts") or []:
+                if not isinstance(a, dict):
+                    continue
+                x = (a.get("platform") or "").strip()
+                if x:
+                    plats.append(x)
+            if not plats:
+                for x in grp.get("platforms") or []:
+                    if isinstance(x, str) and x.strip():
+                        plats.append(x.strip())
+            uniq = list(dict.fromkeys(plats))
+            if len(uniq) == 1:
+                return uniq[0]
+            if len(uniq) > 1:
+                return "mixed"
+            return "none"
+        return "none"
+
+    def _wd_set_syncing(self, syncing: bool) -> None:
+        self._wd_syncing = bool(syncing)
+
+    def _update_work_declaration_auto_combos_enabled(self) -> None:
+        """「自动勾选」复选框未勾选时禁用对应申明下拉，勾选后启用。"""
+        if getattr(self, "_wd_dy_auto", None) and getattr(self, "_wd_dy_combo", None):
+            self._wd_dy_combo.setEnabled(self._wd_dy_auto.isChecked())
+        if getattr(self, "_wd_ks_auto", None) and getattr(self, "_wd_ks_combo", None):
+            self._wd_ks_combo.setEnabled(self._wd_ks_auto.isChecked())
+        if getattr(self, "_wd_xhs_attr_auto", None) and getattr(self, "_wd_xhs_combo", None):
+            self._wd_xhs_combo.setEnabled(self._wd_xhs_attr_auto.isChecked())
+
+    def _on_wd_douyin_auto_toggled(self, _checked: bool) -> None:
+        self._update_work_declaration_auto_combos_enabled()
+        self._on_wd_douyin_user_changed()
+
+    def _on_wd_kuaishou_auto_toggled(self, _checked: bool) -> None:
+        self._update_work_declaration_auto_combos_enabled()
+        self._on_wd_kuaishou_user_changed()
+
+    def _on_wd_xhs_attr_auto_toggled(self, _checked: bool) -> None:
+        self._update_work_declaration_auto_combos_enabled()
+        self._on_wd_xiaohongshu_user_changed()
+
+    def _persist_work_declaration_merge(self, updates: Dict[str, Any]) -> None:
+        """合并写入全局「作品申明」偏好（与批量页共用 batch_publish.work_declaration）。"""
+        from src.ui.publish.work_description.publish_description_dialog import (
+            load_persisted_work_declaration,
+            save_persisted_work_declaration,
+        )
+
+        cur = load_persisted_work_declaration()
+        cur.update(updates)
+        save_persisted_work_declaration(cur)
+
+    def _on_wd_douyin_user_changed(self, *_args) -> None:
+        if getattr(self, "_wd_syncing", False):
+            return
+        from src.domain.publish.work_declaration import (
+            KEY_DOUYIN,
+            KEY_DOUYIN_AUTO,
+            normalize_douyin_value,
+        )
+
+        c = getattr(self, "_wd_dy_combo", None)
+        s = getattr(self, "_wd_dy_auto", None)
+        if c is None or s is None:
+            return
+        raw = c.currentData()
+        if raw is None and c.currentIndex() >= 0:
+            raw = c.itemData(c.currentIndex())
+        self._persist_work_declaration_merge({
+            KEY_DOUYIN: normalize_douyin_value(str(raw or "") or None),
+            KEY_DOUYIN_AUTO: bool(s.isChecked()),
+        })
+
+    def _on_wd_kuaishou_user_changed(self, *_args) -> None:
+        if getattr(self, "_wd_syncing", False):
+            return
+        from src.domain.publish.work_declaration import (
+            KEY_KUAISHOU,
+            KEY_KUAISHOU_AUTO,
+            normalize_kuaishou_value,
+        )
+
+        c = getattr(self, "_wd_ks_combo", None)
+        s = getattr(self, "_wd_ks_auto", None)
+        if c is None or s is None:
+            return
+        raw = c.currentData()
+        if raw is None and c.currentIndex() >= 0:
+            raw = c.itemData(c.currentIndex())
+        self._persist_work_declaration_merge({
+            KEY_KUAISHOU: normalize_kuaishou_value(str(raw or "") or None),
+            KEY_KUAISHOU_AUTO: bool(s.isChecked()),
+        })
+
+    def _on_wd_xiaohongshu_user_changed(self, *_args) -> None:
+        if getattr(self, "_wd_syncing", False):
+            return
+        from src.domain.publish.work_declaration import (
+            KEY_XHS_CONTENT_ATTR,
+            KEY_XHS_CONTENT_ATTR_AUTO,
+            KEY_XHS_ORIGINAL,
+            normalize_xhs_content_attr,
+        )
+
+        co = getattr(self, "_wd_xhs_combo", None)
+        sw = getattr(self, "_wd_xhs_attr_auto", None)
+        chk = getattr(self, "_wd_xhs_orig", None)
+        if co is None or sw is None or chk is None:
+            return
+        raw = co.currentData()
+        if raw is None and co.currentIndex() >= 0:
+            raw = co.itemData(co.currentIndex())
+        self._persist_work_declaration_merge({
+            KEY_XHS_ORIGINAL: bool(chk.isChecked()),
+            KEY_XHS_CONTENT_ATTR: normalize_xhs_content_attr(str(raw or "") or None),
+            KEY_XHS_CONTENT_ATTR_AUTO: bool(sw.isChecked()),
+        })
+
+    def _sync_work_declaration_widgets_from_storage(self) -> None:
+        """从本地偏好加载各平台申明控件（不改变当前 QStackedWidget 页）。"""
+        from src.domain.publish.work_declaration import (
+            KEY_DOUYIN,
+            KEY_DOUYIN_AUTO,
+            KEY_KUAISHOU,
+            KEY_KUAISHOU_AUTO,
+            KEY_XHS_CONTENT_ATTR,
+            KEY_XHS_CONTENT_ATTR_AUTO,
+            KEY_XHS_ORIGINAL,
+            normalize_douyin_value,
+            normalize_kuaishou_value,
+            normalize_xhs_content_attr,
+        )
+        from src.ui.publish.work_description.publish_description_dialog import (
+            load_persisted_work_declaration,
+        )
+
+        self._wd_set_syncing(True)
+        try:
+            wd = load_persisted_work_declaration()
+            dy = normalize_douyin_value(str(wd.get(KEY_DOUYIN) or "") or None)
+            ks = normalize_kuaishou_value(str(wd.get(KEY_KUAISHOU) or "") or None)
+            if getattr(self, "_wd_dy_combo", None):
+                c = self._wd_dy_combo
+                c.blockSignals(True)
+                for i in range(c.count()):
+                    if c.itemData(i) == dy:
+                        c.setCurrentIndex(i)
+                        break
+                c.blockSignals(False)
+            if getattr(self, "_wd_dy_auto", None):
+                self._wd_dy_auto.blockSignals(True)
+                self._wd_dy_auto.setChecked(bool(wd.get(KEY_DOUYIN_AUTO, False)))
+                self._wd_dy_auto.blockSignals(False)
+            if getattr(self, "_wd_ks_combo", None):
+                c = self._wd_ks_combo
+                c.blockSignals(True)
+                for i in range(c.count()):
+                    if c.itemData(i) == ks:
+                        c.setCurrentIndex(i)
+                        break
+                c.blockSignals(False)
+            if getattr(self, "_wd_ks_auto", None):
+                self._wd_ks_auto.blockSignals(True)
+                self._wd_ks_auto.setChecked(bool(wd.get(KEY_KUAISHOU_AUTO, False)))
+                self._wd_ks_auto.blockSignals(False)
+            if getattr(self, "_wd_xhs_orig", None):
+                self._wd_xhs_orig.blockSignals(True)
+                self._wd_xhs_orig.setChecked(bool(wd.get(KEY_XHS_ORIGINAL, False)))
+                self._wd_xhs_orig.blockSignals(False)
+            if getattr(self, "_wd_xhs_attr_auto", None):
+                self._wd_xhs_attr_auto.blockSignals(True)
+                self._wd_xhs_attr_auto.setChecked(bool(wd.get(KEY_XHS_CONTENT_ATTR_AUTO, False)))
+                self._wd_xhs_attr_auto.blockSignals(False)
+            xv = normalize_xhs_content_attr(str(wd.get(KEY_XHS_CONTENT_ATTR) or "") or None)
+            if getattr(self, "_wd_xhs_combo", None):
+                c = self._wd_xhs_combo
+                c.blockSignals(True)
+                for i in range(c.count()):
+                    if c.itemData(i) == xv:
+                        c.setCurrentIndex(i)
+                        break
+                c.blockSignals(False)
+            if hasattr(self, "is_original_check") and self.is_original_check:
+                self.is_original_check.blockSignals(True)
+                self.is_original_check.setChecked(load_persisted_single_declare_original())
+                self.is_original_check.blockSignals(False)
+        finally:
+            self._wd_set_syncing(False)
+            self._update_work_declaration_auto_combos_enabled()
+
+    def _apply_work_declaration_from_privacy_dict(self, ps: Dict[str, Any]) -> None:
+        """从发布记录 privacy_settings dict 回填作品申明控件。"""
+        from src.domain.publish.work_declaration import (
+            KEY_DOUYIN,
+            KEY_DOUYIN_AUTO,
+            KEY_IS_ORIGINAL,
+            KEY_KUAISHOU,
+            KEY_KUAISHOU_AUTO,
+            KEY_XHS_CONTENT_ATTR,
+            KEY_XHS_CONTENT_ATTR_AUTO,
+            KEY_XHS_ORIGINAL,
+            declaration_auto_apply,
+            normalize_douyin_value,
+            normalize_kuaishou_value,
+            normalize_xhs_content_attr,
+        )
+
+        self._wd_set_syncing(True)
+        try:
+            if hasattr(self, "is_original_check") and self.is_original_check:
+                self.is_original_check.blockSignals(True)
+                self.is_original_check.setChecked(bool(ps.get(KEY_IS_ORIGINAL, False)))
+                self.is_original_check.blockSignals(False)
+            dy = normalize_douyin_value(str(ps.get(KEY_DOUYIN) or "") or None)
+            if getattr(self, "_wd_dy_combo", None):
+                c = self._wd_dy_combo
+                c.blockSignals(True)
+                for i in range(c.count()):
+                    if c.itemData(i) == dy:
+                        c.setCurrentIndex(i)
+                        break
+                c.blockSignals(False)
+            if getattr(self, "_wd_dy_auto", None):
+                self._wd_dy_auto.blockSignals(True)
+                self._wd_dy_auto.setChecked(declaration_auto_apply(ps, KEY_DOUYIN_AUTO))
+                self._wd_dy_auto.blockSignals(False)
+            ks = normalize_kuaishou_value(str(ps.get(KEY_KUAISHOU) or "") or None)
+            if getattr(self, "_wd_ks_combo", None):
+                c = self._wd_ks_combo
+                c.blockSignals(True)
+                for i in range(c.count()):
+                    if c.itemData(i) == ks:
+                        c.setCurrentIndex(i)
+                        break
+                c.blockSignals(False)
+            if getattr(self, "_wd_ks_auto", None):
+                self._wd_ks_auto.blockSignals(True)
+                self._wd_ks_auto.setChecked(declaration_auto_apply(ps, KEY_KUAISHOU_AUTO))
+                self._wd_ks_auto.blockSignals(False)
+            if getattr(self, "_wd_xhs_orig", None):
+                self._wd_xhs_orig.blockSignals(True)
+                self._wd_xhs_orig.setChecked(bool(ps.get(KEY_XHS_ORIGINAL, False)))
+                self._wd_xhs_orig.blockSignals(False)
+            if getattr(self, "_wd_xhs_attr_auto", None):
+                self._wd_xhs_attr_auto.blockSignals(True)
+                self._wd_xhs_attr_auto.setChecked(
+                    declaration_auto_apply(ps, KEY_XHS_CONTENT_ATTR_AUTO)
+                )
+                self._wd_xhs_attr_auto.blockSignals(False)
+            xv = normalize_xhs_content_attr(str(ps.get(KEY_XHS_CONTENT_ATTR) or "") or None)
+            if getattr(self, "_wd_xhs_combo", None):
+                c = self._wd_xhs_combo
+                c.blockSignals(True)
+                for i in range(c.count()):
+                    if c.itemData(i) == xv:
+                        c.setCurrentIndex(i)
+                        break
+                c.blockSignals(False)
+        finally:
+            self._wd_set_syncing(False)
+            self._update_work_declaration_auto_combos_enabled()
+
+    def _refresh_work_declaration_ui(self, *, sync_from_storage: bool = True) -> None:
+        """根据当前所选账号切换作品申明堆叠页；sync_from_storage 为 True 时从本地偏好刷新控件。"""
+        stack = getattr(self, "_wd_stack", None)
+        if stack is None:
+            return
+        ctx = self._work_declaration_effective_context()
+        if sync_from_storage:
+            self._sync_work_declaration_widgets_from_storage()
+        if ctx == "none":
+            if getattr(self, "_wd_stack_prompt_label", None):
+                self._wd_stack_prompt_label.setText("请先选择发布账号")
+            stack.setCurrentIndex(_SINGLE_WD_PAGE_PROMPT)
+        elif ctx == "mixed":
+            stack.setCurrentIndex(_SINGLE_WD_PAGE_MIXED)
+        elif ctx == "wechat_video":
+            stack.setCurrentIndex(_SINGLE_WD_PAGE_WECHAT)
+        elif ctx == "douyin":
+            stack.setCurrentIndex(_SINGLE_WD_PAGE_DOUYIN)
+        elif ctx == "kuaishou":
+            stack.setCurrentIndex(_SINGLE_WD_PAGE_KUAISHOU)
+        elif ctx == "xiaohongshu":
+            stack.setCurrentIndex(_SINGLE_WD_PAGE_XIAOHONGSHU)
+        else:
+            if getattr(self, "_wd_stack_prompt_label", None):
+                self._wd_stack_prompt_label.setText(
+                    "本平台暂不支持在此配置申明，不影响发布。"
+                )
+            stack.setCurrentIndex(_SINGLE_WD_PAGE_PROMPT)
+
+    def _compose_privacy_settings_json_for_platform(self, account_platform: str) -> str:
+        """组装 privacy_settings JSON 并按任务平台裁剪申明键。"""
+        from src.domain.publish.work_declaration import (
+            KEY_DOUYIN,
+            KEY_DOUYIN_AUTO,
+            KEY_IS_ORIGINAL,
+            KEY_KUAISHOU,
+            KEY_KUAISHOU_AUTO,
+            KEY_XHS_CONTENT_ATTR,
+            KEY_XHS_CONTENT_ATTR_AUTO,
+            KEY_XHS_ORIGINAL,
+            normalize_douyin_value,
+            normalize_kuaishou_value,
+            normalize_xhs_content_attr,
+            strip_privacy_declaration_keys_for_platform,
+        )
+        from src.ui.publish.work_description.publish_description_dialog import (
+            load_persisted_work_declaration,
+        )
+
+        privacy = "public"
+        if hasattr(self, "privacy_combo"):
+            p_text = self.privacy_combo.currentText()
+            if "好友" in p_text:
+                privacy = "friend"
+            elif "私密" in p_text:
+                privacy = "private"
+            elif "粉丝" in p_text:
+                privacy = "fans"
+
+        allow_dl = True
+        if hasattr(self, "allow_download_check") and self.allow_download_check:
+            allow_dl = self.allow_download_check.isChecked()
+
+        wd = load_persisted_work_declaration()
+        ctx = self._work_declaration_effective_context()
+
+        is_orig = load_persisted_single_declare_original()
+        if ctx == "wechat_video" and hasattr(self, "is_original_check") and self.is_original_check:
+            is_orig = self.is_original_check.isChecked()
+
+        if ctx == "douyin":
+            c = getattr(self, "_wd_dy_combo", None)
+            s = getattr(self, "_wd_dy_auto", None)
+            if c is not None:
+                raw = c.currentData()
+                if raw is None and c.currentIndex() >= 0:
+                    raw = c.itemData(c.currentIndex())
+                wd[KEY_DOUYIN] = normalize_douyin_value(str(raw or "") or None)
+            if s is not None:
+                wd[KEY_DOUYIN_AUTO] = bool(s.isChecked())
+        elif ctx == "kuaishou":
+            c = getattr(self, "_wd_ks_combo", None)
+            s = getattr(self, "_wd_ks_auto", None)
+            if c is not None:
+                raw = c.currentData()
+                if raw is None and c.currentIndex() >= 0:
+                    raw = c.itemData(c.currentIndex())
+                wd[KEY_KUAISHOU] = normalize_kuaishou_value(str(raw or "") or None)
+            if s is not None:
+                wd[KEY_KUAISHOU_AUTO] = bool(s.isChecked())
+        elif ctx == "xiaohongshu":
+            co = getattr(self, "_wd_xhs_combo", None)
+            sw = getattr(self, "_wd_xhs_attr_auto", None)
+            chk = getattr(self, "_wd_xhs_orig", None)
+            if chk is not None:
+                wd[KEY_XHS_ORIGINAL] = bool(chk.isChecked())
+            if sw is not None:
+                wd[KEY_XHS_CONTENT_ATTR_AUTO] = bool(sw.isChecked())
+            if co is not None:
+                raw = co.currentData()
+                if raw is None and co.currentIndex() >= 0:
+                    raw = co.itemData(co.currentIndex())
+                wd[KEY_XHS_CONTENT_ATTR] = normalize_xhs_content_attr(str(raw or "") or None)
+
+        full_ps: Dict[str, Any] = {
+            "privacy": privacy,
+            "allow_download": allow_dl,
+            KEY_IS_ORIGINAL: bool(is_orig),
+            **wd,
+        }
+        raw = json.dumps(full_ps, ensure_ascii=False)
+        plat = (account_platform or "").strip()
+        return strip_privacy_declaration_keys_for_platform(raw, plat)
 
     def _persist_single_declare_original(self, _state: int = 0) -> None:
         """用户勾选变更时写入本地，下次启动恢复。"""
@@ -1510,41 +2065,32 @@ class SingleTaskCreationPage(BasePage):
 
     def _init_schedule_ui(self, layout, parent):
         """初始化定时发布UI (立即/定时)"""
-        # 1. 选项行 (立即发布 vs 定时发布)
         option_row = QHBoxLayout()
         option_row.setContentsMargins(0, 0, 0, 0)
-        option_row.setSpacing(20)
-        
+        option_row.setSpacing(_SETTINGS_H_GAP)
+
         self.radio_now = RadioButton("立即发布")
         self.radio_schedule = RadioButton("定时发布")
         self.radio_now.setChecked(True)
-        # 禁用焦点防止滚动条跳动
         self.radio_now.setFocusPolicy(Qt.NoFocus)
         self.radio_schedule.setFocusPolicy(Qt.NoFocus)
-        
-        # 逻辑互斥组
+
         self.publish_time_group = QButtonGroup(parent)
         self.publish_time_group.addButton(self.radio_now)
         self.publish_time_group.addButton(self.radio_schedule)
-        
-        option_row.addWidget(self.radio_now)
-        option_row.addWidget(self.radio_schedule)
-        
-        # 2. 从 Date/Time Pickers (直接放在同一行，减少层级)
-        # 添加一些间距
-        option_row.addSpacing(16)
-        
-        # FastCalendarPicker：与 CalendarPicker API 一致，弹出更快；见 QFluentWidgets 文档
+
         self.date_picker = create_fast_calendar_picker(parent)
         self.time_picker = TimePicker(parent)
         for col in (0, 1):
             self.time_picker.setColumnWidth(col, SCHEDULE_TIME_PICKER_COL_WIDTH)
         self._apply_default_schedule_datetime()
-        
+
+        option_row.addWidget(self.radio_now)
+        option_row.addWidget(self.radio_schedule)
         option_row.addWidget(self.date_picker)
         option_row.addWidget(self.time_picker)
-        option_row.addStretch() # 整体靠左
-        
+        option_row.addStretch()
+
         layout.addLayout(option_row)
         
         # 连接信号进行校验
@@ -1742,10 +2288,11 @@ class SingleTaskCreationPage(BasePage):
                     if not exists:
                         self.selected_account = None
                         self.account_label.setText("未选择账号")
-            
+                        self._refresh_work_declaration_ui()
+
             # 加载完成后更新发布按钮状态
             self._update_publish_button_state()
-                
+
         except Exception as e:
             logger.error(f"异步加载账号失败 ({platform}): {e}")
             
@@ -1778,7 +2325,7 @@ class SingleTaskCreationPage(BasePage):
             
             from src.ui.dialogs.account_selection_dialog import AccountSelectionDialog
             dialog = AccountSelectionDialog(self.window() or self)
-            dialog.set_data(self.available_accounts, groups)
+            dialog.set_data(self.available_accounts, groups, tags_filter_only=True)
             dialog.setWindowModality(Qt.WindowModality.WindowModal)
 
             loop = asyncio.get_event_loop()
@@ -1800,10 +2347,45 @@ class SingleTaskCreationPage(BasePage):
 
             if result:
                 # 结果可能是 {'type': 'account', 'data': ...} 或 {'type': 'group', 'data': ...}
-                self.selected_account = result 
+                rtype = result.get("type")
+                data = result.get("data")
+                if rtype == "account" and isinstance(data, list):
+                    if len(data) == 1:
+                        result["data"] = data[0]
+                    else:
+                        logger.warning(
+                            "单任务账号选择：期望单个账号 dict，收到 list（长度=%s），已忽略",
+                            len(data),
+                        )
+                        InfoBar.warning(
+                            title="选择异常",
+                            content="请重新选择发布账号。",
+                            parent=self,
+                            position=InfoBarPosition.TOP,
+                            duration=4000,
+                        )
+                        return
+                elif rtype == "group" and isinstance(data, list):
+                    if len(data) == 1:
+                        result["data"] = data[0]
+                    else:
+                        logger.warning(
+                            "单任务账号选择：期望单个账号组 dict，收到 list（长度=%s），已忽略",
+                            len(data),
+                        )
+                        InfoBar.warning(
+                            title="选择异常",
+                            content="请重新选择发布账号或账号组。",
+                            parent=self,
+                            position=InfoBarPosition.TOP,
+                            duration=4000,
+                        )
+                        return
+
+                self.selected_account = result
                 # 注意：self.selected_account 原本存储的是 account dict, 现在变成了 result dict
                 # 后后续使用 self.selected_account 的地方都需要适配
-                
+
                 # 更新显示
                 if result['type'] == 'account':
                     account = result['data']
@@ -1821,6 +2403,7 @@ class SingleTaskCreationPage(BasePage):
                 self._refresh_wechat_empty_location_checkbox()
                 self._sync_location_entry_enabled_for_intent()
                 self._refresh_yellow_cart_platform()
+                self._refresh_work_declaration_ui()
                 if (
                     not self._is_image_mode
                     and getattr(self, "_auto_match_video_switch", None)
@@ -2086,7 +2669,12 @@ class SingleTaskCreationPage(BasePage):
                 self._copywriting_category_combo.addItem(cat["name"], userData=cat["id"])
                 if cat["id"] == saved_cat_id:
                     target_idx = i
-            
+
+            _cat_cb = self._copywriting_category_combo
+            _cat_fm = QFontMetrics(self.font())
+            _cat_w = max(_cat_fm.horizontalAdvance(_cat_cb.itemText(i)) for i in range(_cat_cb.count()))
+            _cat_cb.setMinimumWidth(max(160, _cat_w + 44))
+
             self._copywriting_category_combo.setCurrentIndex(target_idx)
             self._copywriting_category_combo.blockSignals(False)
         except Exception as e:
@@ -2292,6 +2880,7 @@ class SingleTaskCreationPage(BasePage):
         else:
             self.account_label.setText("未选择账号")
         self.selected_account = None
+        self._refresh_work_declaration_ui()
 
     async def _deferred_bind_publish_record_account(self, record: Dict[str, Any], bind_gen: int) -> None:
         """账号列表尚未就绪或需按 ID 补查时，异步加载后再绑定（避免误报「不存在」）。"""
@@ -2322,6 +2911,8 @@ class SingleTaskCreationPage(BasePage):
             else:
                 self._apply_account_label_missing_in_library(record)
             self._update_publish_button_state()
+            # 控件已在 set_publish_data 中按记录填过，此处只切换堆叠页到当前账号平台
+            self._refresh_work_declaration_ui(sync_from_storage=False)
         except Exception as e:
             logger.error("异步回填发布账号失败: %s", e, exc_info=True)
     
@@ -2796,29 +3387,8 @@ class SingleTaskCreationPage(BasePage):
                 tag_type=_tag_t,
             )
 
-            # 获取隐私设置
-            privacy = "public"
-            if hasattr(self, 'privacy_combo'):
-                p_text = self.privacy_combo.currentText()
-                if "好友" in p_text: privacy = "friend"
-                elif "私密" in p_text: privacy = "private"
-                elif "粉丝" in p_text: privacy = "fans"
-            
-            allow_dl = True
-            is_orig = False
-            if hasattr(self, 'allow_download_check'):
-                allow_dl = self.allow_download_check.isChecked()
-            if hasattr(self, 'is_original_check'):
-                is_orig = self.is_original_check.isChecked()
-
-            # 与批量发布一致：声明原创仅对视频号落库；其他平台任务不按勾选保存，列表显示为未声明
             plat = (account.get("platform") or "").strip()
-            effective_original = bool(is_orig) if plat == "wechat_video" else False
-            privacy_settings = json.dumps({
-                "privacy": privacy,
-                "allow_download": allow_dl,
-                "is_original": effective_original
-            }, ensure_ascii=False)
+            privacy_settings = self._compose_privacy_settings_json_for_platform(plat)
 
             # 音乐配置（仅图文模式）
             music_info = None
@@ -2941,10 +3511,8 @@ class SingleTaskCreationPage(BasePage):
             self.btn_return_to_publish.setVisible(False)
         if hasattr(self, "allow_download_check") and self.allow_download_check:
             self.allow_download_check.setChecked(True)
-        if hasattr(self, "is_original_check") and self.is_original_check:
-            self.is_original_check.blockSignals(True)
-            self.is_original_check.setChecked(load_persisted_single_declare_original())
-            self.is_original_check.blockSignals(False)
+        self._sync_work_declaration_widgets_from_storage()
+        self._refresh_work_declaration_ui()
         self._reset_music_controls_to_default()
         self._update_publish_button_state()
 
@@ -3021,8 +3589,12 @@ class SingleTaskCreationPage(BasePage):
             self.btn_return_to_publish.setVisible(False)
         if hasattr(self, "allow_download_check") and self.allow_download_check:
             self.allow_download_check.setChecked(True)
+        self._sync_work_declaration_widgets_from_storage()
         if hasattr(self, "is_original_check") and self.is_original_check:
+            self.is_original_check.blockSignals(True)
             self.is_original_check.setChecked(False)
+            self.is_original_check.blockSignals(False)
+        self._refresh_work_declaration_ui(sync_from_storage=False)
         if not self._is_image_mode and getattr(self, "_auto_match_video_switch", None):
             self._auto_match_video_switch.blockSignals(True)
             self._auto_match_video_switch.setChecked(load_persisted_single_auto_match_video_library())
@@ -3111,6 +3683,8 @@ class SingleTaskCreationPage(BasePage):
         except Exception:
             # 即使确保内容失败，也尽量继续回填（后续会有 has_attr 保护）
             pass
+
+        _single_wd_applied_from_record = False
 
         # 回填记录中的路径视为手动指定，非本次自动匹配
         self._file_from_auto_library = False
@@ -3337,29 +3911,25 @@ class SingleTaskCreationPage(BasePage):
                     if _music_name_edit_back:
                         _music_name_edit_back.hide()
 
-        # 5. 回填权限与选项 (隐私, 允许下载, 声明原创)
+        # 5. 回填权限与选项 (隐私, 允许下载, 作品申明各平台键)
         privacy_settings_str = record.get('privacy_settings', '{}')
         if privacy_settings_str:
-            import json
             try:
                 ps = json.loads(privacy_settings_str)
-                privacy = ps.get("privacy", "public")
-                allow_dl = ps.get("allow_download", True)
-                is_orig = ps.get("is_original", False)
-                
-                if hasattr(self, 'privacy_combo'):
-                    idx = 0
-                    if privacy == "friend": idx = 1
-                    elif privacy == "private": idx = 2
-                    self.privacy_combo.setCurrentIndex(idx)
-                    
-                if hasattr(self, 'allow_download_check'):
-                    self.allow_download_check.setChecked(allow_dl)
-                    
-                if hasattr(self, "is_original_check"):
-                    self.is_original_check.blockSignals(True)
-                    self.is_original_check.setChecked(is_orig)
-                    self.is_original_check.blockSignals(False)
+                if isinstance(ps, dict):
+                    privacy = ps.get("privacy", "public")
+                    allow_dl = ps.get("allow_download", True)
+                    if hasattr(self, 'privacy_combo'):
+                        idx = 0
+                        if privacy == "friend":
+                            idx = 1
+                        elif privacy == "private":
+                            idx = 2
+                        self.privacy_combo.setCurrentIndex(idx)
+                    if hasattr(self, 'allow_download_check'):
+                        self.allow_download_check.setChecked(allow_dl)
+                    self._apply_work_declaration_from_privacy_dict(ps)
+                    _single_wd_applied_from_record = True
             except Exception as e:
                 logger.error(f"解析 privacy_settings 失败: {e}")
 
@@ -3464,3 +4034,7 @@ class SingleTaskCreationPage(BasePage):
             self._copywriting_auto_switch.blockSignals(False)
 
         self._update_publish_button_state()
+        if _single_wd_applied_from_record:
+            self._refresh_work_declaration_ui(sync_from_storage=False)
+        else:
+            self._refresh_work_declaration_ui(sync_from_storage=True)
