@@ -34,11 +34,8 @@ ENV/
 *.swo
 *~
 
-# 数据文件 (需根据新架构调整)
-data/database.db
-data/database.db-journal
-data/cookies/
-data/keys/
+# 数据文件 (历史测试残留防范)
+data/
 
 # 日志文件
 logs/
