@@ -56,8 +56,8 @@ DATA_CENTER_AVAILABLE = _module_available("src.pro_features.data_center.pages.da
 INTERACTION_FEATURE_AVAILABLE = _module_available("src.pro_features.interaction.pages.comment_page") and FeatureFlags.is_feature_enabled("interaction")
 SUBSCRIPTION_PAGE_AVAILABLE = _module_available("src.ui.pages.subscription_page") and FeatureFlags.is_feature_enabled("subscription")
 
-MATERIAL_LIBRARY_AVAILABLE = FeatureFlags.is_feature_enabled("material_library")
-COMMERCE_PROMOTION_AVAILABLE = FeatureFlags.is_feature_enabled("commerce_promotion")
+MATERIAL_LIBRARY_AVAILABLE = _module_available("src.ui.pages.material.video_library_page") and FeatureFlags.is_feature_enabled("material_library")
+COMMERCE_PROMOTION_AVAILABLE = _module_available("src.ui.pages.material.cart_promotion_page") and FeatureFlags.is_feature_enabled("commerce_promotion")
 
 logger = logging.getLogger(__name__)
 
