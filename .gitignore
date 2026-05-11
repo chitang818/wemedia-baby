@@ -45,6 +45,7 @@ logs/
 config/license.key
 config/pro_config.json
 config/app_config.json
+config/auth_config.json
 .env
 
 # 闭源商业代码及内部文档（极其重要：禁止推送到公开的开源仓库）
