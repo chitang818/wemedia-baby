@@ -71,8 +71,10 @@ dist_nuitka/
 .nuitka-cache/
 tools/ffmpeg/
 
-# Gemini Agent
+# Gemini & MCP Agent
 .gemini/
+.agent/
+.playwright-mcp/
 
 # Coverage
 htmlcov/
