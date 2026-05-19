@@ -445,6 +445,12 @@ class UndetectedBrowserManager:
                     "[BrowserManager] 视频号：使用加强版浏览器启动参数（Chromium 沙箱、允许扩展、弱化自动化默认项）以降低扫码风控误杀"
                 )
 
+            context_permissions = ["geolocation", "notifications"]
+            if self.platform == "douyin":
+                # 抖音创作者图文音乐面板会探测媒体/音频环境。保留真实 Chrome 的媒体权限模型，
+                # 避免被脚本伪造的 mediaDevices / permissions 误伤音乐选择状态。
+                context_permissions.extend(["microphone", "camera"])
+
             launch_options = {
                 "user_data_dir": self.user_data_dir,
                 "headless": headless,
@@ -456,7 +462,7 @@ class UndetectedBrowserManager:
                 "no_viewport": True, # 显式禁用视口模拟，防止 Playwright 施加默认 1280x720 限制
                 "locale": fingerprint.get("locale", "zh-CN"),
                 "timezone_id": tz_id,
-                "permissions": ["geolocation", "notifications"],
+                "permissions": context_permissions,
                 "ignore_https_errors": True,
                 # "device_scale_factor": 1.0, # 移除，跟随系统
                 "ignore_default_args": _ignore_playwright_defaults,
@@ -797,6 +803,9 @@ class UndetectedBrowserManager:
             fp_cfg = {}
         uach_enabled = bool(fp_cfg.get("fingerprint_ua_ch_enabled", True))
         languages_enabled = bool(fp_cfg.get("fingerprint_languages_enabled", True))
+        patch_audio_context = self.platform != "douyin"
+        patch_media_devices = self.platform != "douyin"
+        patch_permissions = self.platform != "douyin"
         
         # 提取所有指纹参数 (提供默认值以防旧配置缺失)
         hardware_concurrency = fingerprint.get("hardware_concurrency", 4)
@@ -892,6 +901,9 @@ class UndetectedBrowserManager:
                 .replace("__CONNECTION_DOWNLINK__", str(connection_downlink)) \
                 .replace("__CONNECTION_RTT__", str(connection_rtt)) \
                 .replace("__AUDIO_CONTEXT_SEED__", str(audio_context_seed)) \
+                .replace("__PATCH_AUDIO_CONTEXT__", "true" if patch_audio_context else "false") \
+                .replace("__PATCH_MEDIA_DEVICES__", "true" if patch_media_devices else "false") \
+                .replace("__PATCH_PERMISSIONS__", "true" if patch_permissions else "false") \
                 .replace("__CANVAS_NOISE_SEED__", str(canvas_noise_seed)) \
                 .replace("__CANVAS_NOISE_STRENGTH__", str(canvas_noise_strength_level))
 
@@ -907,7 +919,13 @@ class UndetectedBrowserManager:
             return
         
         await self.context.add_init_script(stealth_script)
-        logger.info("高级抗检测脚本已注入 (WebRTC/MediaDevices/Permissions/Intl/CDP/Headless)")
+        logger.info(
+            "高级抗检测脚本已注入 (WebRTC/MediaDevices/Permissions/Intl/CDP/Headless)，"
+            "媒体补丁: audio=%s mediaDevices=%s permissions=%s",
+            patch_audio_context,
+            patch_media_devices,
+            patch_permissions,
+        )
 
     def _clear_persistent_context_refs(self, reason: str = "") -> None:
         """Playwright 侧上下文已关闭时清空本地引用，避免上层继续操作已断开的 Context。"""
@@ -1644,6 +1662,7 @@ class UndetectedBrowserManager:
 
         # --- 阶段 1：PID 文件精准 kill ---
         pid_file = self._pid_file_path()
+        had_pid_file = bool(pid_file and pid_file.exists())
         if pid_file and pid_file.exists():
             try:
                 old_pid = int(pid_file.read_text(encoding="utf-8").strip())
@@ -1682,7 +1701,10 @@ class UndetectedBrowserManager:
             pass
             
         search_target = feature_token or target_path
-        logger.info(f"[BrowserManager] PID 文件不可用，fallback 扫描残留进程... 目标特征: {search_target}")
+        if had_pid_file:
+            logger.info(f"[BrowserManager] PID 文件未能清理目标进程，fallback 扫描残留进程... 目标特征: {search_target}")
+        else:
+            logger.debug(f"[BrowserManager] 未发现上次 PID 文件，按 profile 特征扫描残留进程... 目标特征: {search_target}")
         
         def _do_kill_sync(target: str) -> int:
             try:

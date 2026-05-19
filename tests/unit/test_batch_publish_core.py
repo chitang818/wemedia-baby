@@ -114,6 +114,18 @@ class TestGenerateBatchTasks:
         assert len(tasks) == 2
         assert all(t["scheduled_publish_time"] is None for t in tasks)
 
+    def test_mixed_schedule_slots_none_and_timed(self):
+        """排期槽列表中 None 与定时字符串混排时，按槽顺序绑定发布时间。"""
+        from src.ui.pages.publish.batch_task_creation_actions import generate_batch_tasks
+        accs = _make_accounts("A")
+        vids = _make_videos(2)
+        tasks = generate_batch_tasks(
+            accs, vids, [None, "2025-01-01 12:00"], {"user_id": 1},
+        )
+        assert len(tasks) == 2
+        assert tasks[0]["scheduled_publish_time"] is None
+        assert tasks[1]["scheduled_publish_time"] == "2025-01-01 12:00"
+
 
 # ──────────────────────────────────────────────
 # batch_task_fingerprint

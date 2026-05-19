@@ -45,7 +45,7 @@ def _task_platform_account_id(account: Dict[str, Any]) -> Optional[int]:
 def generate_batch_tasks(
     accounts: List[Dict[str, Any]],
     media_items: List[Dict[str, Any]],
-    time_slots: List[str],
+    time_slots: List[Optional[str]],
     common_fields: Dict[str, Any],
     file_type: str = "video",
     *,
@@ -68,7 +68,8 @@ def generate_batch_tasks(
         accounts:    已选真实平台账号列表（账号组须事先展开）。
         media_items: 已导入媒体文件列表，每条含 file_path / file_name。
                      等效于旧参数名 ``videos``，图文也使用同一格式。
-        time_slots:  发布时间点列表，格式 "yyyy-MM-dd HH:mm"。
+        time_slots:  发布时间点列表，格式 "yyyy-MM-dd HH:mm"；元素为 None 时表示该槽位「立即发布」
+            （scheduled_publish_time 为 None）。与 immediate_publish=True 二选一：后者等价于单槽 [None]。
         common_fields: 公共字段 dict，含 user_id / title / description / tags_str /
                        cover_path / privacy_settings 等。
         file_type:   媒体类型，"video" 或 "image"，写入 publish_record 的 file_type 字段。
@@ -94,11 +95,11 @@ def generate_batch_tasks(
         return []
 
     if immediate_publish:
-        slot_cycle: List[Optional[str]] = [None]
+        slot_cycle = [None]
         n_cycle = 1
     else:
         slot_cycle = list(time_slots)
-        n_cycle = n_time
+        n_cycle = len(slot_cycle)
 
     tasks: List[Dict[str, Any]] = []
 
@@ -183,7 +184,7 @@ def _video_list_has_account_isolation(video_list: List[Dict[str, Any]]) -> bool:
 def generate_batch_tasks_isolated(
     selected_accounts: List[Dict[str, Any]],
     video_list: List[Dict[str, Any]],
-    time_slots: List[str],
+    time_slots: List[Optional[str]],
     common_fields: Dict[str, Any],
     file_type: str = "video",
     *,
@@ -202,7 +203,7 @@ def generate_batch_tasks_isolated(
     Args:
         selected_accounts:  原始选择列表（含账号组占位 _type=group 和独立账号）。
         video_list:         已导入视频列表，可含 _group_id / _assigned_account_id 字段。
-        time_slots:         发布时间槽列表。
+        time_slots:         发布时间槽列表；None 表示该槽为立即发布。
         common_fields:      公共字段 dict。
         file_type:          媒体类型。
         expanded_accounts:  已展开的真实账号列表（每条带 _source_group_id 可选字段）；

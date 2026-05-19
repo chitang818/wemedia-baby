@@ -77,9 +77,13 @@ def resolve_assign_target(
         or "未知账号"
     )
     if media_kind == "video":
-        directory = MaterialLibraryManager.account_video_unpublished_dir(root, target_data)
+        directory = MaterialLibraryManager.resolve_account_video_unpublished_dir(root, target_data)
     else:
-        directory = MaterialLibraryManager.account_image_unpublished_dir(root, target_data)
+        directory = MaterialLibraryManager.resolve_account_image_unpublished_dir(root, target_data)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.warning("创建账号素材未发布目录失败: %s (%s)", directory, e)
     label = f"账号「{display_name}」"
     return AssignTarget(directory=directory, label=label)
 
@@ -121,6 +125,16 @@ def move_sources_to_assign_target(
             moved += 1
         except Exception as e:
             logger.warning("移动素材文件失败: %s -> %s (%s)", src, dst, e, exc_info=True)
+    if moved > 0:
+        try:
+            from src.services.material.media_library_stats_service import get_media_library_stats_service
+            from src.ui.utils.async_helper import run_async_from_ui
+
+            svc = get_media_library_stats_service()
+            svc.invalidate(clear_cache=True)
+            run_async_from_ui(lambda: svc.refresh(min_interval_seconds=0))
+        except Exception:
+            logger.debug("移动视频后刷新媒体库统计失败", exc_info=True)
     return moved
 
 
@@ -157,6 +171,15 @@ def move_folder_to_assign_target(
 
     try:
         shutil.move(str(source_folder), str(dst))
+        try:
+            from src.services.material.media_library_stats_service import get_media_library_stats_service
+            from src.ui.utils.async_helper import run_async_from_ui
+
+            svc = get_media_library_stats_service()
+            svc.invalidate(clear_cache=True)
+            run_async_from_ui(lambda: svc.refresh(min_interval_seconds=0))
+        except Exception:
+            logger.debug("移动图文文件夹后刷新媒体库统计失败", exc_info=True)
         return True
     except Exception as e:
         logger.warning("移动图片文件夹失败: %s -> %s (%s)", source_folder, dst, e, exc_info=True)

@@ -199,3 +199,20 @@ class TestFullBranch:
         assert r.n_preview >= 1
         group_tasks = [t for t in r.tasks if t.get("platform") == "account_group"]
         assert len(group_tasks) >= 1
+
+    def test_immediate_slot_only_not_no_time_branch(self):
+        """仅含立即发布槽（None）时视为已配置时间，不走 no_time。"""
+        r = build_preview_tasks(
+            [_acc()], [_vid("/v.mp4")], [None], COMMON, False, NO_EXCLUSION,
+        )
+        assert r.branch == "full"
+        assert r.n_preview == 1
+        assert r.tasks[0]["scheduled_publish_time"] is None
+        assert r.time_pill_text == "立即发布"
+
+    def test_mixed_slots_time_pill(self):
+        r = build_preview_tasks(
+            [_acc()], [_vid("/v.mp4")], [None, "2026-05-01 10:00"], COMMON, False, NO_EXCLUSION,
+        )
+        assert r.branch == "full"
+        assert r.time_pill_text == "定时+立即"

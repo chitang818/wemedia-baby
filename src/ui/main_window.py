@@ -256,9 +256,10 @@ class MainWindow(FluentWindow):
         if os.environ.get("ENABLE_BROWSER_WARMUP_ON_START", "").strip().lower() in ("1", "true", "yes"):
             QTimer.singleShot(3000, self._warmup_browser_service)
         # 强制更新：打开软件立即检测，有新版本则弹窗并退出，旧版本不可用
-        if not getattr(self, "_update_check_startup_done", False):
+        # 52POJIE 特别版不检测软件更新
+        if not FeatureFlags.is_52pojie() and not getattr(self, "_update_check_startup_done", False):
             self._update_check_startup_done = True
-            QTimer.singleShot(300, self._run_startup_update_check)
+            QTimer.singleShot(5000, self._run_startup_update_check)
         # Chrome 检测：启动后约 2 秒检测一次，未安装时提示前往设置安装（仅提示一次）
         if not getattr(self, "_chrome_check_done", False):
             QTimer.singleShot(2000, self._run_chrome_check)
@@ -363,7 +364,7 @@ class MainWindow(FluentWindow):
         """异步检查更新；有新版本则在主线程弹窗，关闭对话框后退出应用（强制更新）"""
         try:
             from src.services.update_check_service import check_for_updates
-            result = await check_for_updates()
+            result = await check_for_updates(force_refresh=False)
             if not result.has_update or not result.remote_version or not result.download_url:
                 return
             QTimer.singleShot(0, lambda: self._show_force_update_dialog(result))
@@ -869,7 +870,7 @@ class MainWindow(FluentWindow):
     
     def _setup_ui(self) -> None:
         """设置UI"""
-        self.setWindowTitle("媒小宝")
+        self.setWindowTitle("媒小宝-吾爱破解论坛特别版" if FeatureFlags.is_52pojie() else "媒小宝")
         self.resize(1280, 800)
         self.setMinimumSize(1024, 768)
         
@@ -959,12 +960,14 @@ class MainWindow(FluentWindow):
         # 存储导航项以便后续控制
         self._nav_items = {}
         
-        # 获取导航配置列表
+        # 52POJIE 特别版不含云端账号体系，隐藏个人中心
+        subscription_visible = SUBSCRIPTION_PAGE_AVAILABLE and not FeatureFlags.is_52pojie()
+
         nav_items_config = NavigationConfig.get_items(
             batch_feature=BATCH_FEATURE_AVAILABLE,
             data_center=DATA_CENTER_AVAILABLE,
             interaction=INTERACTION_FEATURE_AVAILABLE,
-            subscription=SUBSCRIPTION_PAGE_AVAILABLE,
+            subscription=subscription_visible,
             material_library=MATERIAL_LIBRARY_AVAILABLE,
             commerce_promotion=COMMERCE_PROMOTION_AVAILABLE,
         )

@@ -152,7 +152,12 @@ class FeatureFlags:
     def is_pro_build(cls) -> bool:
         """是否为 Pro 构建（闭源安装包）。"""
         return cls.get_dist_mode() in {"PRO", "52POJIE"}
-    
+
+    @classmethod
+    def is_52pojie(cls) -> bool:
+        """是否为 52POJIE 闭源离线特别版。"""
+        return cls.get_dist_mode() == "52POJIE"
+
     @classmethod
     def is_feature_enabled(cls, feature: str) -> bool:
         """检查功能是否启用

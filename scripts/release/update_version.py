@@ -85,17 +85,17 @@ def update_inno_setup(new_version):
 
 def update_version_json(new_version):
     """更新根目录 version.json（version、release_date、notes）。
-    download_url 固定为 Gitee releases 页面，用户跳转后在该页下载 txt 文件，再手动打开 txt 中的链接下载安装包。"""
+    download_url 默认为飞书发版说明页，用户「前往下载」在浏览器中按文档指引获取安装包。"""
     import json
     today = datetime.date.today().strftime("%Y-%m-%d")
     data = {
         "version": new_version,
         "release_date": today,
         "notes": "发版后请在此填写更新说明。",
-        "download_url": "https://gitee.com/chitangsuper/wemedia-baby/releases",
+        "download_url": "https://my.feishu.cn/docx/DpotdqxU8owf15xD54oc6P9KnWf",
     }
     VERSION_JSON.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"✅ 更新 version.json -> {new_version}（download_url 固定为 Gitee releases 页，用户在该页下载 txt 后手动打开链接）")
+    print(f"✅ 更新 version.json -> {new_version}（download_url 默认为飞书说明页）")
 
 
 def update_changelog(new_version):

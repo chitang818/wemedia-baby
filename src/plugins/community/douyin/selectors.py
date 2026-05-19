@@ -298,12 +298,30 @@ class Selectors:
             "[ref=e549]",  # 旧报告 ref，备用
             "[ref=e962]",
         ],
+        # 音乐面板根：2026-05 图文发布页为右侧 Semi sidesheet，默认无搜索框。
+        "MUSIC_PANEL_ROOT": [
+            ".semi-sidesheet-inner[role='sidesheet']:has-text('选择音乐')",
+            ".semi-sidesheet-inner.semi-sidesheet-inner-wrap:has-text('选择音乐')",
+            ".semi-sidesheet.music-side-sheet-CVkGta:has-text('选择音乐')",
+            ".semi-sidesheet[class*='music-side-sheet']:has-text('选择音乐')",
+        ],
+        # 音乐曲目卡片：当前 DOM 为 card-container-tmocjc，选中后追加 card-container-active-*。
+        "MUSIC_ROW_CARD": [
+            ".card-container-tmocjc",
+            "div[class*='card-container'][class*='card-container']",
+            "div[class*='card-wrapper']",
+        ],
+        "MUSIC_ROW_ACTIVE": [
+            ".card-container-tmocjc[class*='active']",
+            "div[class*='card-container'][class*='active']",
+        ],
         # 「使用」按钮（DOM 报告 20260405：点击音乐条目后动态出现在条目内部右侧，ref=e1022）
         # 注意：触发方式是「点击条目」而非 hover，按钮出现在被点击的条目 div[role=button] 内部
         "MUSIC_USE_BTN": [
+            "button.apply-btn-LUPP0D",
+            "button[class*='apply-btn']",
             "button:has-text('使用')",
             "div[role='button']:has-text('使用')",
-            "span:has-text('使用')",
             "[ref=e1022]",  # 20260405 报告使用按钮 ref
             "[ref=e929]",   # 旧报告 ref，备用
             "[ref=e1106]",

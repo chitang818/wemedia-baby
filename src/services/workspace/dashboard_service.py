@@ -8,6 +8,12 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 import logging
 
+from src.utils.date_utils import (
+    compute_publish_reminder_days,
+    format_publish_reminder_text,
+    is_latest_publish_overdue,
+)
+
 logger = logging.getLogger(__name__)
 
 # 回收站软删除状态：不计入「今日发布」与按日趋势，避免主数字与成功/失败/待执行对不上
@@ -124,13 +130,6 @@ class DashboardService:
                 elif record.get('status') == 'failed':
                     platform_stats[platform]['failed'] += 1
             
-            # ── 最近活动 ──
-            recent_records = sorted(
-                active_records,
-                key=lambda x: x.get('created_at', ''),
-                reverse=True
-            )[:10]
-            
             # ── 近 7 天成功率（仅统计已完成记录 success+failed，排除 pending/running）──
             cutoff_7d = datetime.now() - timedelta(days=7)
             records_7d_finished = []
@@ -155,7 +154,6 @@ class DashboardService:
                 'today_running': today_running,
                 'daily_stats': daily_stats,
                 'by_platform': platform_stats,
-                'recent_records': recent_records,
                 'success_rate_7d': round(success_rate_7d, 1),
                 'finished_7d': finished_7d_total,
             }
@@ -173,7 +171,6 @@ class DashboardService:
                 'today_running': 0,
                 'daily_stats': [],
                 'by_platform': {},
-                'recent_records': [],
                 'success_rate_7d': 0,
                 'finished_7d': 0,
             }
@@ -259,9 +256,84 @@ class DashboardService:
             'total_pending': total_pending,
         }
     
+    async def get_online_account_publish_reminders(self) -> List[Dict[str, Any]]:
+        """在线账号发布提醒列表（工作台「最近发布」卡片）。"""
+        try:
+            if not self.account_manager:
+                return []
+            accounts = await self.account_manager.get_accounts()
+            online = [a for a in (accounts or []) if a.get("login_status") == "online"]
+            if not online:
+                return []
+
+            account_ids: List[int] = []
+            for a in online:
+                aid = a.get("id")
+                if aid is not None:
+                    try:
+                        account_ids.append(int(aid))
+                    except (TypeError, ValueError):
+                        pass
+
+            latest_map: Dict[int, str] = {}
+            if account_ids:
+                latest_map = await self.publish_record_repo.get_latest_publish_display_time_by_account_ids(
+                    account_ids
+                )
+
+            rows: List[Dict[str, Any]] = []
+            for a in online:
+                aid = a.get("id")
+                if aid is None:
+                    continue
+                try:
+                    aid_int = int(aid)
+                except (TypeError, ValueError):
+                    continue
+
+                account_name = (
+                    (a.get("platform_username") or a.get("account_name") or "").strip()
+                    or "未命名"
+                )
+                latest_raw = latest_map.get(aid_int)
+                if latest_raw:
+                    latest_publish_time = latest_raw
+                else:
+                    latest_publish_time = "-"
+
+                remaining_days = compute_publish_reminder_days(latest_publish_time)
+                reminder_text = format_publish_reminder_text(remaining_days)
+                is_overdue = is_latest_publish_overdue(latest_publish_time)
+
+                rows.append({
+                    "account_id": aid_int,
+                    "account_name": account_name,
+                    "latest_publish_time": latest_publish_time,
+                    "remaining_days": remaining_days,
+                    "reminder_text": reminder_text,
+                    "is_overdue": is_overdue,
+                })
+
+            rows.sort(
+                key=lambda r: (
+                    r["remaining_days"] is None,
+                    r["remaining_days"] if r["remaining_days"] is not None else 0,
+                    r["account_name"],
+                )
+            )
+            return rows
+        except Exception as e:
+            self.logger.error(f"获取在线账号发布提醒失败: {e}", exc_info=True)
+            return []
+
     async def get_dashboard_data(self) -> Dict[str, Any]:
+        account_stats = await self.get_account_statistics()
+        publish_stats = await self.get_publish_statistics()
+        task_stats = await self.get_task_statistics()
+        reminders = await self.get_online_account_publish_reminders()
         return {
-            'account': await self.get_account_statistics(),
-            'publish': await self.get_publish_statistics(),
-            'task': await self.get_task_statistics()
+            'account': account_stats,
+            'publish': publish_stats,
+            'task': task_stats,
+            'account_publish_reminders': reminders,
         }

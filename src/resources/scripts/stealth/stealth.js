@@ -167,7 +167,7 @@ if (navigator.connection) {
 
 // ========== AudioContext 音频指纹噪声 ==========
 const audioContextSeed = __AUDIO_CONTEXT_SEED__;
-if (typeof AudioContext !== "undefined") {
+if (__PATCH_AUDIO_CONTEXT__ && typeof AudioContext !== "undefined") {
   const OriginalAudioContext = AudioContext;
   window.AudioContext = function () {
     const context = new OriginalAudioContext(...arguments);
@@ -311,7 +311,7 @@ if (typeof RTCPeerConnection !== "undefined") {
 }
 
 // ========== Media Devices 伪造 ==========
-if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+if (__PATCH_MEDIA_DEVICES__ && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
   const fakeDevices = [
     {
       deviceId: "default",
@@ -343,7 +343,7 @@ if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
 }
 
 // ========== Permissions API 完善 ==========
-if (navigator.permissions && navigator.permissions.query) {
+if (__PATCH_PERMISSIONS__ && navigator.permissions && navigator.permissions.query) {
   const originalPermissionsQuery = navigator.permissions.query;
   const permissionsMap = {
     notifications: "granted",

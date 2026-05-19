@@ -6,6 +6,8 @@
 性能优化：使用单例菜单实例和预创建Action，减少右键延迟
 """
 
+from typing import Any, Dict, Optional
+
 from PySide6.QtCore import QObject, QPoint
 from PySide6.QtWidgets import QWidget, QMenu
 import logging
@@ -68,6 +70,7 @@ class AccountContextMenu(QObject):
         pairs = [
             ("open", "on_switch"),
             ("copy", "on_copy_name"),
+            ("media_lib", "on_open_media_library"),
             ("refresh", "on_refresh_status"),
             ("group", "on_set_group"),
             ("fingerprint", "on_fingerprint"),
@@ -96,6 +99,13 @@ class AccountContextMenu(QObject):
         self._actions['copy'] = Action(FluentIcon.COPY, "复制账号名", parent)
         self._actions['copy'].triggered.connect(lambda: self._handle_action('on_copy_name'))
         self._menu.addAction(self._actions['copy'])
+
+        # 打开该账号在「账号库」下的媒体素材文件夹
+        self._actions['media_lib'] = Action(FluentIcon.FOLDER, "打开媒体库文件夹", parent)
+        self._actions['media_lib'].triggered.connect(
+            lambda: self._handle_action('on_open_media_library')
+        )
+        self._menu.addAction(self._actions['media_lib'])
         
         self._menu.addSeparator()
         
@@ -131,14 +141,16 @@ class AccountContextMenu(QObject):
         account_id: int,
         platform_username: str,
         platform: str,
-        callbacks: dict
+        callbacks: dict,
+        account_data: Optional[Dict[str, Any]] = None,
     ):
         """显示右键菜单"""
         # 更新上下文
         self._current_context = {
             'account_id': account_id,
             'username': platform_username,
-            'platform': platform
+            'platform': platform,
+            'account_data': account_data or {},
         }
         self._current_callbacks = callbacks
         
@@ -170,6 +182,8 @@ class AccountContextMenu(QObject):
                 callback(ctx['account_id'])
             elif callback_key == 'on_fingerprint':
                 callback(ctx['account_id'], ctx['username'], ctx['platform'])
+            elif callback_key == 'on_open_media_library':
+                callback(ctx['account_data'])
             elif callback_key == 'on_delete':
                 callback(ctx['account_id'])
             else:
@@ -185,6 +199,11 @@ class AccountContextMenu(QObject):
         
         menu.addAction("打开浏览器", lambda: callbacks.get('on_switch', lambda x: None)(ctx['account_id']))
         menu.addAction("复制账号名", lambda: callbacks.get('on_copy_name', lambda x: None)(ctx['username']))
+        if self._has_callable(callbacks, "on_open_media_library"):
+            menu.addAction(
+                "打开媒体库文件夹",
+                lambda: callbacks["on_open_media_library"](ctx["account_data"]),
+            )
         menu.addSeparator()
         menu.addAction("刷新登录状态", lambda: callbacks.get('on_refresh_status', lambda x: None)(ctx['account_id']))
         menu.addAction("移动至分组", lambda: callbacks.get('on_set_group', lambda x: None)(ctx['account_id']))

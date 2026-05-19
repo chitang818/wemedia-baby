@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QPushButton, QDialog, QCheckBox, QProgressDialog, QApplication
 )
 from PySide6.QtCore import Qt, QUrl, QTimer, QEvent, QSize
-from PySide6.QtGui import QShowEvent
+from PySide6.QtGui import QDesktopServices, QShowEvent
 
 from qfluentwidgets import (
     FluentIcon, CardWidget, PrimaryPushButton,
@@ -617,7 +617,8 @@ class AccountPage(BasePage):
             'on_delete': lambda acc_id: self._delete_single_account(account_data),
             'on_set_group': lambda acc_id: self._on_set_account_group(acc_id, account_data),
             'on_copy_name': lambda name: QApplication.clipboard().setText(name),
-            'on_refresh_status': lambda acc_id: self._refresh_single_account_status(acc_id)
+            'on_refresh_status': lambda acc_id: self._refresh_single_account_status(acc_id),
+            'on_open_media_library': lambda data: self._open_account_material_library_folder(data),
         }
         
         mgr.show_menu(
@@ -626,7 +627,48 @@ class AccountPage(BasePage):
             account_data.get('platform_username'),
             account_data.get('platform'),
             callbacks,
+            account_data=account_data,
         )
+
+    def _open_account_material_library_folder(self, account_data: Dict[str, Any]) -> None:
+        """在资源管理器中打开当前账号在「账号库」下的媒体素材目录。"""
+        try:
+            from src.infrastructure.common.material_library_manager import MaterialLibraryManager
+
+            path = MaterialLibraryManager.resolve_or_create_account_owner_dir(account_data or {})
+            if path is None:
+                InfoBar.warning(
+                    title="无法打开",
+                    content="请先在「设置」→「数据管理」中配置有效的媒体库存储位置。",
+                    orient=Qt.Horizontal,
+                    isClosable=True,
+                    duration=4000,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+                return
+            url = QUrl.fromLocalFile(str(path.resolve()))
+            if not QDesktopServices.openUrl(url):
+                InfoBar.warning(
+                    title="打开失败",
+                    content="系统无法打开该文件夹，请手动在资源管理器中进入。",
+                    orient=Qt.Horizontal,
+                    isClosable=True,
+                    duration=4000,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+        except Exception as e:
+            logger.warning("打开账号媒体库文件夹失败: %s", e, exc_info=True)
+            InfoBar.error(
+                title="错误",
+                content="打开文件夹时发生异常，请稍后重试。",
+                orient=Qt.Horizontal,
+                isClosable=True,
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
 
     def _on_set_account_group(self, account_id, account_data):
         """设置账号分组"""

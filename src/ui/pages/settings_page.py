@@ -12,7 +12,8 @@ import sys
 from pathlib import Path
 
 from PySide6.QtWidgets import QWidget, QLabel, QApplication, QDialog
-from PySide6.QtCore import Qt, QUrl, QStandardPaths
+from PySide6.QtCore import Qt, QUrl, QStandardPaths, QTimer
+from qasync import asyncSlot
 from PySide6.QtGui import QDesktopServices, QShowEvent
 
 # 导入 PySide6-Fluent-Widgets 组件
@@ -1025,49 +1026,73 @@ class SettingsPage(BasePage):
         
     def _create_about_group(self):
         """创建关于组"""
+        from config.feature_flags import FeatureFlags
+
         self.about_group = SettingCardGroup("关于", self.scroll_widget)
-        
-        # 检查更新
-        # 动态读取版本号，避免硬编码导致打包后版本不同步
+
+        is_52pojie = FeatureFlags.is_52pojie()
+
         try:
             from src.version import __version__
             version_str = __version__
         except Exception as e:
             logger.debug("读取版本号失败: %s", e)
             version_str = "未知"
-        
-        self.check_update_card = PushSettingCard(
-            "检查更新",
-            FluentIcon.INFO,
-            "媒小宝",
-            f"版本 {version_str} © 2026 媒小宝团队",
-            self.about_group
-        )
-        self.check_update_card.clicked.connect(self._on_check_update)
-        
-        # 软件使用教程
-        self.tutorial_card = PushSettingCard(
-            "软件使用教程",
-            FluentIcon.BOOK_SHELF,
-            "使用帮助",
-            "查看飞书文档中的软件使用教程",
-            self.about_group
-        )
+
+        app_label = "媒小宝-吾爱破解论坛特别版" if is_52pojie else "媒小宝"
+
+        if not is_52pojie:
+            self.check_update_card = PushSettingCard(
+                "检查更新",
+                FluentIcon.INFO,
+                app_label,
+                f"版本 {version_str} © 2026 媒小宝团队",
+                self.about_group
+            )
+            self.check_update_card.clicked.connect(self._on_check_update)
+        else:
+            self.version_card = SettingCard(
+                FluentIcon.INFO,
+                app_label,
+                f"版本 {version_str}",
+                self.about_group
+            )
+
+        if is_52pojie:
+            self.tutorial_card = PushSettingCard(
+                "访问论坛",
+                FluentIcon.BOOK_SHELF,
+                "使用帮助",
+                "访问吾爱破解论坛获取使用帮助",
+                self.about_group
+            )
+        else:
+            self.tutorial_card = PushSettingCard(
+                "软件使用教程",
+                FluentIcon.BOOK_SHELF,
+                "使用帮助",
+                "查看飞书文档中的软件使用教程",
+                self.about_group
+            )
         self.tutorial_card.clicked.connect(self._on_open_tutorial)
-        
-        # 反馈
-        self.feedback_card = PushSettingCard(
-            "反馈问题",
-            FluentIcon.FEEDBACK,
-            "帮助与反馈",
-            "访问 GitHub 提交 Issue 或获取帮助",
-            self.about_group
-        )
-        self.feedback_card.clicked.connect(self._on_feedback)
-        
-        self.about_group.addSettingCard(self.check_update_card)
+
+        if not is_52pojie:
+            self.feedback_card = PushSettingCard(
+                "反馈问题",
+                FluentIcon.FEEDBACK,
+                "帮助与反馈",
+                "访问 GitHub 提交 Issue 或获取帮助",
+                self.about_group
+            )
+            self.feedback_card.clicked.connect(self._on_feedback)
+
+        if is_52pojie:
+            self.about_group.addSettingCard(self.version_card)
+        else:
+            self.about_group.addSettingCard(self.check_update_card)
         self.about_group.addSettingCard(self.tutorial_card)
-        self.about_group.addSettingCard(self.feedback_card)
+        if not is_52pojie:
+            self.about_group.addSettingCard(self.feedback_card)
         self.expand_layout.addWidget(self.about_group)
 
     # --- Callbacks ---
@@ -1266,29 +1291,83 @@ class SettingsPage(BasePage):
                 logger.error(f"启动清理任务失败: {e}")
                 self.show_error("启动失败", "无法启动异步清理任务")
 
-    def _on_check_update(self):
+    def _check_update_info_parent(self) -> QWidget:
+        """InfoBar/弹窗父级：用主窗口，避免嵌套 ScrollArea 内提示不可见"""
+        return self.window() or self
+
+    @staticmethod
+    def _resolve_push_setting_button(card) -> Optional[QWidget]:
+        """兼容 PushSettingCard.button 为 QPushButton 属性或无参方法两种形态。"""
+        if card is None:
+            return None
+        btn = getattr(card, "button", None)
+        if btn is None:
+            return None
+        if isinstance(btn, QWidget):
+            return btn
+        if callable(btn):
+            resolved = btn()
+            return resolved if isinstance(resolved, QWidget) else None
+        return None
+
+    @asyncSlot()
+    async def _on_check_update(self):
         """手动检查更新：请求 Gitee version.json，下载链接以库中 download_url 为准"""
-        self.show_info("检查更新", "正在检查最新版本...")
-        async def _check():
-            from src.services.update_check_service import check_for_updates
-            result = await check_for_updates()
-            self._apply_update_result(result)
+        parent = self._check_update_info_parent()
+        btn = self._resolve_push_setting_button(getattr(self, "check_update_card", None))
+        info_bar = None
+        if btn is not None:
+            btn.setEnabled(False)
         try:
-            run_async_from_ui(_check)
-        except Exception as e:
-            logger.exception("启动检查更新任务失败")
-            self.show_error("检查更新", "无法启动检查，请稍后重试")
+            info_bar = InfoBar.info(
+                title="检查更新",
+                content="正在连接更新服务器，请稍候…",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=False,
+                duration=-1,
+                position=InfoBarPosition.TOP,
+                parent=parent,
+            )
+            from src.services.update_check_service import check_for_updates
+
+            result = await check_for_updates(force_refresh=True)
+        except Exception:
+            logger.exception("检查更新失败")
+            from src.services.update_check_service import UpdateCheckResult
+
+            try:
+                from src.version import __version__ as ver
+            except Exception:
+                ver = "0.0.0"
+            err_result = UpdateCheckResult(
+                has_update=False,
+                current_version=ver,
+                error="检查更新失败，请稍后重试",
+            )
+            QTimer.singleShot(0, lambda r=err_result: self._apply_update_result(r))
+            return
+        finally:
+            if info_bar is not None:
+                try:
+                    info_bar.close()
+                except Exception:
+                    pass
+            if btn is not None:
+                btn.setEnabled(True)
+        # 弹窗须在主线程同步展示，不可在协程内直接 exec（会与 qasync 冲突导致无响应）
+        QTimer.singleShot(0, lambda r=result: self._apply_update_result(r))
 
     def _apply_update_result(self, result):
         """根据更新检查结果弹窗或提示；有新版本则强制更新（弹窗关闭后退出）"""
+        from src.ui.utils.fluent_dialogs import show_error, show_info, show_force_update_confirm
+
+        parent = self._check_update_info_parent()
         if result.error:
-            self.show_error("检查更新", result.error)
+            show_error(parent, "检查更新", result.error)
             return
         if result.has_update and result.remote_version and result.download_url:
-            from src.ui.utils.fluent_dialogs import show_force_update_confirm
-
             if show_force_update_confirm(
-                self.window(),
+                parent,
                 result.current_version,
                 result.remote_version or "",
                 result.notes or "",
@@ -1296,11 +1375,19 @@ class SettingsPage(BasePage):
                 QDesktopServices.openUrl(QUrl(result.download_url))
             QApplication.quit()
         else:
-            self.show_success("检查更新", "当前已是最新版本")
+            remote = result.remote_version or ""
+            msg = f"当前版本 {result.current_version} 已是最新。"
+            if remote:
+                msg += f"\n云端版本：{remote}"
+            show_info(parent, "检查更新", msg)
 
     def _on_open_tutorial(self):
-        """打开软件使用教程（飞书文档），使用系统默认浏览器"""
-        url = QUrl("https://my.feishu.cn/docx/DpotdqxU8owf15xD54oc6P9KnWf?from=from_copylink")
+        """打开使用帮助：52POJIE 跳转论坛，其他跳转飞书文档"""
+        from config.feature_flags import FeatureFlags
+        if FeatureFlags.is_52pojie():
+            url = QUrl("https://www.52pojie.cn/forum.php")
+        else:
+            url = QUrl("https://my.feishu.cn/docx/DpotdqxU8owf15xD54oc6P9KnWf?from=from_copylink")
         if not QDesktopServices.openUrl(url):
             self.show_error("无法打开链接", "请手动在浏览器中访问该链接")
 

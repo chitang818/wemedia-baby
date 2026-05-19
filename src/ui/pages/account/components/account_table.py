@@ -5,7 +5,10 @@
 功能：独立的账号列表表格组件，负责账号的显示和基本交互
 """
 
+from datetime import datetime
 from typing import List, Dict, Optional
+from zoneinfo import ZoneInfo
+
 from PySide6.QtWidgets import (
     QWidget, QTableWidget, QTableWidgetItem, QHBoxLayout, QVBoxLayout,
     QLabel,
@@ -33,6 +36,10 @@ from src.services.material.media_library_stats_service import get_media_library_
 
 logger = logging.getLogger(__name__)
 
+_SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+_LATEST_PUBLISH_TIME_FMT = "%Y-%m-%d %H:%M"
+_LATEST_PUBLISH_PAST_RED = QColor("#E81123")
+
 
 class AccountTableWidget(QWidget):
     """账号表格组件
@@ -59,6 +66,9 @@ class AccountTableWidget(QWidget):
         self._fit_columns_timer.setSingleShot(True)
         self._fit_columns_timer.setInterval(0)
         self._fit_columns_timer.timeout.connect(self._apply_column_layout)
+        self._latest_publish_style_timer = QTimer(self)
+        self._latest_publish_style_timer.setInterval(60_000)
+        self._latest_publish_style_timer.timeout.connect(self._refresh_latest_publish_time_column_styles)
         self._setup_ui()
 
     @staticmethod
@@ -71,7 +81,55 @@ class AccountTableWidget(QWidget):
     @staticmethod
     def _counts_tooltip(kind: str, total: int, used: int, unused: int) -> str:
         return f"{kind}：总 {total}，已占用 {used}，未占用 {unused}\n显示格式：总/占用/未占用"
-        
+
+    @staticmethod
+    def _latest_publish_cell_should_be_red(display_text: str) -> bool:
+        """展示串为 YYYY-MM-DD HH:mm 且严格早于当前北京时间则 True（标红）。"""
+        s = (display_text or "").strip()
+        if not s or s in ("-", "—"):
+            return False
+        if len(s) < 16:
+            return False
+        try:
+            naive = datetime.strptime(s[:16], _LATEST_PUBLISH_TIME_FMT)
+        except ValueError:
+            return False
+        cell = naive.replace(tzinfo=_SHANGHAI_TZ)
+        now = datetime.now(_SHANGHAI_TZ)
+        return cell < now
+
+    def _apply_latest_publish_time_cell_style(self, item: QTableWidgetItem, display_text: str) -> None:
+        if self._latest_publish_cell_should_be_red(display_text):
+            item.setForeground(QBrush(_LATEST_PUBLISH_PAST_RED))
+        else:
+            item.setData(Qt.ItemDataRole.ForegroundRole, None)
+
+    def _refresh_latest_publish_time_column_styles(self) -> None:
+        if not self.table:
+            return
+        try:
+            rc = self.table.rowCount()
+        except Exception:
+            return
+        for row in range(rc):
+            it = self.table.item(row, 7)
+            if it is None:
+                continue
+            self._apply_latest_publish_time_cell_style(it, it.text())
+
+    def _sync_latest_publish_style_timer(self) -> None:
+        t = getattr(self, "_latest_publish_style_timer", None)
+        if t is None or not self.table:
+            return
+        try:
+            if self.table.rowCount() > 0:
+                if not t.isActive():
+                    t.start()
+            else:
+                t.stop()
+        except Exception:
+            pass
+
     def _setup_ui(self):
         """设置UI"""
         layout = QVBoxLayout(self)
@@ -273,6 +331,7 @@ class AccountTableWidget(QWidget):
                 table.setUpdatesEnabled(True)
                 logger.info("账号表格加载完成，共 %s 个账号", n)
                 self._refresh_media_stats_async()
+                self._sync_latest_publish_style_timer()
 
         if n <= _BATCH:
             for row in range(n):
@@ -282,6 +341,7 @@ class AccountTableWidget(QWidget):
             table.setUpdatesEnabled(True)
             logger.info("账号表格加载完成，共 %s 个账号", n)
             self._refresh_media_stats_async()
+            self._sync_latest_publish_style_timer()
         else:
             table.blockSignals(False)
             _render_batch(0)
@@ -434,6 +494,7 @@ class AccountTableWidget(QWidget):
         item_latest = QTableWidgetItem(latest_publish_time)
         item_latest.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
         self.table.setItem(row, 7, item_latest)
+        self._apply_latest_publish_time_cell_style(item_latest, latest_publish_time)
 
         # 9. 操作列
         actions_widget = self._create_actions_widget(account)
@@ -474,6 +535,10 @@ class AccountTableWidget(QWidget):
 
     def closeEvent(self, event) -> None:
         """组件关闭时无需停止统计线程（已改为全局服务 + 缓存推送）。"""
+        try:
+            self._latest_publish_style_timer.stop()
+        except Exception:
+            pass
         super().closeEvent(event)
     
     def _create_status_widget(self, login_status: str, tooltip: str = "") -> QWidget:

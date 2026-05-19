@@ -7,6 +7,7 @@ from src.services.material.media_library_stats_service import build_media_librar
 from src.services.material.media_library_stats_service import (
     build_account_video_stats,
     build_account_image_stats,
+    _dedupe_paths,
 )
 from src.services.material.media_usage_service import PendingMediaUsage
 
@@ -98,4 +99,14 @@ def test_build_account_video_stats_and_image_stats() -> None:
     group_video = {101: [Path("D:/a/u1.mp4"), Path("D:/a/x.mp4")]}
     out_gv = build_account_video_stats(account_id_to_video_paths=group_video, usage=usage)
     assert out_gv[101].total == 2 and out_gv[101].used == 1 and out_gv[101].unused == 1
+
+
+def test_dedupe_paths_keeps_unique_order(tmp_path: Path) -> None:
+    a = tmp_path / "a.mp4"
+    b = tmp_path / "b.mp4"
+    a.write_text("1")
+    b.write_text("2")
+    out = _dedupe_paths([a, a, b, a])
+    assert len(out) == 2
+    assert out[0] == a and out[1] == b
 

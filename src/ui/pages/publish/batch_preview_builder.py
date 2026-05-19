@@ -104,7 +104,7 @@ def _no_video_mock_media_items(
 def build_preview_tasks(
     selected_accounts: List[Dict[str, Any]],
     video_list: List[Dict[str, Any]],
-    time_slots: List[str],
+    time_slots: List[Optional[str]],
     common_fields: Dict[str, Any],
     immediate_publish: bool,
     exclusion: PreviewExclusionSet,
@@ -134,7 +134,18 @@ def build_preview_tasks(
     result.n_acc = n_acc
     result.n_vid = n_vid
     result.n_time = n_time
-    result.time_pill_text = "立即发布" if imm else None
+    has_imm_slot = any(s is None for s in time_slots) if time_slots else False
+    has_sched_slot = any(
+        isinstance(s, str) and str(s).strip() for s in time_slots
+    ) if time_slots else False
+    if imm:
+        result.time_pill_text = "立即发布"
+    elif has_imm_slot and has_sched_slot:
+        result.time_pill_text = "定时+立即"
+    elif has_imm_slot:
+        result.time_pill_text = "立即发布"
+    else:
+        result.time_pill_text = None
 
     common_ps = common_fields.get("privacy_settings") or "{}"
 
@@ -197,7 +208,11 @@ def build_preview_tasks(
         result.status_text = "请③添加视频"
 
         mock_videos = _no_video_mock_media_items(selected_accounts, n_time)
-        mock_time = time_slots if n_time > 0 else (["待配置"] if not imm else [])
+        mock_time = (
+            time_slots
+            if n_time > 0
+            else ([] if imm else ["待配置"])
+        )
 
         raw = generate_batch_tasks_isolated(
             selected_accounts, mock_videos, mock_time, common_fields,
@@ -213,13 +228,18 @@ def build_preview_tasks(
         for acc in selected_accounts:
             acc_key = (acc.get("platform", ""), acc.get("platform_username", ""))
             if acc_key not in represented:
+                _fallback_sched: Optional[str]
+                if mock_time:
+                    _fallback_sched = mock_time[0]
+                elif imm:
+                    _fallback_sched = None
+                else:
+                    _fallback_sched = "待配置"
                 raw.append({
                     "platform": acc.get("platform", ""),
                     "platform_username": acc.get("platform_username", ""),
                     "file_path": "待配置",
-                    "scheduled_publish_time": (
-                        mock_time[0] if mock_time else (None if imm else "待配置")
-                    ),
+                    "scheduled_publish_time": _fallback_sched,
                     "title": common_fields.get("title", "") or "",
                     "description": common_fields.get("description", "") or "",
                     "privacy_settings": common_ps,
@@ -263,17 +283,26 @@ def build_preview_tasks(
         (t.get("platform", ""), t.get("platform_username", ""))
         for t in raw
     }
-    mock_time = time_slots if n_time > 0 else (["待配置"] if not imm else [])
+    mock_time = (
+        time_slots
+        if n_time > 0
+        else ([] if imm else ["待配置"])
+    )
     for acc in selected_accounts:
         acc_key = (acc.get("platform", ""), acc.get("platform_username", ""))
         if acc_key not in represented:
+            _fb_sched: Optional[str]
+            if mock_time:
+                _fb_sched = mock_time[0]
+            elif imm:
+                _fb_sched = None
+            else:
+                _fb_sched = "待配置"
             raw.append({
                 "platform": acc.get("platform", ""),
                 "platform_username": acc.get("platform_username", ""),
                 "file_path": "待配置",
-                "scheduled_publish_time": (
-                    mock_time[0] if mock_time else (None if imm else "待配置")
-                ),
+                "scheduled_publish_time": _fb_sched,
                 "title": common_fields.get("title", "") or "",
                 "description": common_fields.get("description", "") or "",
                 "privacy_settings": common_ps,

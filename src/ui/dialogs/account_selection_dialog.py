@@ -214,8 +214,8 @@ class AccountSelectionDialog(AppMessageBoxBase):
         # 左侧：账号标签面板（可滚动）
         self._tags_panel = QFrame(body)
         self._tags_panel.setObjectName("AccountTagsPanel")
-        # 左侧面板尽量窄，把空间留给表格（平台昵称列更容易被挤压）
-        self._tags_panel.setFixedWidth(140)
+        # 左侧面板保留足够宽度，避免标签按钮右侧边框被裁切。
+        self._tags_panel.setFixedWidth(170)
         self._tags_panel.setStyleSheet("""
             QFrame#AccountTagsPanel {
                 border: 1px solid rgba(0, 0, 0, 0.10);
@@ -300,7 +300,7 @@ class AccountSelectionDialog(AppMessageBoxBase):
         # 调整弹窗大小
         # 账号表格新增「账号标签/视频库/图片库」后，原 720 宽度会挤压「平台昵称」列导致遮挡
         # 统计列从“单数字”升级为“总/占用/未占用”后，需要给「平台昵称」留出更多空间
-        self.widget.setMinimumWidth(980)
+        self.widget.setMinimumWidth(1010)
         self.widget.setMinimumHeight(600)
         
         # 数据
@@ -1537,6 +1537,7 @@ class AccountSelectionDialog(AppMessageBoxBase):
                 btn.setProperty('tag_data', tag)
                 btn.setCheckable(True)
                 btn.setFixedHeight(34)
+                btn.setMinimumWidth(136)
                 # 图标 + 悬停解释，帮助区分「账号标签」与「账号组标签」
                 tag_type = (tag or {}).get("tag_type")
                 if tag_type not in ("account", "group"):

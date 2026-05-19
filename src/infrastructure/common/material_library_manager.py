@@ -142,16 +142,20 @@ class MaterialLibraryManager:
         return lib / folder / cls.ACCOUNT_MEDIA_VIDEO_NAME / cls.UNPUBLISHED_NAME
 
     @classmethod
-    def resolve_account_video_unpublished_dir(cls, root: Path, account: Dict[str, Any]) -> Path:
-        """解析账号「视频 / 未发布」目录（与视频库扫描一致）。
+    def account_library_owner_folder_matches_account(
+        cls, owner_folder_name: str, account: Dict[str, Any]
+    ) -> bool:
+        """判断「账号库」下一级目录名是否归属该账号（与 resolve_*_unpublished_dir 昵称规则一致）。
 
-        先按 platform + platform_username / account_name 计算标准路径；
-        若不存在，再在「账号库」下按「平台中文名_」前缀做文件夹名模糊匹配。
-
-        用于解决：磁盘上实际文件夹与当前昵称略有差异（易混字、手工改名、历史同步差异）时，
-        视频库列表能看到文件而批量自动匹配却扫到空目录的问题。
+        ``owner_folder_name`` 为磁盘上的一级文件夹名（与视频库/图片库扫描里账号的 owner_label 一致）。
+        ``账号组_*`` 目录返回 False，由账号组维度统计单独处理。
         """
-        lib = cls.account_library_root(root)
+        name = str(owner_folder_name or "").strip()
+        if not name or not isinstance(account, dict):
+            return False
+        if name.startswith(cls.GROUP_MATERIAL_PREFIX):
+            return False
+
         platform_id = str(account.get("platform") or "").strip()
         from src.utils.platform_names import get_platform_display_name
 
@@ -166,15 +170,49 @@ class MaterialLibraryManager:
         def _nick_norm(s: str) -> str:
             return unicodedata.normalize("NFKC", (s or "").strip()).casefold()
 
-        tried: List[Path] = []
         for nick in nick_order:
             folder = cls.platform_account_folder_name(platform_id, nick)
-            p = lib / folder / cls.ACCOUNT_MEDIA_VIDEO_NAME / cls.UNPUBLISHED_NAME
-            tried.append(p)
+            if name == folder:
+                return True
+
+        nick_norms = [_nick_norm(n) for n in nick_order if n]
+        prefix = f"{plat_label}_"
+        if not name.startswith(prefix):
+            return False
+        suffix = name[len(prefix) :]
+        sn = _nick_norm(suffix)
+        for nn in nick_norms:
+            if not nn:
+                continue
+            if sn == nn:
+                return True
+            if len(nn) >= 2 and len(sn) >= 2 and (nn in sn or sn in nn):
+                return True
+        return False
+
+    @classmethod
+    def _resolve_account_media_unpublished_dir(
+        cls, root: Path, account: Dict[str, Any], media_branch: str
+    ) -> Path:
+        """解析账号下「视频或图文 / 未发布」目录（规范路径优先，其次文件夹名模糊匹配）。"""
+        lib = cls.account_library_root(root)
+        platform_id = str(account.get("platform") or "").strip()
+        from src.utils.platform_names import get_platform_display_name
+
+        plat_label = cls.sanitize_path_segment(get_platform_display_name(platform_id)) or "未知平台"
+
+        nick_order: List[str] = []
+        for key in ("platform_username", "account_name"):
+            raw = (account.get(key) or "").strip()
+            if raw and raw not in nick_order:
+                nick_order.append(raw)
+
+        for nick in nick_order:
+            folder = cls.platform_account_folder_name(platform_id, nick)
+            p = lib / folder / media_branch / cls.UNPUBLISHED_NAME
             if p.exists():
                 return p
 
-        nick_norms = [_nick_norm(n) for n in nick_order if n]
         prefix = f"{plat_label}_"
         try:
             for entry in os.scandir(str(lib)):
@@ -183,22 +221,9 @@ class MaterialLibraryManager:
                 name = entry.name
                 if not name.startswith(prefix):
                     continue
-                suffix = name[len(prefix) :]
-                sn = _nick_norm(suffix)
-                ok = False
-                for nn in nick_norms:
-                    if not nn:
-                        continue
-                    if sn == nn:
-                        ok = True
-                        break
-                    # 仅当双方昵称足够长时再允许包含关系，减少误匹配
-                    if len(nn) >= 2 and len(sn) >= 2 and (nn in sn or sn in nn):
-                        ok = True
-                        break
-                if not ok:
+                if not cls.account_library_owner_folder_matches_account(name, account):
                     continue
-                cand = Path(entry.path) / cls.ACCOUNT_MEDIA_VIDEO_NAME / cls.UNPUBLISHED_NAME
+                cand = Path(entry.path) / media_branch / cls.UNPUBLISHED_NAME
                 if cand.exists():
                     logger.info(
                         "账号素材目录使用模糊匹配: 期望前缀 %r 下选用 %r（标准路径不存在）",
@@ -209,7 +234,84 @@ class MaterialLibraryManager:
         except OSError as e:
             logger.debug("模糊匹配账号素材目录失败: %s", e)
 
-        return cls.account_video_unpublished_dir(root, account)
+        folder = cls.platform_account_folder_name(
+            str(account.get("platform") or ""),
+            str(account.get("platform_username") or account.get("account_name") or ""),
+        )
+        return lib / folder / media_branch / cls.UNPUBLISHED_NAME
+
+    @classmethod
+    def resolve_account_video_unpublished_dir(cls, root: Path, account: Dict[str, Any]) -> Path:
+        """解析账号「视频 / 未发布」目录（与视频库扫描一致）。
+
+        先按 platform + platform_username / account_name 计算标准路径；
+        若不存在，再在「账号库」下按「平台中文名_」前缀做文件夹名模糊匹配。
+
+        用于解决：磁盘上实际文件夹与当前昵称略有差异（易混字、手工改名、历史同步差异）时，
+        视频库列表能看到文件而批量自动匹配却扫到空目录的问题。
+        """
+        return cls._resolve_account_media_unpublished_dir(root, account, cls.ACCOUNT_MEDIA_VIDEO_NAME)
+
+    @classmethod
+    def resolve_account_image_unpublished_dir(cls, root: Path, account: Dict[str, Any]) -> Path:
+        """解析账号「图文 / 未发布」目录（与 resolve_account_video_unpublished_dir 规则对称）。"""
+        return cls._resolve_account_media_unpublished_dir(root, account, cls.ACCOUNT_MEDIA_IMAGE_NAME)
+
+    @classmethod
+    def resolve_or_create_account_owner_dir(cls, account: Dict[str, Any]) -> Optional[Path]:
+        """解析并确保账号在「账号库」下的一级素材目录存在，供资源管理器打开。
+
+        顺序：规范路径已存在则直接用；否则若「视频/未发布」可解析且存在则取其上级账号目录；
+        再否则在规范路径上创建目录树（与 sync 中单账号逻辑一致）。
+
+        Returns:
+            账号素材根目录；未配置媒体库、根路径无效或创建失败时返回 None。
+        """
+        root = cls.ensure_initialized()
+        if root is None or not root.is_dir():
+            return None
+
+        platform_id = str(account.get("platform") or "").strip()
+        work = dict(account)
+        nick = (
+            str(work.get("platform_username") or work.get("account_name") or "").strip()
+        )
+        if not nick:
+            aid = work.get("id")
+            nick = f"账号{aid}" if aid is not None else "未命名账号"
+            work["platform_username"] = nick
+
+        lib_root = cls.account_library_root(root)
+        dir_name = cls.platform_account_folder_name(platform_id, nick)
+        canonical = lib_root / dir_name
+
+        if canonical.is_dir():
+            try:
+                return canonical.resolve()
+            except OSError:
+                return canonical
+
+        vp = cls.resolve_account_video_unpublished_dir(root, work)
+        if vp.exists():
+            owner = vp.parent.parent
+            if owner.is_dir():
+                try:
+                    return owner.resolve()
+                except OSError:
+                    return owner
+
+        try:
+            canonical.mkdir(parents=True, exist_ok=True)
+            cls._ensure_video_image_branches(canonical)
+            return canonical.resolve()
+        except OSError as e:
+            logger.warning(
+                "创建或补齐账号素材目录失败 (path=%s): %s",
+                canonical,
+                e,
+                exc_info=True,
+            )
+            return None
 
     @classmethod
     def account_image_unpublished_dir(cls, root: Path, account: Dict[str, Any]) -> Path:

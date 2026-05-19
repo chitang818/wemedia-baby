@@ -23,10 +23,11 @@ metadata 字段：
   music_use_hover_ms: hover 后等待「使用」出现的毫秒数，默认 800
 """
 import asyncio
+from collections import deque
 import logging
 import random
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional
 
 from playwright.async_api import Locator, Page
 
@@ -44,13 +45,16 @@ _LIST_LOAD_TIMEOUT = 15_000
 _USE_BTN_TIMEOUT = 10_000
 _DRAWER_CLOSE_TIMEOUT = 8_000
 _MODIFY_VISIBLE_TIMEOUT = 15_000
-# 随机选曲仅在列表前 N 条中选，避免深行/虚拟列表导致行内无「使用」
-_RANDOM_ROW_POOL_MAX = 15
+# 随机选曲仅在当前视口内选，避免深行/虚拟列表导致行内无「使用」或 locator 失效。
+_RANDOM_ROW_POOL_MAX = 10
+_RECENT_MUSIC_MEMORY_MAX = 12
 _ROW_SUMMARY_LOG_MAX = 80
 
 
 class SelectMusicStep(BasePublishStep):
     """图文：三步法选择背景音乐。"""
+
+    _recent_music_keys: Deque[str] = deque(maxlen=_RECENT_MUSIC_MEMORY_MAX)
 
     # ──────────────────────────────────────────────────────────────────────────
     # 主流程
@@ -86,6 +90,10 @@ class SelectMusicStep(BasePublishStep):
         # ── 步骤1：打开抽屉 ──────────────────────────────────────────────────
         opened = False
         for attempt in range(1, 4):
+            if await self._is_drawer_open(page):
+                logger.info("选择音乐：[步骤1] 音乐抽屉已处于打开状态，复用当前抽屉")
+                opened = True
+                break
             logger.info("选择音乐：[步骤1] 尝试打开抽屉（第 %d/3 次）", attempt)
             # 第 2 次起仅用 force 点击同一入口，减少拟人首击未命中
             await self._click_music_entry(
@@ -108,10 +116,12 @@ class SelectMusicStep(BasePublishStep):
             await self._switch_tab(page, category)
             await page.wait_for_timeout(800)
 
-        # 搜索关键字（可选）
+        # 搜索关键字（可选）。新版图文音乐抽屉默认不展示搜索框；
+        # 指定音乐此时会在当前已加载列表里匹配，找不到则明确失败。
         keyword = (metadata.get("music_keyword") or "").strip()
         if keyword:
-            await self._fill_search(page, keyword)
+            if not await self._fill_search(page, keyword):
+                logger.info("选择音乐：当前音乐面板未显示搜索框，将在已加载列表内匹配「%s」", keyword[:20])
 
         # ── 步骤2：选曲 + 点「使用」+ 等抽屉关闭 ──────────────────────────────
         logger.info("选择音乐：[步骤2] 等待推荐列表加载")
@@ -119,23 +129,32 @@ class SelectMusicStep(BasePublishStep):
             return PublishResult(success=False, error_message="选择音乐：推荐列表未及时加载")
 
         music_name = (metadata.get("music_name") or "").strip()
-        row = await self._pick_row(page, is_random=is_random, name_filter=music_name)
-        if row is None:
-            return PublishResult(success=False, error_message="选择音乐：未在列表中找到可用曲目")
+        responses: List[str] = []
 
-        use_clicked = False
-        for try_idx in range(1, 4):
-            logger.info("选择音乐：[步骤2] 第 %d 次点击曲目行并寻找「使用」", try_idx)
-            use_clicked = await self._click_row_and_use(page, row, metadata)
-            if use_clicked:
-                break
-            if try_idx < 3:
-                next_row = await self._pick_row(page, is_random=True, exclude=row)
-                if next_row:
-                    row = next_row
-            await page.wait_for_timeout(600)
+        def _capture_music_response(response) -> None:
+            try:
+                url = str(response.url or "")
+                lowered = url.lower()
+                if any(key in lowered for key in ("music", "sound", "audio", "song")):
+                    responses.append(f"{response.status} {url[:180]}")
+            except Exception:
+                return
 
+        page.on("response", _capture_music_response)
+        try:
+            use_clicked = await self._hover_random_music_and_click_use(
+                page,
+                metadata,
+                is_random=is_random,
+                name_filter=music_name,
+            )
+        finally:
+            try:
+                page.remove_listener("response", _capture_music_response)
+            except Exception:
+                pass
         if not use_clicked:
+            await self._close_music_drawer_if_open(page)
             return PublishResult(success=False, error_message="选择音乐：未出现或未点到「使用」按钮")
 
         # 等抽屉关闭（搜索框消失）
@@ -149,6 +168,11 @@ class SelectMusicStep(BasePublishStep):
             USER_LOG.info("选择音乐 ✓ 完成%s", f"（已选：{name}）" if name else "")
             return None
 
+        await self._log_music_post_apply_state(page, responses)
+        if not responses and await self._is_music_module_absent(page):
+            logger.warning("选择音乐：点击使用后页面移除了音乐模块，且未发起音乐保存请求，按平台当前状态跳过")
+            USER_LOG.info("选择音乐 ✓ 跳过（当前发布条件下页面未保留音乐模块）")
+            return None
         return PublishResult(success=False, error_message="选择音乐：点击使用后未出现「修改音乐」")
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -156,12 +180,34 @@ class SelectMusicStep(BasePublishStep):
     # ──────────────────────────────────────────────────────────────────────────
 
     async def _scroll_to_music_entry(self, page: Page) -> None:
-        """将扩展信息区滚动到视口内。优先锚定音乐灰条占位文案，避免「选择音乐」.first 落到错误区域。"""
-        for query in ("点击添加合适作品风格音乐", "扩展信息", "选择音乐"):
+        """将扩展信息里的音乐入口滚到可点击位置。"""
+        entry = await self._music_entry_from_extension_card(page)
+        if entry is not None:
+            try:
+                await entry.scroll_into_view_if_needed()
+                await page.wait_for_timeout(250)
+                return
+            except Exception:
+                pass
+
+        placeholder = page.get_by_text("点击添加合适作品风格音乐", exact=False).first
+        try:
+            if await placeholder.count() > 0:
+                await placeholder.evaluate(
+                    "el => el.scrollIntoView({block: 'center', inline: 'nearest'})"
+                )
+                await page.wait_for_timeout(300)
+                return
+        except Exception:
+            pass
+
+        for query in ("扩展信息", "选择音乐"):
             try:
                 anchor = page.get_by_text(query, exact=False).first
                 if await anchor.count() > 0:
-                    await anchor.scroll_into_view_if_needed()
+                    await anchor.evaluate(
+                        "el => el.scrollIntoView({block: 'center', inline: 'nearest'})"
+                    )
                     await page.wait_for_timeout(300)
                     return
             except Exception:
@@ -199,9 +245,22 @@ class SelectMusicStep(BasePublishStep):
 
     async def _music_drawer_root(self, page: Page) -> Optional[Locator]:
         """
-        以「搜索音乐」输入为锚，上溯到同时包含多个分类 Tab 的容器，作为抽屉内操作作用域。
-        避免 page.get_by_role('tab') 命中页面其它区域（若 a11y 树异常时）。
+        返回音乐抽屉根。
+
+        2026-05 图文页新版为右侧 Semi sidesheet，推荐列表默认没有「搜索音乐」
+        输入框；旧版仍可能以搜索框为锚。这里优先识别 sidesheet，再兼容旧搜索框。
         """
+        for sel in Selectors.PUBLISH.get("MUSIC_PANEL_ROOT", []) or []:
+            try:
+                roots = page.locator(sel)
+                n = await roots.count()
+                for i in range(min(n, 8)):
+                    root = roots.nth(i)
+                    if await self._is_music_drawer_candidate(root):
+                        return root
+            except Exception:
+                continue
+
         try:
             inp = page.get_by_placeholder("搜索音乐").first
             if await inp.count() == 0 or not await inp.is_visible():
@@ -221,6 +280,82 @@ class SelectMusicStep(BasePublishStep):
         except Exception:
             return None
 
+    async def _extension_card(self, page: Page) -> Optional[Locator]:
+        """返回发布页主体里的「扩展信息」卡片，后续入口定位只限制在这个卡片内。"""
+        try:
+            title = page.get_by_text("扩展信息", exact=True).first
+            if await title.count() == 0 or not await title.is_visible():
+                return None
+            for depth in range(1, 8):
+                card = title.locator(f"xpath=ancestor::div[{depth}]")
+                if await card.count() == 0:
+                    break
+                try:
+                    box = await card.bounding_box()
+                    if not box or box["width"] < 300 or box["height"] < 120:
+                        continue
+                    text = await card.inner_text(timeout=1500)
+                    if "添加标签" in text and "关联热点" in text:
+                        return card
+                except Exception:
+                    continue
+        except Exception:
+            return None
+        return None
+
+    async def _music_entry_from_extension_card(self, page: Page) -> Optional[Locator]:
+        """在扩展信息卡片中定位右侧「选择音乐」按钮/动作区。"""
+        card = await self._extension_card(page)
+        if card is None:
+            return None
+        try:
+            if await card.get_by_text("修改音乐", exact=True).count() > 0:
+                return None
+            placeholder = card.get_by_text("点击添加合适作品风格音乐", exact=False).first
+            if await placeholder.count() > 0 and await placeholder.is_visible():
+                for depth in range(1, 8):
+                    row = placeholder.locator(f"xpath=ancestor::div[{depth}]")
+                    if await row.count() == 0:
+                        break
+                    try:
+                        row_text = await row.inner_text(timeout=1000)
+                        if "选择音乐" not in row_text:
+                            continue
+                        action = row.get_by_text("选择音乐", exact=True).last
+                        if await action.count() > 0 and await action.is_visible():
+                            return action
+                    except Exception:
+                        continue
+            action = card.get_by_text("选择音乐", exact=True).last
+            if await action.count() > 0 and await action.is_visible():
+                return action
+        except Exception:
+            return None
+        return None
+
+    async def _is_music_drawer_candidate(self, root: Locator) -> bool:
+        """候选根需可见，且内部像音乐面板：标题 + Tab 或曲目行。"""
+        try:
+            if await root.count() == 0 or not await root.is_visible():
+                return False
+            if await root.get_by_text("选择音乐", exact=True).count() == 0:
+                return False
+            try:
+                if await root.get_by_role("tab").count() >= 2:
+                    return True
+            except Exception:
+                pass
+            dur_re = re.compile(r"\d{1,2}:\d{2}")
+            use_re = re.compile(r"\d+\.?\d*\s*万人使用|\d+\s*人使用")
+            rows = (
+                root.locator("div")
+                .filter(has_text=dur_re)
+                .filter(has_text=use_re)
+            )
+            return await rows.count() > 0
+        except Exception:
+            return False
+
     async def _click_music_entry(
         self,
         page: Page,
@@ -234,22 +369,9 @@ class SelectMusicStep(BasePublishStep):
         内含 exact「选择音乐」的那一列并点击（灰条右侧入口，勿点整条灰条）。
         force_only=True 时跳过拟人轨迹，直接 force 点击（用于重试打开抽屉）。
         """
-        async def _do_click(loc: Locator) -> None:
-            try:
-                await loc.scroll_into_view_if_needed()
-                await page.wait_for_timeout(200)
-            except Exception:
-                pass
-            if force_only:
-                await loc.click(force=True, timeout=8000)
-                return
-            try:
-                from src.infrastructure.anti_risk.human_like import human_click
-                await human_click(page, loc, metadata, config, use_operation_delay=False)
-            except Exception:
-                await loc.click(force=True, timeout=8000)
-
-        right_cell = await self._music_entry_right_cell_from_placeholder(page)
+        right_cell = await self._music_entry_from_extension_card(page)
+        if right_cell is None:
+            right_cell = await self._music_entry_right_cell_from_placeholder(page)
         if right_cell is None:
             logger.warning("选择音乐：未定位到灰条右侧入口（占位文案并列列中含「选择音乐」）")
             return
@@ -257,7 +379,12 @@ class SelectMusicStep(BasePublishStep):
             "选择音乐：点击音乐灰条内含「选择音乐」的列%s",
             "（force）" if force_only else "",
         )
-        await _do_click(right_cell)
+        try:
+            await right_cell.scroll_into_view_if_needed()
+            await page.wait_for_timeout(200)
+        except Exception:
+            pass
+        await right_cell.click(force=True, timeout=8000)
 
     async def _wait_drawer_open(self, page: Page, timeout_ms: int) -> bool:
         """抽屉已打开：搜索框可见且能解析到含多 Tab 的抽屉根（与 _music_drawer_root 一致）。"""
@@ -274,13 +401,7 @@ class SelectMusicStep(BasePublishStep):
         return False
 
     async def _is_drawer_open(self, page: Page) -> bool:
-        """搜索框可见且存在音乐抽屉根（多 Tab 祖先），避免仅命中无关 input。"""
-        try:
-            inp = page.get_by_placeholder("搜索音乐").first
-            if await inp.count() == 0 or not await inp.is_visible():
-                return False
-        except Exception:
-            return False
+        """音乐抽屉根可见即视为打开；搜索框只是旧 DOM 的兼容信号。"""
         try:
             return await self._music_drawer_root(page) is not None
         except Exception:
@@ -326,7 +447,7 @@ class SelectMusicStep(BasePublishStep):
     # 步骤2b：搜索
     # ──────────────────────────────────────────────────────────────────────────
 
-    async def _fill_search(self, page: Page, keyword: str) -> None:
+    async def _fill_search(self, page: Page, keyword: str) -> bool:
         try:
             inp = page.get_by_placeholder("搜索音乐").first
             if await inp.count() > 0 and await inp.is_visible():
@@ -337,8 +458,10 @@ class SelectMusicStep(BasePublishStep):
                 await inp.press("Enter")
                 await page.wait_for_timeout(1500)
                 logger.info("选择音乐：已搜索「%s」", keyword[:20])
+                return True
         except Exception as e:
             logger.warning("选择音乐：搜索框填写失败 %s", e)
+        return False
 
     # ──────────────────────────────────────────────────────────────────────────
     # 步骤2c：等待列表加载
@@ -390,39 +513,64 @@ class SelectMusicStep(BasePublishStep):
         use_re = re.compile(r"\d+\.?\d*\s*万人使用|\d+\s*人使用")
         vp = page.viewport_size
         vw = float(vp["width"]) if vp else 1280.0
+        vh = float(vp["height"]) if vp else 900.0
 
         root = await self._music_drawer_root(page)
         scope = root if root is not None else page
 
-        try:
-            candidates = (
-                scope.locator("div")
-                .filter(has_text=dur_re)
-                .filter(has_text=use_re)
-            )
-            raw_n = await candidates.count()
-        except Exception:
-            return []
-
         scored: List[tuple] = []
-        for i in range(min(raw_n, 150)):
-            el = candidates.nth(i)
+
+        async def _score_candidates(candidates: Locator, limit: int = 150) -> None:
             try:
-                if not await el.is_visible():
+                raw_n = await candidates.count()
+            except Exception:
+                return
+            for i in range(min(raw_n, limit)):
+                el = candidates.nth(i)
+                try:
+                    if not await el.is_visible():
+                        continue
+                    bb = await el.bounding_box()
+                    if not bb:
+                        continue
+                    h, w = bb["height"], bb["width"]
+                    y = float(bb["y"])
+                    # 行高 30–200px，宽度 100px 以上且非整页宽
+                    if h < 30 or h > 200 or w < 100 or w > vw * 0.97:
+                        continue
+                    # 仅使用当前视口内的曲目卡片。Semi 抽屉里的列表可能渲染出视口外
+                    # 的节点，Playwright 仍认为 attached，但点击/读文本容易长时间卡住。
+                    if y < 0 or y + min(h, 30) > vh:
+                        continue
+                    txt = (await el.inner_text()).strip()
+                    if len(txt) > 500:  # 排除包含整个列表的父节点
+                        continue
+                    scored.append((y, h, el))
+                except Exception:
                     continue
-                bb = await el.bounding_box()
-                if not bb:
-                    continue
-                h, w = bb["height"], bb["width"]
-                # 行高 30–200px，宽度 100px 以上且非整页宽
-                if h < 30 or h > 200 or w < 100 or w > vw * 0.97:
-                    continue
-                txt = (await el.inner_text()).strip()
-                if len(txt) > 500:  # 排除包含整个列表的父节点
-                    continue
-                scored.append((bb["y"], h, el))
+
+        for sel in Selectors.PUBLISH.get("MUSIC_ROW_CARD", []) or []:
+            try:
+                await _score_candidates(
+                    scope.locator(sel)
+                    .filter(has_text=dur_re)
+                    .filter(has_text=use_re),
+                    limit=80,
+                )
+                if scored:
+                    break
             except Exception:
                 continue
+
+        if not scored:
+            try:
+                await _score_candidates(
+                    scope.locator("div")
+                    .filter(has_text=dur_re)
+                    .filter(has_text=use_re)
+                )
+            except Exception:
+                return []
 
         scored.sort(key=lambda x: x[0])
         rows: List[Locator] = []
@@ -467,6 +615,9 @@ class SelectMusicStep(BasePublishStep):
             if named:
                 rows = named
             else:
+                if not is_random:
+                    logger.warning("选择音乐：未找到指定曲名「%s」", name_filter)
+                    return None
                 logger.warning("选择音乐：未找到曲名「%s」，使用全部行", name_filter)
 
         if not rows:
@@ -485,9 +636,383 @@ class SelectMusicStep(BasePublishStep):
         logger.info("选择音乐：选取第 1 条（共 %d 条）", len(rows))
         return rows[0]
 
+    async def _get_music_row_infos(self, page: Page) -> List[Dict[str, Any]]:
+        """
+        在页面上下文一次性解析当前视口内曲目卡片。
+
+        这比把 Playwright Locator 保存下来更稳：抖音音乐抽屉是 React/Semi
+        滚动列表，选择曲目后 DOM 会局部重渲染，旧 locator 很容易在后续点击
+        或读 inner_text 时卡住/失效。
+        """
+        try:
+            rows = await page.evaluate(
+                r"""
+                () => {
+                  const visible = (el) => {
+                    const r = el.getBoundingClientRect();
+                    const cs = getComputedStyle(el);
+                    return r.width > 0 && r.height > 0
+                      && cs.visibility !== 'hidden' && cs.display !== 'none';
+                  };
+                  const root = document.querySelector(".semi-sidesheet-inner[role='sidesheet']")
+                    || document.querySelector(".semi-sidesheet[class*='music-side-sheet']")
+                    || document.querySelector(".semi-sidesheet");
+                  if (!root || !visible(root)) return [];
+                  const dur = /\d{1,2}:\d{2}/;
+                  const use = /\d+(\.\d+)?\s*万?人使用/;
+                  const cards = Array.from(root.querySelectorAll(
+                    ".card-container-tmocjc, div[class*='card-container']"
+                  ));
+                  const seenY = [];
+                  const out = [];
+                  for (const el of cards) {
+                    if (!visible(el)) continue;
+                    const text = (el.innerText || el.textContent || "").trim();
+                    if (!dur.test(text) || !use.test(text)) continue;
+                    if (text.length > 500) continue;
+                    const r = el.getBoundingClientRect();
+                    if (r.height < 30 || r.height > 200 || r.width < 100) continue;
+                    if (r.y < 0 || r.y + Math.min(r.height, 30) > window.innerHeight) continue;
+                    if (seenY.some((y) => Math.abs(y - r.y) < 8)) continue;
+                    seenY.push(r.y);
+                    out.push({
+                      index: out.length,
+                      text,
+                      x: Math.round(r.x),
+                      y: Math.round(r.y),
+                      width: Math.round(r.width),
+                      height: Math.round(r.height)
+                    });
+                  }
+                  return out;
+                }
+                """
+            )
+            return rows if isinstance(rows, list) else []
+        except Exception as e:
+            logger.warning("选择音乐：解析曲目 DOM 失败 %s", e)
+            return []
+
+    async def _pick_row_info(
+        self,
+        page: Page,
+        *,
+        is_random: bool,
+        name_filter: str = "",
+        exclude_indices: Optional[set] = None,
+    ) -> Optional[Dict[str, Any]]:
+        rows = await self._get_music_row_infos(page)
+        if not rows:
+            logger.warning("选择音乐：当前视口未解析到可点击曲目")
+            return None
+
+        exclude_indices = exclude_indices or set()
+        rows = [r for r in rows if int(r.get("index", -1)) not in exclude_indices]
+        if not rows:
+            return None
+
+        if name_filter:
+            named = [r for r in rows if name_filter in str(r.get("text") or "")]
+            if named:
+                rows = named
+            elif not is_random:
+                logger.warning("选择音乐：未找到指定曲名「%s」", name_filter)
+                return None
+            else:
+                logger.warning("选择音乐：未找到曲名「%s」，使用全部行", name_filter)
+
+        if is_random:
+            pool = rows[:_RANDOM_ROW_POOL_MAX]
+            chosen = random.choice(pool)
+            logger.info(
+                "选择音乐：随机选取候选池第 %d/%d 条（当前可见列表共解析 %d 条，候选上限=%d）",
+                pool.index(chosen) + 1,
+                len(pool),
+                len(rows),
+                _RANDOM_ROW_POOL_MAX,
+            )
+            return chosen
+
+        logger.info("选择音乐：选取第 1 条（当前可见列表共 %d 条）", len(rows))
+        return rows[0]
+
+    async def _hover_random_music_and_click_use(
+        self,
+        page: Page,
+        metadata: Dict[str, Any],
+        *,
+        is_random: bool,
+        name_filter: str = "",
+    ) -> bool:
+        """
+        当前抖音图文音乐抽屉的可靠交互：
+        推荐列表中 hover 音乐卡片 -> 卡片右侧出现红色「使用」按钮 -> 点击按钮。
+        """
+        tried_y: List[float] = []
+        for attempt in range(1, 4):
+            rows = await self._get_music_rows(page)
+            if not rows:
+                logger.warning("选择音乐：推荐列表中未解析到音乐卡片")
+                return False
+
+            candidates = []
+            for row in rows:
+                try:
+                    text = await row.inner_text(timeout=1200)
+                    if name_filter:
+                        if name_filter not in text:
+                            continue
+                    box = await row.bounding_box(timeout=1200)
+                    if not box:
+                        continue
+                    if any(abs(float(box["y"]) - y) < 8 for y in tried_y):
+                        continue
+                    candidates.append((row, self._music_row_key(text), text))
+                except Exception:
+                    continue
+
+            if not candidates:
+                if name_filter:
+                    logger.warning("选择音乐：未在当前推荐列表找到指定曲目「%s」", name_filter)
+                return False
+
+            pool = candidates[:_RANDOM_ROW_POOL_MAX] if is_random else candidates[:1]
+            fresh_pool = [item for item in pool if item[1] not in self._recent_music_keys]
+            selectable = fresh_pool or pool
+            row, music_key, _music_text = random.SystemRandom().choice(selectable) if is_random else selectable[0]
+            try:
+                box = await row.bounding_box(timeout=1200)
+                if box:
+                    tried_y.append(float(box["y"]))
+            except Exception:
+                pass
+
+            logger.info(
+                "选择音乐：随机选取候选池第 %d/%d 条（当前可见列表共解析 %d 条，候选上限=%d，已避开近期=%d）",
+                [item[0] for item in pool].index(row) + 1,
+                len(pool),
+                len(rows),
+                _RANDOM_ROW_POOL_MAX,
+                len(self._recent_music_keys),
+            )
+            if await self._hover_row_and_click_use(page, row, metadata, attempt):
+                if music_key:
+                    self._recent_music_keys.append(music_key)
+                return True
+            await page.wait_for_timeout(600)
+        return False
+
+    @staticmethod
+    def _music_row_key(text: str) -> str:
+        """用曲名/作者生成稳定 key，用于避免连续任务重复选同一首。"""
+        lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+        useful = []
+        for line in lines:
+            if re.fullmatch(r"\d{1,2}:\d{2}", line):
+                continue
+            if re.search(r"\d+(\.\d+)?\s*万?人使用", line):
+                continue
+            useful.append(line)
+        return " ".join(useful[:2]).strip() or re.sub(r"\s+", " ", text or "").strip()
+
+    async def _hover_row_and_click_use(
+        self, page: Page, row: Locator, metadata: Dict[str, Any], attempt: int
+    ) -> bool:
+        """hover 当前音乐卡片，只在该卡片/抽屉内点击精确「使用」按钮。"""
+        hover_ms = max(300, min(int(metadata.get("music_use_hover_ms") or 800), 4000))
+        try:
+            summary = (await row.inner_text(timeout=1500)).strip().replace("\n", " ")
+            if len(summary) > _ROW_SUMMARY_LOG_MAX:
+                summary = summary[:_ROW_SUMMARY_LOG_MAX] + "…"
+            logger.info("选择音乐：[步骤2] 第 %d 次 hover 曲目卡片：%s", attempt, summary)
+        except Exception:
+            logger.info("选择音乐：[步骤2] 第 %d 次 hover 曲目卡片", attempt)
+
+        try:
+            await row.scroll_into_view_if_needed(timeout=3000)
+            await page.wait_for_timeout(150)
+            await row.hover(timeout=5000, force=True)
+            await page.wait_for_timeout(hover_ms)
+        except Exception as e:
+            logger.warning("选择音乐：hover 曲目卡片失败 %s", e)
+            return False
+
+        btn = await self._find_use_btn(row)
+        if btn is None:
+            try:
+                active = await self._active_music_row(page)
+                if active is not None:
+                    btn = await self._find_use_btn(active)
+            except Exception:
+                btn = None
+        if btn is None:
+            drawer = await self._music_drawer_root(page)
+            if drawer is not None:
+                btn = await self._find_use_btn(drawer)
+
+        if btn is None:
+            logger.warning("选择音乐：hover 后未出现「使用」按钮")
+            return False
+
+        try:
+            box = await btn.bounding_box(timeout=3000)
+            if not box:
+                logger.warning("选择音乐：「使用」按钮无可用坐标")
+                return False
+            x = float(box["x"]) + float(box["width"]) / 2
+            y = float(box["y"]) + float(box["height"]) / 2
+            await page.mouse.move(x, y)
+            await page.wait_for_timeout(120)
+            await page.mouse.click(x, y)
+            logger.info("选择音乐：已点击「使用」（真实鼠标点击卡片右侧按钮）")
+            return True
+        except Exception as e:
+            logger.warning("选择音乐：「使用」按钮点击失败 %s", e)
+            return False
+
+    async def _active_music_row(self, page: Page) -> Optional[Locator]:
+        root = await self._music_drawer_root(page)
+        scope = root if root is not None else page
+        for sel in Selectors.PUBLISH.get("MUSIC_ROW_ACTIVE", []) or []:
+            try:
+                loc = scope.locator(sel).first
+                if await loc.count() > 0 and await loc.is_visible():
+                    return loc
+            except Exception:
+                continue
+        return None
+
     # ──────────────────────────────────────────────────────────────────────────
     # 步骤2e：点击行 → 等待并点击「使用」
     # ──────────────────────────────────────────────────────────────────────────
+
+    async def _click_row_index_and_use(
+        self, page: Page, row_info: Dict[str, Any], metadata: Dict[str, Any]
+    ) -> bool:
+        """按当前可见列表索引在 DOM 内点击曲目，再点击同一抽屉内「使用」。"""
+        idx = int(row_info.get("index", -1))
+        summary = str(row_info.get("text") or "").replace("\n", " ")
+        if len(summary) > _ROW_SUMMARY_LOG_MAX:
+            summary = summary[:_ROW_SUMMARY_LOG_MAX] + "…"
+        logger.info("选择音乐：准备点击曲目行摘要：%s", summary)
+
+        if await self._activate_row_and_click_use_js(page, row_info, _USE_BTN_TIMEOUT):
+            return True
+
+        hover_ms = max(300, min(int(metadata.get("music_use_hover_ms") or 800), 6000))
+        await page.wait_for_timeout(hover_ms)
+        return await self._activate_row_and_click_use_js(page, row_info, 4000)
+
+    async def _activate_row_and_click_use_js(
+        self, page: Page, row_info: Dict[str, Any], timeout_ms: int
+    ) -> bool:
+        """
+        只在音乐 sidesheet 内激活目标曲目并点击「使用」。
+
+        之前用页面绝对坐标点击曲目行，在抖音页面缩放/抽屉动画/列表重排时可能落到
+        页面主体扩展信息区域，触发“添加标签/位置”等字段切换，导致“选择音乐”入口消失。
+        这里改为在浏览器上下文中重新查找当前曲目卡片，并把 mouse/pointer/click 事件派发到
+        抽屉内元素，整个过程不触碰页面主体坐标。
+        """
+        target_index = int(row_info.get("index", -1))
+        target_text = str(row_info.get("text") or "").strip()
+        deadline = max(1000, timeout_ms)
+        elapsed = 0
+        interval = 250
+
+        while elapsed < deadline:
+            try:
+                clicked = await page.evaluate(
+                    r"""
+                    ({ targetIndex, targetText }) => {
+                      const visible = (el) => {
+                        const r = el.getBoundingClientRect();
+                        const cs = getComputedStyle(el);
+                        return r.width > 0 && r.height > 0
+                          && cs.visibility !== 'hidden'
+                          && cs.display !== 'none'
+                          && cs.pointerEvents !== 'none';
+                      };
+                      const textOf = (el) => (el.innerText || el.textContent || "").trim();
+                      const root = document.querySelector(".semi-sidesheet-inner[role='sidesheet']")
+                        || document.querySelector(".semi-sidesheet[class*='music-side-sheet']")
+                        || document.querySelector(".semi-sidesheet");
+                      if (!root || !visible(root)) return false;
+
+                      const dur = /\d{1,2}:\d{2}/;
+                      const useCount = /\d+(\.\d+)?\s*万?人使用/;
+                      const cards = Array.from(root.querySelectorAll(
+                        ".card-container-tmocjc, div[class*='card-container']"
+                      )).filter((el) => {
+                        if (!visible(el)) return false;
+                        const text = textOf(el);
+                        if (!dur.test(text) || !useCount.test(text) || text.length > 500) return false;
+                        const r = el.getBoundingClientRect();
+                        return r.height >= 30 && r.height <= 200 && r.width >= 100
+                          && r.y >= 0 && r.y + Math.min(r.height, 30) <= window.innerHeight;
+                      });
+                      if (!cards.length) return false;
+
+                      let card = null;
+                      if (targetText) {
+                        card = cards.find((el) => textOf(el) === targetText)
+                          || cards.find((el) => textOf(el).includes(targetText.slice(0, 24)));
+                      }
+                      if (!card && targetIndex >= 0 && targetIndex < cards.length) {
+                        card = cards[targetIndex];
+                      }
+                      if (!card) card = cards[0];
+
+                      card.scrollIntoView({ block: "nearest", inline: "nearest" });
+                      const r = card.getBoundingClientRect();
+                      const eventInit = {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                        clientX: r.left + Math.min(r.width * 0.55, r.width - 8),
+                        clientY: r.top + r.height / 2,
+                      };
+                      for (const type of ["pointerover", "pointerenter", "mouseover", "mouseenter", "mousemove"]) {
+                        card.dispatchEvent(new MouseEvent(type, eventInit));
+                      }
+                      card.click();
+
+                      const buttonSelectors = [
+                        "button.apply-btn-LUPP0D",
+                        "button[class*='apply-btn']",
+                        "button"
+                      ];
+                      const findUseButton = (scope) => {
+                        for (const selector of buttonSelectors) {
+                          for (const btn of Array.from(scope.querySelectorAll(selector))) {
+                            const text = textOf(btn).replace(/\s+/g, "");
+                            if (text === "使用") return btn;
+                          }
+                        }
+                        return null;
+                      };
+
+                      const btn = findUseButton(card) || findUseButton(root);
+                      if (!btn) return false;
+                      btn.dispatchEvent(new MouseEvent("mouseover", eventInit));
+                      btn.dispatchEvent(new MouseEvent("mouseenter", eventInit));
+                      btn.click();
+                      return true;
+                    }
+                    """,
+                    {"targetIndex": target_index, "targetText": target_text},
+                )
+                if clicked:
+                    logger.info("选择音乐：已点击「使用」（音乐抽屉 DOM 内精确激活）")
+                    return True
+            except Exception as e:
+                logger.debug("选择音乐：DOM 激活曲目/点击使用失败：%s", e)
+
+            await page.wait_for_timeout(interval)
+            elapsed += interval
+            await asyncio.sleep(0)
+
+        return False
 
     async def _click_row_and_use(
         self, page: Page, row: Locator, metadata: Dict[str, Any]
@@ -501,22 +1026,13 @@ class SelectMusicStep(BasePublishStep):
         except Exception:
             pass
 
-        # 点击行（优先拟人，失败退化）
-        clicked = False
+        # 音乐抽屉内曲目卡片是短距离 UI 操作，直接点击更稳定；
+        # 拟人轨迹在虚拟/滚动列表里可能命中旧坐标并拖慢到几十秒。
         try:
-            config = metadata.get("anti_risk_config") or {}
-            from src.infrastructure.anti_risk.human_like import human_click
-            await human_click(page, row, metadata, config, use_operation_delay=False)
-            clicked = True
-        except Exception:
-            pass
-        if not clicked:
-            try:
-                await row.click(force=True, timeout=5000)
-                clicked = True
-            except Exception as e:
-                logger.warning("选择音乐：曲目行点击失败 %s", e)
-                return False
+            await row.click(force=True, timeout=3000)
+        except Exception as e:
+            logger.warning("选择音乐：曲目行点击失败 %s", e)
+            return False
 
         await page.wait_for_timeout(500)
 
@@ -576,8 +1092,79 @@ class SelectMusicStep(BasePublishStep):
             await asyncio.sleep(0)
         return False
 
+    async def _wait_and_click_use_btn_js(self, page: Page, timeout_ms: int) -> bool:
+        """在音乐抽屉 DOM 内直接点击精确文本「使用」按钮。"""
+        elapsed = 0
+        interval = 250
+        deadline = max(1000, timeout_ms)
+        while elapsed < deadline:
+            try:
+                rect = await page.evaluate(
+                    r"""
+                    () => {
+                      const visible = (el) => {
+                        const r = el.getBoundingClientRect();
+                        const cs = getComputedStyle(el);
+                        return r.width > 0 && r.height > 0
+                          && cs.visibility !== 'hidden' && cs.display !== 'none';
+                      };
+                      const root = document.querySelector(".semi-sidesheet-inner[role='sidesheet']")
+                        || document.querySelector(".semi-sidesheet[class*='music-side-sheet']")
+                        || document.querySelector(".semi-sidesheet");
+                      if (!root || !visible(root)) return false;
+                      const buttons = Array.from(root.querySelectorAll(
+                        "button.apply-btn-LUPP0D, button[class*='apply-btn'], button"
+                      ));
+                      for (const btn of buttons) {
+                        if (!visible(btn)) continue;
+                        const text = (btn.innerText || btn.textContent || "").trim().replace(/\s+/g, "");
+                        if (text === "使用") {
+                          const r = btn.getBoundingClientRect();
+                          return {
+                            x: Math.round(r.x),
+                            y: Math.round(r.y),
+                            width: Math.round(r.width),
+                            height: Math.round(r.height)
+                          };
+                        }
+                      }
+                      return null;
+                    }
+                    """
+                )
+                if rect:
+                    x = float(rect["x"]) + float(rect["width"]) / 2
+                    y = float(rect["y"]) + float(rect["height"]) / 2
+                    await page.mouse.move(x, y)
+                    await page.wait_for_timeout(80)
+                    await page.mouse.click(x, y)
+                    logger.info("选择音乐：已点击「使用」（音乐抽屉 DOM）")
+                    return True
+            except Exception:
+                pass
+            await page.wait_for_timeout(interval)
+            elapsed += interval
+            await asyncio.sleep(0)
+        return False
+
     async def _find_use_btn(self, scope) -> Optional[Locator]:
-        """仅 role=button 且可访问名「使用」，避免 span 等宽泛匹配误点。"""
+        """仅返回可点击且文本精确为「使用」的按钮，避免命中「万人使用」。"""
+        selectors = Selectors.PUBLISH.get("MUSIC_USE_BTN") or ["button:has-text('使用')"]
+        for sel in selectors:
+            try:
+                btns = scope.locator(sel) if hasattr(scope, "locator") else None
+                if btns is None:
+                    continue
+                n = await btns.count()
+                for i in range(min(n, 20)):
+                    b = btns.nth(i)
+                    if not await b.is_visible():
+                        continue
+                    txt = (await b.inner_text()).strip().replace("\n", "")
+                    if txt == "使用":
+                        return b
+            except Exception:
+                continue
         try:
             btns = scope.get_by_role("button", name="使用")
             n = await btns.count()
@@ -609,6 +1196,40 @@ class SelectMusicStep(BasePublishStep):
             await asyncio.sleep(0)
         logger.warning("选择音乐：抽屉关闭等待超时（可能已选好但抽屉仍开着）")
 
+    async def _close_music_drawer_if_open(self, page: Page) -> None:
+        """失败退出前关闭音乐抽屉，避免 step_runner 重试时被打开的 sidesheet 遮挡入口。"""
+        try:
+            if not await self._is_drawer_open(page):
+                return
+            closed = await page.evaluate(
+                r"""
+                () => {
+                  const root = document.querySelector(".semi-sidesheet-inner[role='sidesheet']")
+                    || document.querySelector(".semi-sidesheet[class*='music-side-sheet']")
+                    || document.querySelector(".semi-sidesheet");
+                  if (!root) return true;
+                  const buttons = Array.from(root.querySelectorAll("button, [role='button']"));
+                  const closeBtn = buttons.find((btn) => {
+                    const label = [
+                      btn.getAttribute("aria-label"),
+                      btn.getAttribute("title"),
+                      btn.innerText,
+                      btn.textContent,
+                    ].filter(Boolean).join(" ");
+                    return /关闭|取消|close/i.test(label);
+                  }) || root.querySelector(".semi-sidesheet-close, [class*='close']");
+                  if (!closeBtn) return false;
+                  closeBtn.click();
+                  return true;
+                }
+                """
+            )
+            if not closed:
+                await page.keyboard.press("Escape")
+            await self._wait_drawer_closed(page, 3000)
+        except Exception:
+            pass
+
     # ──────────────────────────────────────────────────────────────────────────
     # 步骤3：检测「修改音乐」
     # ──────────────────────────────────────────────────────────────────────────
@@ -636,6 +1257,12 @@ class SelectMusicStep(BasePublishStep):
                         return True
                 except Exception:
                     continue
+        except Exception:
+            pass
+        try:
+            has_text = await page.evaluate("() => (document.body?.innerText || '').includes('修改音乐')")
+            if has_text:
+                return True
         except Exception:
             pass
         for sel in Selectors.PUBLISH.get("MUSIC_ENTRY_MODIFY") or []:
@@ -679,6 +1306,41 @@ class SelectMusicStep(BasePublishStep):
         except Exception:
             pass
         return ""
+
+    async def _log_music_post_apply_state(self, page: Page, responses: List[str]) -> None:
+        """记录点击「使用」后页面真实状态，帮助区分 UI 改版和平台未落库。"""
+        try:
+            card = await self._extension_card(page)
+            card_text = ""
+            if card is not None:
+                card_text = re.sub(r"\s+", " ", (await card.inner_text(timeout=1500)).strip())
+            logger.warning("选择音乐：点击使用后未见「修改音乐」，扩展卡片文本=%s", card_text[:240] or "<empty>")
+        except Exception as e:
+            logger.warning("选择音乐：读取点击使用后的扩展卡片状态失败 %s", e)
+        try:
+            toast_texts = await page.locator(
+                ".semi-toast, .semi-toast-content, [class*='toast'], [class*='message']"
+            ).all_inner_texts()
+            toast_texts = [re.sub(r"\s+", " ", t).strip() for t in toast_texts if t.strip()]
+            if toast_texts:
+                logger.warning("选择音乐：点击使用后页面提示=%s", toast_texts[:5])
+        except Exception:
+            pass
+        if responses:
+            logger.warning("选择音乐：点击使用阶段捕获到疑似音乐接口响应=%s", responses[-8:])
+        else:
+            logger.warning("选择音乐：点击使用阶段未捕获到含 music/sound/audio/song 的接口响应")
+
+    async def _is_music_module_absent(self, page: Page) -> bool:
+        """扩展信息卡片内既无「选择音乐」也无「修改音乐」，视为音乐模块已被页面移除。"""
+        try:
+            card = await self._extension_card(page)
+            if card is None:
+                return False
+            text = re.sub(r"\s+", " ", (await card.inner_text(timeout=1500)).strip())
+            return "选择音乐" not in text and "修改音乐" not in text
+        except Exception:
+            return False
 
     # ──────────────────────────────────────────────────────────────────────────
     # 旧接口兼容（其它模块可能调用）

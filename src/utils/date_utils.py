@@ -4,9 +4,12 @@
 功能：提供日期时间相关的工具函数
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Optional, Any
+from zoneinfo import ZoneInfo
 import re
+
+_SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
 # 日期时间格式常量
@@ -211,4 +214,62 @@ def get_datetime_diff_seconds(dt1: datetime, dt2: datetime) -> int:
     """
     delta = dt1 - dt2
     return int(delta.total_seconds())
+
+
+def parse_latest_publish_display_time(text: Optional[str]) -> Optional[datetime]:
+    """解析账号管理「已发布最晚时间」展示串（YYYY-MM-DD HH:mm）。"""
+    s = (text or "").strip()
+    if not s or s in ("-", "—"):
+        return None
+    if len(s) < 16:
+        return None
+    try:
+        return datetime.strptime(s[:16], SCHEDULE_TIME_ST_FORMAT)
+    except ValueError:
+        return None
+
+
+def _shanghai_today(now: Optional[datetime] = None) -> date:
+    if now is None:
+        return datetime.now(_SHANGHAI_TZ).date()
+    if now.tzinfo is None:
+        return now.date()
+    return now.astimezone(_SHANGHAI_TZ).date()
+
+
+def compute_publish_reminder_days(
+    display_text: Optional[str],
+    now: Optional[datetime] = None,
+) -> Optional[int]:
+    """计算最晚发布日期相对今天的自然日差（最晚日期 - 今天）。"""
+    latest = parse_latest_publish_display_time(display_text)
+    if latest is None:
+        return None
+    return (latest.date() - _shanghai_today(now)).days
+
+
+def format_publish_reminder_text(remaining_days: Optional[int]) -> str:
+    """格式化发布提醒文案。"""
+    if remaining_days is None:
+        return "从未发布"
+    if remaining_days == 0:
+        return "今天"
+    if remaining_days > 0:
+        return f"剩余{remaining_days}天"
+    return f"已逾期{abs(remaining_days)}天"
+
+
+def is_latest_publish_overdue(display_text: Optional[str], now: Optional[datetime] = None) -> bool:
+    """最晚发布时间是否严格早于当前北京时间（与账号表标红一致）。"""
+    latest = parse_latest_publish_display_time(display_text)
+    if latest is None:
+        return False
+    cell = latest.replace(tzinfo=_SHANGHAI_TZ)
+    if now is None:
+        ref = datetime.now(_SHANGHAI_TZ)
+    elif now.tzinfo is None:
+        ref = now.replace(tzinfo=_SHANGHAI_TZ)
+    else:
+        ref = now.astimezone(_SHANGHAI_TZ)
+    return cell < ref
 

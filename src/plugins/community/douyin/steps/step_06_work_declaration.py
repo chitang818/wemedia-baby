@@ -12,6 +12,9 @@
 6. 校验：弹窗关闭后入口区文案包含所选枚举。
 
 若弹窗已打开：不重复点底层入口，直接 4→5→6。
+
+**无入口（旧版/未灰度）**：在已配置且需自动设置时，若页面未找到占位「请选择自主声明」或等价入口，
+视为当前发布页无自主声明能力，不打开弹窗，记录说明日志后本步直接完成（不阻断后续发布）。
 """
 from __future__ import annotations
 
@@ -401,12 +404,12 @@ class WorkDeclarationStep(BasePublishStep):
             entry = await self._find_declaration_entry_button(page)
             if entry is None:
                 msg = (
-                    "作品申明：未找到入口（占位「请选择自主声明」或已选声明文案）。"
-                    "请确认在视频发布页基础信息区可见自主声明项。"
+                    "作品申明：未找到自主声明入口（占位「请选择自主声明」或已选声明文案），"
+                    "按旧版发布页或未开放该功能处理，跳过自动设置，发布继续。"
                 )
-                logger.warning(msg)
-                USER_LOG.warning("%s ✗ %s", prefix, msg)
-                return self._fail(msg)
+                logger.info(msg)
+                USER_LOG.info("%s — %s", prefix, msg)
+                return None
 
             await entry.scroll_into_view_if_needed()
             await random_delay(page, wait_ms(200), metadata, config)

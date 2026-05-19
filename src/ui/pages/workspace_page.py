@@ -4,14 +4,15 @@
 功能：工作台页面，显示概览信息、快速操作、数据图表和最近活动
 """
 
-from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
+from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout,
     QScrollArea, QFrame, QSizePolicy
 )
 from PySide6.QtGui import QFont, QColor
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QTimer, Qt, QEvent
+from PySide6.QtGui import QResizeEvent
 import logging
 
 from qfluentwidgets import (
@@ -28,38 +29,6 @@ from src.services.material.media_library_stats_cache import get_media_library_st
 from src.services.material.media_library_stats_service import get_media_library_stats_service
 
 logger = logging.getLogger(__name__)
-
-
-def _format_recent_time(created_at_str: Optional[str]) -> str:
-    """将 created_at（ISO 或 YYYY-MM-DD HH:MM:SS）格式化为相对时间/短日期"""
-    if not created_at_str or not created_at_str.strip():
-        return "刚刚"
-    try:
-        if 'T' in created_at_str:
-            dt = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
-        else:
-            if len(created_at_str) >= 19:
-                dt = datetime.strptime(created_at_str[:19], '%Y-%m-%d %H:%M:%S')
-            else:
-                dt = datetime.strptime(created_at_str[:10], '%Y-%m-%d')
-        if dt.tzinfo:
-            dt = dt.replace(tzinfo=None)
-        now = datetime.now()
-        delta = now - dt
-        if delta < timedelta(minutes=1):
-            return "刚刚"
-        if delta < timedelta(hours=1):
-            return f"{int(delta.total_seconds() / 60)} 分钟前"
-        if delta < timedelta(hours=24) and dt.date() == now.date():
-            return dt.strftime("%H:%M")
-        yesterday = (now - timedelta(days=1)).date()
-        if dt.date() == yesterday:
-            return f"昨天 {dt.strftime('%H:%M')}"
-        if delta < timedelta(days=7):
-            return dt.strftime("%m月%d日")
-        return dt.strftime("%Y-%m-%d")
-    except (ValueError, TypeError):
-        return "刚刚"
 
 
 class WorkspacePage(BasePage):
@@ -449,9 +418,23 @@ class WorkspacePage(BasePage):
         self._update_welcome_text()
         self._apply_welcome_title_style()
         self._apply_welcome_desc_style()
+        self._sync_recent_activity_layout()
         # 从账号库等页面返回时立即拉取统计，避免仍显示离开前的旧在线/离线数字
         QTimer.singleShot(0, self._refresh_data)
         QTimer.singleShot(0, self._refresh_media_stats_async)
+
+    def resizeEvent(self, event: QResizeEvent):
+        super().resizeEvent(event)
+        self._sync_recent_activity_layout()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            self._sync_recent_activity_layout()
+
+    def _sync_recent_activity_layout(self) -> None:
+        if hasattr(self, "recent_activity") and self.recent_activity is not None:
+            self.recent_activity._sync_compact_layout()
     
     # ──── 数据加载 ────
 
@@ -545,14 +528,10 @@ class WorkspacePage(BasePage):
             if hasattr(self, 'trend_chart'):
                 self.trend_chart.set_data(trend_data)
 
-            # 更新最近活动
-            recent_records = publish_stats.get('recent_records', [])
+            # 更新最近发布（在线账号发布提醒）
+            reminders = dashboard_data.get('account_publish_reminders', [])
             if hasattr(self, 'recent_activity'):
-                self.recent_activity.set_records(
-                    recent_records,
-                    platform_name_map=PLATFORM_NAME_MAP,
-                    format_time_fn=_format_recent_time,
-                )
+                self.recent_activity.set_account_reminders(reminders)
                     
         except Exception as e:
             logger.error(f"更新工作台数据失败: {e}", exc_info=True)

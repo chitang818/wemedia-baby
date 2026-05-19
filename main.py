@@ -592,7 +592,8 @@ def main():
 
         # 创建应用程序
         app = QApplication(sys.argv)
-        app.setApplicationName("媒小宝")
+        from config.feature_flags import FeatureFlags
+        app.setApplicationName("媒小宝-吾爱破解论坛特别版" if FeatureFlags.is_52pojie() else "媒小宝")
         # 日期/时间选择器弹窗：确定在右、取消在左
         try:
             from src.ui.patches.picker_confirm_right import apply_picker_confirm_right
@@ -735,6 +736,23 @@ def main():
             if not await initialize_services_async():
                 logging.error("服务初始化失败，程序退出")
                 return 1
+
+            # 52POJIE 特别版：启动即注入本地 VIP 用户态（无云端、免登录）
+            try:
+                from config.feature_flags import FeatureFlags
+                if FeatureFlags.is_52pojie():
+                    from src.services.auth import CurrentUserService
+                    curr = CurrentUserService()
+                    if not curr.is_logged_in():
+                        curr.set_user(
+                            user_id=520052,
+                            username="52pojie",
+                            level="vip1",
+                            is_expired=False,
+                        )
+                        logging.info("52POJIE 模式：已注入本地离线账号（vip1）")
+            except Exception as e:
+                logging.warning("52POJIE 本地账号注入失败：%s", e)
             
                 # 创建主窗口（延后导入以加快进入 run_app）
             try:
@@ -757,16 +775,22 @@ def main():
                     QTimer.singleShot(0, window.bring_to_foreground)
 
                 # 自动登录放到后台执行，完成后 UI 会通过 CurrentUserService 等更新用户名
+                # 52POJIE 特别版不接入云端账号体系，跳过自动登录
+                from config.feature_flags import FeatureFlags
+
                 mark("autologin_start")
-                async def _auto_login_and_maybe_log():
-                    try:
-                        from src.services.auth.auth_remember import try_auto_login_async
-                        if await try_auto_login_async():
-                            logging.info("已使用记住的账号自动登录")
-                    except Exception as e:
-                        logging.warning("自动登录失败: %s", e)
+                if FeatureFlags.is_52pojie():
                     mark("autologin_done")
-                asyncio.create_task(_auto_login_and_maybe_log())
+                else:
+                    async def _auto_login_and_maybe_log():
+                        try:
+                            from src.services.auth.auth_remember import try_auto_login_async
+                            if await try_auto_login_async():
+                                logging.info("已使用记住的账号自动登录")
+                        except Exception as e:
+                            logging.warning("自动登录失败: %s", e)
+                        mark("autologin_done")
+                    asyncio.create_task(_auto_login_and_maybe_log())
 
                 # 启动心跳任务：每60秒写一次存活记录（含内存用量）
                 # 用于在下次崩溃后通过日志时间线推断崩溃发生在哪个任务附近
@@ -954,11 +978,29 @@ def main():
                         except Exception as e:
                             logging.warning(f"关闭 HTTP 客户端失败: {e}")
 
+                        # 6b. 关闭更新检查共享 aiohttp 会话
+                        logging.info("正在关闭更新检查 HTTP 会话...")
+                        try:
+                            from src.services.update_check_service import close_update_check_session
+                            await close_update_check_session()
+                        except Exception as e:
+                            logging.warning("关闭更新检查会话失败: %s", e)
+                        logging.info("更新检查 HTTP 会话已关闭")
+                        try:
+                            for _h in logging.root.handlers:
+                                fl = getattr(_h, "flush", None)
+                                if callable(fl):
+                                    fl()
+                        except Exception:
+                            pass
+
                         # 7. 关闭 Tortoise ORM 连接
                         try:
                             from src.infrastructure.storage.tortoise_manager import close_tortoise
                             await close_tortoise()
                             logging.info("Tortoise ORM 连接已安全关闭")
+                        except asyncio.CancelledError:
+                            logging.debug("关闭 Tortoise 被取消（应用退出中，可忽略）")
                         except Exception:
                             pass
 
@@ -1017,6 +1059,11 @@ def main():
         # 在 Qt 事件循环已停止的情况下可能死锁。改为手动管理生命周期。
         try:
             return loop.run_until_complete(run_app())
+        except asyncio.CancelledError:
+            # qasync 在 Qt 退出路径上可能在此处抛出 CancelledError（run_until_complete 层），
+            # 与协程内已处理的取消不同；若不捕获会被 PyInstaller 视为未处理脚本异常。
+            logging.debug("应用程序正常退出（qasync 事件循环取消）")
+            return 0
         except RuntimeError as e:
             # qasync 在窗口关闭时会抛出此错误，属于正常行为
             if "Event loop stopped before Future completed" in str(e):

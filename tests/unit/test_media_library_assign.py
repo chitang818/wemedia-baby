@@ -64,7 +64,7 @@ def test_resolve_assign_target_account_video(tmp_path: Path) -> None:
     at = mla.resolve_assign_target(
         root, media_kind="video", target_type="account", target_data=account
     )
-    expected = MaterialLibraryManager.account_video_unpublished_dir(root, account)
+    expected = MaterialLibraryManager.resolve_account_video_unpublished_dir(root, account)
     assert at.directory == expected
     assert "昵称A" in at.label
 
@@ -80,3 +80,35 @@ def test_resolve_assign_target_group_image(tmp_path: Path) -> None:
     expected = MaterialLibraryManager.group_image_unpublished_dir(root, "我的组")
     assert at.directory == expected
     assert "我的组" in at.label
+
+
+def test_account_library_owner_folder_matches_fuzzy_nickname() -> None:
+    acc = {"platform": "wechat_video", "platform_username": "爱种地的90后"}
+    assert MaterialLibraryManager.account_library_owner_folder_matches_account(
+        "视频号_爱种地的90后小伙", acc
+    )
+
+
+def test_account_library_owner_folder_rejects_group_folder() -> None:
+    acc = {"platform": "wechat_video", "platform_username": "x"}
+    assert not MaterialLibraryManager.account_library_owner_folder_matches_account(
+        "账号组_某组", acc
+    )
+
+
+def test_resolve_assign_target_account_video_prefers_fuzzy_existing_dir(tmp_path: Path) -> None:
+    root = _make_media_root(tmp_path)
+    account = {"platform": "douyin", "platform_username": "昵称A"}
+    lib = root / MaterialLibraryManager.ACCOUNT_LIBRARY_FOLDER_NAME
+    fuzzy = lib / "抖音_昵称A手写后缀"
+    unpublished = (
+        fuzzy
+        / MaterialLibraryManager.ACCOUNT_MEDIA_VIDEO_NAME
+        / MaterialLibraryManager.UNPUBLISHED_NAME
+    )
+    unpublished.mkdir(parents=True)
+
+    at = mla.resolve_assign_target(
+        root, media_kind="video", target_type="account", target_data=account
+    )
+    assert at.directory == unpublished

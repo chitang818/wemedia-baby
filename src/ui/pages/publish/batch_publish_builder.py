@@ -71,7 +71,7 @@ def validate_tasks(tasks: List[Dict[str, Any]]) -> Optional[str]:
 async def build_publish_tasks_for_batch(
     selected_accounts: List[Dict[str, Any]],
     video_list: List[Dict[str, Any]],
-    time_slots: List[str],
+    time_slots: List[Optional[str]],
     common_fields: Dict[str, Any],
     immediate_publish: bool,
     exclusion: PreviewExclusionSet,
@@ -93,7 +93,7 @@ async def build_publish_tasks_for_batch(
     Args:
         selected_accounts: 批量页已选账号列表（含账号组占位）。
         video_list: 视频列表（append 顺序 = 分配顺序）。
-        time_slots: 发布时间列表。
+        time_slots: 发布时间槽列表；元素为 None 时表示该槽「立即发布」。
         common_fields: ``_collect_common_fields()`` 的输出。
         immediate_publish: 是否立即发布。
         exclusion: 预览排除集。

@@ -34,6 +34,21 @@ DEFAULT_ANNOUNCEMENTS = [
     },
 ]
 
+_52POJIE_ANNOUNCEMENTS = [
+    {
+        "icon": FluentIcon.MEGAPHONE,
+        "title": "欢迎使用",
+        "content": "媒小宝-吾爱破解论坛特别版，已解锁全部功能，无需登录即可使用。",
+        "color": "#0078D4",
+    },
+    {
+        "icon": FluentIcon.VIDEO,
+        "title": "平台与插件说明",
+        "content": "目前抖音、快手、视频号三个平台的视频发布已经可以使用，其他平台及图文发布还在完善中……",
+        "color": "#138496",
+    },
+]
+
 
 class AnnouncementItem(QWidget):
     """单条公告"""
@@ -92,7 +107,9 @@ class AnnouncementWidget(CardWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._init_ui()
-        self.set_announcements(DEFAULT_ANNOUNCEMENTS)
+        from config.feature_flags import FeatureFlags
+        announcements = _52POJIE_ANNOUNCEMENTS if FeatureFlags.is_52pojie() else DEFAULT_ANNOUNCEMENTS
+        self.set_announcements(announcements)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)

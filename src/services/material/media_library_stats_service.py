@@ -17,6 +17,7 @@ from typing import Dict, Iterable, Optional, Tuple, List
 
 from src.infrastructure.common.material_library_manager import MaterialLibraryManager
 from src.infrastructure.common.media_library_assign import (
+    UNASSIGNED_OWNER_LABEL,
     scan_image_library_entries,
     scan_video_library_entries,
 )
@@ -160,6 +161,23 @@ def build_account_image_stats(
     return out
 
 
+def _dedupe_paths(paths: List[Path]) -> List[Path]:
+    """同一视频/文件夹多条路径时去重（尽量 resolve，失败则退回 str）。"""
+    seen: set[str] = set()
+    out: List[Path] = []
+    for p in paths or []:
+        if not p:
+            continue
+        try:
+            key = str(p.resolve())
+        except OSError:
+            key = str(p)
+        if key not in seen:
+            seen.add(key)
+            out.append(p)
+    return out
+
+
 class MediaLibraryStatsService:
     """统一统计服务：计算并写入全局缓存（带并发保护与简单防抖）。"""
 
@@ -181,9 +199,11 @@ class MediaLibraryStatsService:
     def get_cached(self) -> Optional[MediaLibraryStats]:
         return get_media_library_stats_cache().get()
 
-    def invalidate(self) -> None:
-        # 只做轻量标记：下次 refresh 会重新计算
+    def invalidate(self, *, clear_cache: bool = False) -> None:
+        """标记需重算统计；可选清空缓存，避免短暂返回旧对象。"""
         self._last_done_ts = 0.0
+        if clear_cache:
+            get_media_library_stats_cache().clear()
 
     async def compute_stats(
         self,
@@ -268,12 +288,33 @@ class MediaLibraryStatsService:
             except Exception:
                 v_dir = None
             try:
-                i_dir = MaterialLibraryManager.account_image_unpublished_dir(root, acc)
+                i_dir = MaterialLibraryManager.resolve_account_image_unpublished_dir(root, acc)
             except Exception:
                 i_dir = None
 
-            video_by_account[aid_int] = _scan_video_files_in_dir(v_dir if isinstance(v_dir, Path) else None)
-            image_by_account[aid_int] = _scan_image_folders_in_dir(i_dir if isinstance(i_dir, Path) else None)
+            v_paths = _scan_video_files_in_dir(v_dir if isinstance(v_dir, Path) else None)
+            for e in video_entries or []:
+                ol = str(e.owner_label or "").strip()
+                if not ol or ol == UNASSIGNED_OWNER_LABEL or ol.startswith("账号组-"):
+                    continue
+                try:
+                    if MaterialLibraryManager.account_library_owner_folder_matches_account(ol, acc):
+                        v_paths.append(e.path)
+                except Exception:
+                    continue
+            video_by_account[aid_int] = _dedupe_paths(v_paths)
+
+            i_paths = _scan_image_folders_in_dir(i_dir if isinstance(i_dir, Path) else None)
+            for e in image_entries or []:
+                ol = str(e.owner_label or "").strip()
+                if not ol or ol == UNASSIGNED_OWNER_LABEL or ol.startswith("账号组-"):
+                    continue
+                try:
+                    if MaterialLibraryManager.account_library_owner_folder_matches_account(ol, acc):
+                        i_paths.append(e.path)
+                except Exception:
+                    continue
+            image_by_account[aid_int] = _dedupe_paths(i_paths)
 
         video_by_account_counts = build_account_video_stats(
             account_id_to_video_paths=video_by_account,
