@@ -33,10 +33,10 @@ function Fail([string]$Message) {
 
 function Invoke-Git {
     param(
-        [string]$Cwd = $RepoRoot,
+        [string]$WorkDir = $RepoRoot,
         [Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs
     )
-    Push-Location $Cwd
+    Push-Location $WorkDir
     try {
         $output = & git @GitArgs 2>&1
         if ($LASTEXITCODE -ne 0) {
@@ -50,7 +50,7 @@ function Invoke-Git {
 }
 
 # 1) clean working tree on main
-$currentBranch = (Invoke-Git branch --show-current | Out-String).Trim()
+$currentBranch = (Invoke-Git rev-parse --abbrev-ref HEAD | Out-String).Trim()
 if ($currentBranch -ne "main") {
     Invoke-Git checkout main | Out-Null
 }
@@ -88,20 +88,20 @@ try {
     $gitignore = Get-Content $gitignorePath -Raw -Encoding UTF8
     if ($gitignore -notmatch "src/proprietary/") {
         Add-Content -Path $gitignorePath -Value $OssGitignoreBlock -Encoding UTF8
-        Invoke-Git -Cwd $WorktreePath add .gitignore | Out-Null
+        Invoke-Git -WorkDir $WorktreePath add .gitignore | Out-Null
     }
 
-    $pending = (Invoke-Git -Cwd $WorktreePath status --porcelain | Out-String).Trim()
+    $pending = (Invoke-Git -WorkDir $WorktreePath status --porcelain | Out-String).Trim()
     if ($pending) {
-        Invoke-Git -Cwd $WorktreePath add -A | Out-Null
-        Invoke-Git -Cwd $WorktreePath commit -m "chore: OSS public sync snapshot" | Out-Null
+        Invoke-Git -WorkDir $WorktreePath add -A | Out-Null
+        Invoke-Git -WorkDir $WorktreePath commit -m "chore: OSS public sync snapshot" | Out-Null
         Write-Ok "Created oss-release commit in worktree."
     } else {
         Write-Warn "No changes on oss-release; skip commit."
     }
 
     Write-Info "Pushing oss-release to public/main..."
-    Invoke-Git -Cwd $WorktreePath push public oss-release:main | Out-Null
+    Invoke-Git -WorkDir $WorktreePath push public oss-release:main | Out-Null
 } finally {
     Invoke-Git worktree remove --force $WorktreePath | Out-Null
 }
