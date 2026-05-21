@@ -213,7 +213,8 @@ python -m pytest tests/unit
 ## Git 双仓库（私有主仓）
 
 - **主远程 `origin`**：`wemedia-baby-Pro`（私有），`main` 含开源 + 闭源；日常 `git push origin main`。
-- **公开远程 `public`**：`wemedia-baby`（开源）；仅通过 `scripts/git/publish_oss_to_public.ps1` 同步，**禁止** `git push public main`。
+- **公开远程 `public`**：`wemedia-baby`（开源）；仅通过 `scripts/git/publish_oss_to_public.ps1`（或 `.bat`）同步，**禁止** `git push public main`。
+- 建议执行一次 `scripts/git/install_git_hooks.ps1` 安装 pre-push 防误推钩子。
 - 详细流程见 [docs/internal/GIT_DUAL_REPO.md](docs/internal/GIT_DUAL_REPO.md)。
 
 ## 当前工作区状态提示

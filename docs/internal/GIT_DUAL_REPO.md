@@ -15,28 +15,44 @@ git commit -m "你的提交说明"
 git push origin main
 ```
 
-## 更新公开开源仓
+## 更新公开开源仓（推荐）
 
-在**工作区已提交干净**（`git status` 无未提交文件）时执行：
+在 **main 已提交、工作区干净**（`git status` 无未提交文件）时：
 
-```powershell
-.\scripts\git\publish_oss_to_public.ps1
-```
+- 双击 `scripts/git/publish_oss_to_public.bat`，或
+- 在项目根目录执行：`.\scripts\git\publish_oss_to_public.ps1`
 
-或双击 `scripts\git\publish_oss_to_public.bat`。
+仅试跑、不推送：`.\scripts\git\publish_oss_to_public.ps1 -DryRun`
 
 脚本会：
 
-1. 在临时 worktree（`.git/oss-public-sync`）中从 `main` 生成 `oss-release` 分支；
+1. 在临时目录 `.git/oss-public-sync` 从 `main` 生成 `oss-release` 快照；
 2. 去掉 `docs/`、`src/proprietary/`、`src/plugins/pro/`、`src/pro_features/`；
-3. 用 `--force-with-lease` 将 `oss-release` 推送到公开仓的 `main`（公开仓为开源快照，非完整历史镜像）。
+3. **校验**快照中不含上述路径后，推送到公开仓 `main`；
+4. **不改动**你当前工作区的 `main` 与闭源文件。
 
-**不会**切换你当前 `main` 工作区，本地闭源文件保持不动。
+## 为什么不能 `git push public main`？
+
+| 命令 | 推上去的内容 |
+|------|----------------|
+| `git push origin main` | 完整版（开源 + 闭源）→ 私有仓，**正确** |
+| `git push public main` | 同样把**完整版 main** 推到公开仓 → **闭源会暴露** |
+| 运行 `publish_oss_to_public` | 先去掉闭源再推 → **正确** |
+
+本地 `main` 在私有主仓方案里代表**完整项目**；公开仓只应接收脚本生成的**开源快照**。
+
+## 防误推钩子（建议安装一次）
+
+```powershell
+.\scripts\git\install_git_hooks.ps1
+```
+
+安装后，若误执行 `git push public main`，Git 会直接拒绝并提示改用同步脚本。
 
 ## 禁止操作
 
-- **不要**执行 `git push public main`（可能把闭源推到公开仓）。
-- **不要**把 `config/auth_config.json`、`config/dist_mode.json`、`.env` 提交到任一仓库。
+- **不要** `git push public main`。
+- **不要**提交 `config/auth_config.json`、`config/dist_mode.json`、`.env` 到任一仓库。
 
 ## 查看远程配置
 
@@ -44,7 +60,4 @@ git push origin main
 git remote -v
 ```
 
-预期：
-
-- `origin` → `wemedia-baby-Pro`
-- `public` → `wemedia-baby`
+预期：`origin` → `wemedia-baby-Pro`，`public` → `wemedia-baby`。
