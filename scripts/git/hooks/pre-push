@@ -1,7 +1,6 @@
 #!/bin/sh
-# 阻止：git push public main（会把闭源代码推到公开仓）
-# 允许：git push public oss-release:main（由 publish_oss_to_public 脚本生成）
-# 安装：.\scripts\git\install_git_hooks.ps1
+# Block accidental pushes to public (Windows Git may not pass refs on stdin).
+# Only publish_oss_to_public.ps1 sets ALLOW_PUBLIC_OSS_PUSH=1 before push.
 
 remote="$1"
 
@@ -9,15 +8,14 @@ if [ "$remote" != "public" ]; then
   exit 0
 fi
 
-while read local_ref local_sha remote_ref remote_sha; do
-  if [ "$remote_ref" = "refs/heads/main" ] && [ "$local_ref" = "refs/heads/main" ]; then
-    echo "" >&2
-    echo "[错误] 禁止：git push public main（会把闭源推到公开仓）" >&2
-    echo "       请改用：.\\scripts\\git\\publish_oss_to_public.ps1" >&2
-    echo "       或双击：scripts\\git\\publish_oss_to_public.bat" >&2
-    echo "" >&2
-    exit 1
-  fi
-done
+if [ "$ALLOW_PUBLIC_OSS_PUSH" = "1" ]; then
+  exit 0
+fi
 
-exit 0
+echo "" >&2
+echo "[ERROR] Blocked: push to remote 'public'" >&2
+echo "        Do not use: git push public main" >&2
+echo "        Use: .\\scripts\\git\\publish_oss_to_public.ps1" >&2
+echo "        Or:  scripts\\git\\publish_oss_to_public.bat" >&2
+echo "" >&2
+exit 1

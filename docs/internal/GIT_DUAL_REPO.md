@@ -47,7 +47,7 @@ git push origin main
 .\scripts\git\install_git_hooks.ps1
 ```
 
-安装后，若误执行 `git push public main`，Git 会直接拒绝并提示改用同步脚本。
+安装后，**任何**对 `public` 的手动 `git push` 都会被拒绝（Windows 下 Git 钩子无法区分分支，故统一拦截）；只有运行 `publish_oss_to_public` 脚本时才会临时放行。
 
 ## 禁止操作
 

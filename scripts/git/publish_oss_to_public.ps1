@@ -155,9 +155,14 @@ try {
     }
 
     Write-Info "Pushing to $publicUrl (oss-release -> main, force-with-lease)..."
-    Require-GitCommand -Cwd $WorktreePath -GitArguments @(
-        "push", "--force-with-lease", "public", "oss-release:main"
-    ) | Out-Null
+    $env:ALLOW_PUBLIC_OSS_PUSH = "1"
+    try {
+        Require-GitCommand -Cwd $WorktreePath -GitArguments @(
+            "push", "--force-with-lease", "public", "oss-release:main"
+        ) | Out-Null
+    } finally {
+        Remove-Item Env:ALLOW_PUBLIC_OSS_PUSH -ErrorAction SilentlyContinue
+    }
 } finally {
     Require-GitCommand -GitArguments @("worktree", "remove", "--force", $WorktreePath) | Out-Null
 }

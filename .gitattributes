@@ -1,0 +1,2 @@
+# Git hooks must use LF so sh runs correctly on Windows
+scripts/git/hooks/pre-push text eol=lf
