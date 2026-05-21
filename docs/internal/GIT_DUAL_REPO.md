@@ -27,9 +27,11 @@ git push origin main
 
 脚本会：
 
-1. 从 `main` 生成/更新 `oss-release` 分支；
+1. 在临时 worktree（`.git/oss-public-sync`）中从 `main` 生成 `oss-release` 分支；
 2. 去掉 `docs/`、`src/proprietary/`、`src/plugins/pro/`、`src/pro_features/`；
-3. 将 `oss-release` 推送到公开仓的 `main`。
+3. 用 `--force-with-lease` 将 `oss-release` 推送到公开仓的 `main`（公开仓为开源快照，非完整历史镜像）。
+
+**不会**切换你当前 `main` 工作区，本地闭源文件保持不动。
 
 ## 禁止操作
 
