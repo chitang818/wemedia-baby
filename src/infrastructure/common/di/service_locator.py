@@ -56,12 +56,16 @@ class ServiceLocator:
     
     _instance: Optional['ServiceLocator'] = None
     _lock = threading.RLock()
-    _services: Dict[Type, Any] = {}
-    _factories: Dict[Type, ServiceFactory] = {}
+    _services: Dict[Any, Any] = {}
+    _factories: Dict[Any, ServiceFactory] = {}
     _aliases: Dict[str, Type] = {}
     _initializers: Dict[Type, List[Callable[[Any], None]]] = {}
     _lifecycle_hooks: Dict[Type, Dict[str, Callable]] = {}
-    _request_context: Dict[Type, Any] = {}
+    _request_context: Dict[Any, Any] = {}
+
+    @staticmethod
+    def _service_name(service_type: Any) -> str:
+        return getattr(service_type, "__name__", str(service_type))
     
     def __new__(cls) -> 'ServiceLocator':
         """单例模式实现"""
@@ -103,7 +107,7 @@ class ServiceLocator:
     
     def register_factory(
         self,
-        service_type: Type,
+        service_type: Any,
         factory_func: Callable[[], Any],
         scope: Scope = Scope.SINGLETON
     ) -> None:
@@ -117,7 +121,9 @@ class ServiceLocator:
         with self._lock:
             factory = ServiceFactory(factory_func, scope)
             self._factories[service_type] = factory
-            logger.debug(f"注册服务工厂: {service_type.__name__} ({scope.value})")
+            logger.debug(
+                f"注册服务工厂: {self._service_name(service_type)} ({scope.value})"
+            )
     
     def register_class(
         self,
@@ -228,7 +234,7 @@ class ServiceLocator:
                 except Exception as e:
                     logger.error(f"执行初始化回调失败 {service_type.__name__}: {e}", exc_info=True)
     
-    def get(self, service_type: Type) -> Any:
+    def get(self, service_type: Any) -> Any:
         """获取服务实例
         
         Args:
@@ -244,8 +250,6 @@ class ServiceLocator:
             if isinstance(service_type, str):
                 if service_type in self._aliases:
                     service_type = self._aliases[service_type]
-                else:
-                    raise ServiceNotFoundError(f"服务别名未找到: {service_type}")
             
             if service_type in self._services:
                 return self._services[service_type]
@@ -270,9 +274,11 @@ class ServiceLocator:
                     
                     return instance
             
-            raise ServiceNotFoundError(f"服务未注册: {service_type.__name__}")
+            raise ServiceNotFoundError(
+                f"服务未注册: {self._service_name(service_type)}"
+            )
     
-    def get_optional(self, service_type: Type) -> Optional[Any]:
+    def get_optional(self, service_type: Any) -> Optional[Any]:
         """获取服务（可选，不存在返回None）
         
         Args:
@@ -291,7 +297,7 @@ class ServiceLocator:
         self._request_context.clear()
         logger.debug("清空请求上下文")
     
-    def unregister(self, service_type: Type) -> None:
+    def unregister(self, service_type: Any) -> None:
         """注销服务
         
         Args:
@@ -305,16 +311,21 @@ class ServiceLocator:
                         try:
                             hooks['cleanup'](self._services[service_type])
                         except Exception as e:
-                            logger.error(f"执行清理钩子失败 {service_type.__name__}: {e}", exc_info=True)
+                            logger.error(
+                                f"执行清理钩子失败 {self._service_name(service_type)}: {e}",
+                                exc_info=True,
+                            )
                 
                 del self._services[service_type]
-                logger.debug(f"注销服务: {service_type.__name__}")
+                logger.debug(f"注销服务: {self._service_name(service_type)}")
             
             if service_type in self._factories:
                 del self._factories[service_type]
-                logger.debug(f"注销服务工厂: {service_type.__name__}")
+                logger.debug(
+                    f"注销服务工厂: {self._service_name(service_type)}"
+                )
     
-    def is_registered(self, service_type: Type) -> bool:
+    def is_registered(self, service_type: Any) -> bool:
         """检查服务是否已注册
         
         Args:
@@ -323,9 +334,11 @@ class ServiceLocator:
         Returns:
             如果已注册返回True，否则返回False
         """
-        return (service_type in self._services or 
-                service_type in self._factories or
-                (isinstance(service_type, str) and service_type in self._aliases))
+        return (
+            service_type in self._services
+            or service_type in self._factories
+            or (isinstance(service_type, str) and service_type in self._aliases)
+        )
     
     def get_all_services(self) -> Dict[Type, Any]:
         """获取所有已注册的服务实例

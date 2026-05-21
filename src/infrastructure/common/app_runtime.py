@@ -136,9 +136,16 @@ def connect_main_window_activation(local_server: Any, window: Any) -> None:
     connect_activation_handler(local_server, activate_main_window)
 
 
-async def load_plugins_and_browser() -> None:
+def is_startup_browser_warmup_enabled() -> bool:
+    return os.environ.get("ENABLE_BROWSER_WARMUP_ON_START", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+async def load_plugins() -> None:
     try:
-        from src.infrastructure.browser.browser_manager import UndetectedBrowserManager
         from src.infrastructure.common.di.service_locator import Scope, ServiceLocator
         from src.plugins.core.plugin_manager import PluginManager
 
@@ -147,19 +154,37 @@ async def load_plugins_and_browser() -> None:
         ServiceLocator().register(PluginManager, PluginManager(), scope=Scope.SINGLETON)
         _mark("plugin_done")
         logging.info("Plugin loading finished.")
+    except Exception as e:
+        logging.warning("Background plugin loading failed: %s", e)
+
+
+def schedule_plugin_loading(task_registry: Any) -> None:
+    task_registry.create_task(
+        load_plugins(),
+        name="startup.plugin_loading",
+        group="startup",
+    )
+
+
+async def warmup_browser_environment() -> None:
+    try:
+        from src.infrastructure.browser.browser_manager import UndetectedBrowserManager
 
         _mark("warmup_start")
         await UndetectedBrowserManager.ensure_warmup()
         _mark("warmup_done")
         logging.info("Browser environment warmup finished.")
     except Exception as e:
-        logging.warning("Background plugin/browser warmup failed: %s", e)
+        logging.warning("Background browser warmup failed: %s", e)
 
 
-def schedule_plugin_browser_warmup(task_registry: Any) -> None:
+def schedule_optional_browser_warmup(task_registry: Any) -> None:
+    if not is_startup_browser_warmup_enabled():
+        return
+
     task_registry.create_task(
-        load_plugins_and_browser(),
-        name="startup.plugins_browser_warmup",
+        warmup_browser_environment(),
+        name="startup.browser_warmup",
         group="startup",
     )
 
@@ -195,7 +220,8 @@ async def run_desktop_runtime(
         schedule_heartbeat(task_registry)
         connect_main_window_activation(local_server, window)
         logging.info("Main window is visible; qasync event loop is running.")
-        schedule_plugin_browser_warmup(task_registry)
+        schedule_plugin_loading(task_registry)
+        schedule_optional_browser_warmup(task_registry)
         await wait_for_application_quit(app)
         return 0
     except asyncio.CancelledError:

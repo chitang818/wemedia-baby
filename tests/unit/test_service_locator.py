@@ -54,6 +54,13 @@ class TestServiceRegistration:
         retrieved = locator.get(MyService)
         assert isinstance(retrieved, MyService)
 
+    def test_register_string_key_factory_and_get(self, clean_service_locator):
+        locator = clean_service_locator
+        locator.register_factory("MyService", lambda: MyService(), Scope.SINGLETON)
+        retrieved = locator.get("MyService")
+        assert isinstance(retrieved, MyService)
+        assert locator.is_registered("MyService")
+
     def test_singleton_factory_returns_same_instance(self, clean_service_locator):
         locator = clean_service_locator
         locator.register_factory(MyService, lambda: MyService(), Scope.SINGLETON)

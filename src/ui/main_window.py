@@ -4,17 +4,12 @@
 功能：主窗口实现，使用 PySide6-Fluent-Widgets 的 FluentWindow 和 NavigationInterface
 """
 
-from typing import Optional
-import asyncio
 import ctypes
-import datetime
 import os
 import sys
-import qasync
 from PySide6.QtWidgets import (
     QWidget,
     QMainWindow,
-    QStatusBar,
     QApplication,
     QSystemTrayIcon,
     QMenu,
@@ -22,7 +17,6 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QIcon, QDesktopServices, QAction
 from PySide6.QtCore import QTimer, QUrl, Qt
-from qasync import asyncSlot
 from PySide6.QtCore import Slot
 
 import logging
@@ -30,7 +24,7 @@ import logging
 # 导入 PySide6-Fluent-Widgets
 from qfluentwidgets import (
     FluentWindow, FluentIcon, NavigationItemPosition,
-    isDarkTheme, InfoBar, InfoBarPosition, StateToolTip, NavigationDisplayMode,
+    InfoBar, InfoBarPosition, NavigationDisplayMode,
     BodyLabel, CheckBox,
 )
 FLUENT_WIDGETS_AVAILABLE = True
@@ -60,6 +54,53 @@ MATERIAL_LIBRARY_AVAILABLE = _module_available("src.ui.pages.material.video_libr
 COMMERCE_PROMOTION_AVAILABLE = _module_available("src.ui.pages.material.cart_promotion_page") and FeatureFlags.is_feature_enabled("commerce_promotion")
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_startup_preload_mode(mode: str | None) -> str:
+    mode = (mode or "minimal").strip().lower()
+    if mode in {"0", "false", "no", "off", "none", "disabled"}:
+        return "off"
+    if mode in {"1", "true", "yes", "full", "all"}:
+        return "full"
+    return "minimal"
+
+
+def _startup_preload_mode() -> str:
+    return _normalize_startup_preload_mode(
+        os.environ.get("WEMEDIABABY_STARTUP_PRELOADS", "minimal")
+    )
+
+
+def get_startup_preload_page_names(
+    *,
+    mode: str | None = None,
+    batch_feature_available: bool = False,
+) -> list[str]:
+    selected_mode = (
+        _startup_preload_mode()
+        if mode is None
+        else _normalize_startup_preload_mode(mode)
+    )
+    if selected_mode == "off":
+        return []
+
+    pages = [
+        "publish_list_page",
+        "account_page",
+    ]
+    if selected_mode != "full":
+        return pages
+
+    pages.extend(
+        [
+            "publish_records_page",
+            "single_task_creation_page",
+            "settings_page",
+        ]
+    )
+    if batch_feature_available:
+        pages.append("batch_task_creation_page")
+    return pages
 
 
 # 根据可用性选择基类
@@ -174,16 +215,9 @@ class MainWindow(FluentWindow):
                 pass
 
     def _startup_preload_page_names(self) -> list[str]:
-        pages = [
-            "publish_list_page",
-            "publish_records_page",
-            "single_task_creation_page",
-            "account_page",
-            "settings_page",
-        ]
-        if BATCH_FEATURE_AVAILABLE:
-            pages.append("batch_task_creation_page")
-        return pages
+        return get_startup_preload_page_names(
+            batch_feature_available=BATCH_FEATURE_AVAILABLE
+        )
 
     def _schedule_page_preload(self, page_name: str, delay_ms: int) -> None:
         if hasattr(self, page_name):
@@ -323,13 +357,6 @@ class MainWindow(FluentWindow):
         # 浏览器页已从导航移除，不再延迟初始化
         # 强制展开导航栏 (解决默认收起问题)
         self._schedule_single_shot("startup.force_nav_expand", 50, self._force_nav_expand)
-        # 浏览器预热：默认按需触发；ENABLE_BROWSER_WARMUP_ON_START=1 时恢复启动后 3 秒预热
-        if (
-            os.environ.get("ENABLE_BROWSER_WARMUP_ON_START", "").strip().lower() in ("1", "true", "yes")
-            and not getattr(self, "_browser_warmup_startup_scheduled", False)
-        ):
-            self._browser_warmup_startup_scheduled = True
-            self._schedule_single_shot("startup.browser_warmup", 3000, self._warmup_browser_service)
         # 强制更新：打开软件立即检测，有新版本则弹窗并退出，旧版本不可用
         # 52POJIE 特别版不检测软件更新
         if not FeatureFlags.is_52pojie() and not getattr(self, "_update_check_startup_done", False):
@@ -1485,28 +1512,6 @@ class MainWindow(FluentWindow):
         else:
             InfoBar.info(title=title, content=content, parent=self, position=InfoBarPosition.TOP, duration=3000)
 
-    @qasync.asyncSlot()
-    async def _warmup_browser_service(self):
-        """浏览器服务预热（仅当 ENABLE_BROWSER_WARMUP_ON_START=1 时在启动后 3 秒调用；内部走 ensure_warmup 仅执行一次）"""
-        try:
-            from src.utils.startup_profiler import mark, log_summary
-            mark("warmup_start")
-        except Exception:
-            pass
-        try:
-            from src.infrastructure.browser.browser_manager import UndetectedBrowserManager
-            await UndetectedBrowserManager.ensure_warmup()
-            try:
-                from src.utils.startup_profiler import mark, log_summary
-                mark("warmup_done")
-                log_summary()
-            except Exception:
-                pass
-        except Exception as e:
-            logger.warning(f"Browser warmup failed: {e}")
-
-
-    
     def _cleanup_flow_layouts(self, widget):
         """递归清理 widget 中的 FlowLayout 事件过滤器"""
         try:

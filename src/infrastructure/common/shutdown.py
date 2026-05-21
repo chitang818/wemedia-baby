@@ -63,10 +63,8 @@ def _get_service_locator():
 
 async def _shutdown_playwright_service(service_locator) -> None:
     try:
-        from src.services.browser.playwright_service import PlaywrightBrowserService
-
-        if service_locator and service_locator.is_registered(PlaywrightBrowserService):
-            playwright_service = service_locator.get(PlaywrightBrowserService)
+        if service_locator and service_locator.is_registered("PlaywrightBrowserService"):
+            playwright_service = service_locator.get("PlaywrightBrowserService")
             if hasattr(playwright_service, "shutdown"):
                 logging.info("Closing browser instances...")
                 try:

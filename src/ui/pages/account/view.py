@@ -30,7 +30,6 @@ from .menus import AccountContextMenu
 from .dialogs.set_group_dialog import SetGroupDialog # Import check
 from .services import AccountValidatorService, AccountOperationsService
 from .account_view_helpers import wait_page_networkidle_and_get_nickname
-from src.services.browser import PlaywrightBrowserService
 from src.infrastructure.common.async_task_registry import get_async_task_registry
 from src.infrastructure.common.di.service_locator import ServiceLocator
 from src.ui.components.base_dialog import AppMessageBoxBase
@@ -161,7 +160,7 @@ class AccountPage(BasePage):
         
         # 从 ServiceLocator 获取全局 Playwright 服务（已在 main.py 中用 AccountManagerAsync 初始化）
         from src.infrastructure.common.di.service_locator import ServiceLocator
-        self.playwright_service = ServiceLocator().get(PlaywrightBrowserService)
+        self.playwright_service = ServiceLocator().get("PlaywrightBrowserService")
         
         # 连接服务全局信号
         self.playwright_service.message_signal.connect(self._show_service_message)

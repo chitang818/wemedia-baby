@@ -31,7 +31,6 @@ async def initialize_services_async() -> bool:
         from src.infrastructure.monitoring.metrics import MetricsCollector
         from src.infrastructure.monitoring.logger import StructuredLogger
         from src.infrastructure.monitoring.alerting import AlertManager
-        from src.services.browser.playwright_service import PlaywrightBrowserService
         from src.infrastructure.storage.tortoise_manager import init_tortoise
         from src.domain.repositories import (
             AccountRepositoryAsync,
@@ -168,8 +167,16 @@ async def initialize_services_async() -> bool:
         subscription_service = SubscriptionService()
         service_locator.register(SubscriptionService, subscription_service, scope=Scope.SINGLETON)
         
-        playwright_browser_service = PlaywrightBrowserService(browser_account_manager)
-        service_locator.register(PlaywrightBrowserService, playwright_browser_service, scope=Scope.SINGLETON)
+        def _create_playwright_browser_service():
+            from src.services.browser.playwright_service import PlaywrightBrowserService
+
+            return PlaywrightBrowserService(browser_account_manager)
+
+        service_locator.register_factory(
+            "PlaywrightBrowserService",
+            _create_playwright_browser_service,
+            scope=Scope.SINGLETON,
+        )
         
         metrics_collector = MetricsCollector()
         service_locator.register(MetricsCollector, metrics_collector, scope=Scope.SINGLETON)

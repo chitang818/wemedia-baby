@@ -100,9 +100,8 @@ class PublishExecutor:
                     pass
                 # Step 1: 获取 PlaywrightBrowserService 单例
                 from src.infrastructure.common.di.service_locator import ServiceLocator
-                from src.services.browser.playwright_service import PlaywrightBrowserService
                 
-                pw_service = ServiceLocator().get(PlaywrightBrowserService)
+                pw_service = ServiceLocator().get("PlaywrightBrowserService")
                 if not pw_service or not pw_service.account_manager:
                     return PublishResult(success=False, error_message="PlaywrightBrowserService 未初始化，无法启动浏览器")
                 
@@ -219,8 +218,7 @@ class PublishExecutor:
             if close_browser_after and account_db_id:
                 try:
                     from src.infrastructure.common.di.service_locator import ServiceLocator
-                    from src.services.browser.playwright_service import PlaywrightBrowserService
-                    pw_svc = ServiceLocator().get(PlaywrightBrowserService)
+                    pw_svc = ServiceLocator().get("PlaywrightBrowserService")
                     if pw_svc:
                         await pw_svc.close_browser(str(account_db_id))
                 except Exception as e:
