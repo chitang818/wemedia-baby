@@ -20,7 +20,7 @@ class BatchTaskCheckpoint(Model):
         updated_at: 更新时间（可选）
     """
 
-    id = fields.IntField(pk=True)
+    id = fields.IntField(primary_key=True)
     task = fields.OneToOneField(
         "models.BatchTask", related_name="checkpoint", on_delete=fields.CASCADE
     )

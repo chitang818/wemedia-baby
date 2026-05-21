@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import aiosqlite
 
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 from src.infrastructure.common.path_manager import PathManager
 
 logger = logging.getLogger(__name__)
@@ -42,8 +43,12 @@ class StructuredLogger:
         # 延迟初始化审计日志数据库——在有事件循环时才调度
         import asyncio
         try:
-            loop = asyncio.get_running_loop()
-            self._init_task = loop.create_task(self._init_audit_log())
+            asyncio.get_running_loop()
+            self._init_task = get_async_task_registry().create_task(
+                self._init_audit_log(),
+                name="structured_logger.init_audit",
+                group="infra",
+            )
         except RuntimeError:
             pass
     
@@ -97,8 +102,11 @@ class StructuredLogger:
         """
         # 确保审计日志数据库已初始化
         if self._init_task is None:
-            import asyncio
-            self._init_task = asyncio.ensure_future(self._init_audit_log())
+            self._init_task = get_async_task_registry().create_task(
+                self._init_audit_log(),
+                name="structured_logger.init_audit",
+                group="infra",
+            )
         if not self._init_task.done():
             await self._init_task
         

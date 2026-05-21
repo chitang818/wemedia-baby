@@ -77,13 +77,10 @@ class EncryptionManager:
                 logger.info(f"生成并保存加密密钥: {key_name}")
                 return key
         except Exception as e:
-            logger.warning(
-                "keyring 不可用，无法持久化加密密钥，本次会话使用临时密钥（重启后将无法解密此前加密的数据）: %s", e
-            )
-            # 回退：生成临时密钥，但不写回 keyring（因为 keyring 本身不可用）
-            # 调用方应检查此场景并提示用户迁移数据或检查系统密钥链配置
-            key = Fernet.generate_key()
-            return key
+            logger.error("keyring 不可用，无法持久化加密密钥: %s", e)
+            raise RuntimeError(
+                "系统密钥链不可用，无法安全保存或读取加密密钥。"
+            ) from e
     
     @staticmethod
     def encrypt_data(data: bytes, key_name: str = "encryption_key") -> bytes:

@@ -1,0 +1,9 @@
+-c constraints.txt
+-r requirements.txt
+pytest
+pytest-asyncio
+pytest-cov
+pytest-html
+pytest-mock
+hypothesis
+aerich

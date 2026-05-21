@@ -11,6 +11,7 @@ import logging
 import json
 import html
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import random
@@ -19,6 +20,7 @@ from playwright.async_api import async_playwright, Playwright, Browser, BrowserC
 
 from .profile_manager import ProfileManager
 from .hardware_profiles import DEFAULT_WEBGL_RENDERER, default_webgl_vendor
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 from src.infrastructure.common.path_manager import PathManager
 
 logger = logging.getLogger(__name__)
@@ -125,6 +127,7 @@ class UndetectedBrowserManager:
     # 全局已注册 PID 集合：launch 时注册、close 时反注册
     _registered_pids: set = set()
     _registered_pids_lock = threading.Lock()
+    _last_cleanup_report: Dict[str, Any] = {}
 
     @classmethod
     def register_pid(cls, pid: int) -> None:
@@ -137,7 +140,12 @@ class UndetectedBrowserManager:
             cls._registered_pids.discard(pid)
 
     @classmethod
-    def cleanup_all_processes(cls, exclude_pids: Optional[set] = None):
+    def get_last_cleanup_report(cls) -> Dict[str, Any]:
+        """Return the latest Process Guardian audit snapshot."""
+        return dict(cls._last_cleanup_report)
+
+    @classmethod
+    def cleanup_all_processes(cls, exclude_pids: Optional[set] = None) -> int:
         """强力清理所有残留的浏览器进程 (Process Guardian)
         
         优先使用已注册 PID 精准清理，仅在需要时 fallback 到全机扫描。
@@ -145,16 +153,29 @@ class UndetectedBrowserManager:
         Args:
             exclude_pids: 需要排除、不得强杀的 PID 集合。
         """
+        report: Dict[str, Any] = {
+            "started_at": time.time(),
+            "data_root": "",
+            "exclude_pids": sorted(set(exclude_pids) if exclude_pids else set()),
+            "known_pids": [],
+            "cleaned_pids": [],
+            "failed_pids": [],
+            "scanned_processes": 0,
+            "cleaned_count": 0,
+            "error": "",
+        }
         try:
             import psutil
             
             data_root = str(PathManager.get_app_data_dir()).lower().replace("\\", "/")
+            report["data_root"] = data_root
             _excl = set(exclude_pids) if exclude_pids else set()
             cleaned_count = 0
 
             # 阶段 1：精准清理已注册的 PID
             with cls._registered_pids_lock:
                 known_pids = set(cls._registered_pids)
+            report["known_pids"] = sorted(known_pids)
             
             for pid in known_pids:
                 if pid in _excl:
@@ -167,6 +188,7 @@ class UndetectedBrowserManager:
                     cmdline = " ".join(proc.cmdline() or []).lower().replace("\\", "/")
                     if data_root in cmdline:
                         logger.warning(f"[Process Guardian] 精准清理已注册进程 PID={pid} ({name})")
+                        terminated = True
                         try:
                             proc.terminate()
                             try:
@@ -174,8 +196,12 @@ class UndetectedBrowserManager:
                             except psutil.TimeoutExpired:
                                 proc.kill()
                         except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            terminated = False
+                            report["failed_pids"].append(pid)
                             pass
-                        cleaned_count += 1
+                        if terminated:
+                            cleaned_count += 1
+                            report["cleaned_pids"].append(pid)
                         cls.unregister_pid(pid)
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     cls.unregister_pid(pid)
@@ -185,6 +211,7 @@ class UndetectedBrowserManager:
             logger.debug(f"[Process Guardian] 全量扫描，特征路径: {data_root}, 排除PIDs: {_excl}")
             
             for proc in psutil.process_iter(['pid', 'name']):
+                report["scanned_processes"] += 1
                 try:
                     pid = proc.info.get('pid')
                     if pid and pid in _excl:
@@ -201,6 +228,7 @@ class UndetectedBrowserManager:
                     
                     if data_root in cmdline:
                         logger.warning(f"[Process Guardian] 发现残留进程 PID={pid} ({name}), 正在清理...")
+                        terminated = True
                         try:
                             proc.terminate()
                             try:
@@ -208,8 +236,14 @@ class UndetectedBrowserManager:
                             except psutil.TimeoutExpired:
                                 proc.kill()
                         except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            terminated = False
+                            if pid:
+                                report["failed_pids"].append(pid)
                             pass
-                        cleaned_count += 1
+                        if terminated:
+                            cleaned_count += 1
+                        if pid and terminated:
+                            report["cleaned_pids"].append(pid)
                         
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
@@ -218,11 +252,20 @@ class UndetectedBrowserManager:
                 logger.info(f"[Process Guardian] 清理完成，共结束 {cleaned_count} 个残留进程")
             else:
                 logger.debug("[Process Guardian] 系统干净，未发现残留进程")
+            report["cleaned_count"] = cleaned_count
+            report["finished_at"] = time.time()
+            cls._last_cleanup_report = report
+            return cleaned_count
                 
         except ImportError:
             logger.warning("[Process Guardian] 未安装 psutil，跳过进程清理")
+            report["error"] = "psutil not installed"
         except Exception as e:
             logger.error(f"[Process Guardian] 清理过程异常: {e}", exc_info=True)
+            report["error"] = str(e)
+        report["finished_at"] = time.time()
+        cls._last_cleanup_report = report
+        return 0
 
     def __init__(
         self, 
@@ -1492,14 +1535,22 @@ class UndetectedBrowserManager:
             if focus_tab:
                 # 用户主动查看环境页：先切到该标签，后台写入内容
                 await self._bring_page_to_front_twice(info_page)
-                asyncio.create_task(self._render_env_content(info_page, html_doc, focus_business_after=False))
+                get_async_task_registry().create_task(
+                    self._render_env_content(info_page, html_doc, focus_business_after=False),
+                    name=f"browser.render_env.{self.account_id}",
+                    group="browser",
+                )
             elif reuse_page is not None:
                 # 「先环境页后业务页」新建流程：同步写入内容，调用方完成后会 new_page() + goto 业务页，
                 # Chromium 天然将焦点切到业务页，此处不需要任何焦点操作。
                 await self._render_env_content(info_page, html_doc, focus_business_after=False)
             else:
                 # 刷新/复用已有环境页：后台写入，set_content 完成后补偿焦点拉回业务页
-                asyncio.create_task(self._render_env_content(info_page, html_doc, focus_business_after=True))
+                get_async_task_registry().create_task(
+                    self._render_env_content(info_page, html_doc, focus_business_after=True),
+                    name=f"browser.render_env.{self.account_id}",
+                    group="browser",
+                )
 
             logger.info("已打开/刷新环境信息标签页: title=%s", tab_title)
             return True
@@ -1631,7 +1682,7 @@ class UndetectedBrowserManager:
 
     def _save_pid_file(self, pid: int) -> None:
         """将 Chrome PID 写入文件，供下次 launch 精准 kill。同时注册到全局 PID 集合。"""
-        BrowserManager.register_pid(pid)
+        UndetectedBrowserManager.register_pid(pid)
         p = self._pid_file_path()
         if p:
             try:
@@ -1645,7 +1696,7 @@ class UndetectedBrowserManager:
         if p and p.exists():
             try:
                 pid = int(p.read_text(encoding="utf-8").strip())
-                BrowserManager.unregister_pid(pid)
+                UndetectedBrowserManager.unregister_pid(pid)
             except Exception:
                 pass
             try:

@@ -9,7 +9,7 @@ from tortoise.models import Model
 class RandomCopywritingCategory(Model):
     """随机文案库分类表"""
 
-    id = fields.IntField(pk=True)
+    id = fields.IntField(primary_key=True)
     name = fields.CharField(max_length=100, unique=True)
     created_at = fields.DatetimeField(auto_now_add=True)
 
@@ -23,7 +23,7 @@ class RandomCopywritingCategory(Model):
 class RandomCopywritingItem(Model):
     """随机文案库文案条目表"""
 
-    id = fields.IntField(pk=True)
+    id = fields.IntField(primary_key=True)
     # 级联删除：删除分类时，分类下的所有文案也同步删除
     category = fields.ForeignKeyField(
         "models.RandomCopywritingCategory", 

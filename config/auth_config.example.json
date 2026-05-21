@@ -1,0 +1,4 @@
+{
+  "auth_api_base": "",
+  "_comment": "闭源/Pro 本地使用：复制本文件为 auth_config.json 并填写腾讯云 SCF 访问 URL；也可用环境变量 AUTH_API_BASE。开源版无需配置，留空即可。"
+}

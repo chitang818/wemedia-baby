@@ -8,11 +8,13 @@ Playwright 浏览器服务
 import asyncio
 import logging
 import json
+import os
 from typing import Dict, List, Optional, Union, Callable, Any
 
 from PySide6.QtCore import QObject, Signal
 
 from src.infrastructure.browser.browser_factory import BrowserFactory
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 from src.plugins.core.plugin_manager import PluginManager
 from src.services.account.account_info_updater import update_account_info_from_context
 from src.services.account.login_status_verifier import verify_login_status
@@ -76,6 +78,26 @@ class PlaywrightBrowserService(QObject):
         self._early_cookie_tasks: Dict[str, List[asyncio.Task]] = {}
         # per-account 锁：防止同一账号并发开启两个浏览器实例
         self._account_locks: Dict[str, asyncio.Lock] = {}
+        self._browser_launch_semaphore = asyncio.Semaphore(
+            self._read_browser_launch_concurrency()
+        )
+
+    def _create_background_task(
+        self,
+        coro,
+        *,
+        name: str,
+        group: str = "browser",
+    ) -> asyncio.Task:
+        return get_async_task_registry().create_task(coro, name=name, group=group)
+
+    @staticmethod
+    def _read_browser_launch_concurrency() -> int:
+        raw = os.environ.get("WMB_BROWSER_LAUNCH_CONCURRENCY", "2")
+        try:
+            return max(1, min(8, int(raw)))
+        except (TypeError, ValueError):
+            return 2
 
     async def verify_account_headless(self, account_id: str, platform: str) -> Dict[str, Any]:
         """无头模式验证账号状态"""
@@ -194,9 +216,12 @@ class PlaywrightBrowserService(QObject):
         if _aid not in self._account_locks:
             self._account_locks[_aid] = asyncio.Lock()
         async with self._account_locks[_aid]:
-            return await self._open_browser_for_db_account_impl(
-                account_id, headless, maximize_for_publish=maximize_for_publish
-            )
+            async with self._browser_launch_semaphore:
+                return await self._open_browser_for_db_account_impl(
+                    account_id,
+                    headless,
+                    maximize_for_publish=maximize_for_publish,
+                )
 
     async def _open_browser_for_db_account_impl(
         self,
@@ -316,6 +341,7 @@ class PlaywrightBrowserService(QObject):
             headless=headless,
             maximize_for_publish=maximize_for_publish,
             inject_cookies=not skip_cookies,
+            _launch_slot_acquired=True,
         )
         
         # 4. 返回浏览器 wrapper
@@ -360,8 +386,23 @@ class PlaywrightBrowserService(QObject):
         *,
         maximize_for_publish: bool = False,
         inject_cookies: bool = True,
+        _launch_slot_acquired: bool = False,
     ):
         """为已存在的账号打开 Playwright 浏览器"""
+        if not _launch_slot_acquired:
+            async with self._browser_launch_semaphore:
+                return await self.open_browser_for_account(
+                    account_id=account_id,
+                    platform_username=platform_username,
+                    platform=platform,
+                    platform_url=platform_url,
+                    profile_folder_name=profile_folder_name,
+                    headless=headless,
+                    maximize_for_publish=maximize_for_publish,
+                    inject_cookies=inject_cookies,
+                    _launch_slot_acquired=True,
+                )
+
         await self._open_browser_base(
             account_id=str(account_id),
             platform_username=platform_username,
@@ -428,16 +469,17 @@ class PlaywrightBrowserService(QObject):
         self._save_completed = False
         self._browser_close_triggered = False  # 防重入：关闭浏览器只执行一次
 
-        await self._open_browser_base(
-            account_id=profile_id,
-            platform_username=profile_id,
-            platform=platform,
-            platform_url=platform_url,
-            inject_cookies=False,
-            is_new_account=True,
-            fingerprint_config=fingerprint_config,
-            profile_folder_name=profile_id
-        )
+        async with self._browser_launch_semaphore:
+            await self._open_browser_base(
+                account_id=profile_id,
+                platform_username=profile_id,
+                platform=platform,
+                platform_url=platform_url,
+                inject_cookies=False,
+                is_new_account=True,
+                fingerprint_config=fingerprint_config,
+                profile_folder_name=profile_id,
+            )
 
 
     async def _open_browser_base(
@@ -599,7 +641,10 @@ class PlaywrightBrowserService(QObject):
             
             # 6. 启动对应的监听任务
             if is_new_account:
-                task = asyncio.create_task(self._run_monitor_new_account_safe(account_id, platform))
+                task = self._create_background_task(
+                    self._run_monitor_new_account_safe(account_id, platform),
+                    name=f"browser.monitor_new.{account_id}",
+                )
                 self._monitor_tasks[account_id] = task
             else:
                 db_login_status = ""
@@ -609,8 +654,14 @@ class PlaywrightBrowserService(QObject):
                         db_login_status = (_acc or {}).get("login_status", "") or ""
                     except Exception:
                         pass
-                task = asyncio.create_task(
-                    self._run_monitor_existing_safe(account_id, platform_username, platform, db_login_status)
+                task = self._create_background_task(
+                    self._run_monitor_existing_safe(
+                        account_id,
+                        platform_username,
+                        platform,
+                        db_login_status,
+                    ),
+                    name=f"browser.monitor_existing.{account_id}",
                 )
                 self._monitor_tasks[account_id] = task
                 # 早期 Cookie 同步：仅当 DB 状态为在线时执行（离线说明 Cookie 已失效，同步无意义）
@@ -638,7 +689,10 @@ class PlaywrightBrowserService(QObject):
                     if not cleaned:
                         cleaned = [2.0]
                     for d in cleaned:
-                        t = asyncio.create_task(self._early_cookie_sync(account_id, context, delay=d))
+                        t = self._create_background_task(
+                            self._early_cookie_sync(account_id, context, delay=d),
+                            name=f"browser.early_cookie_sync.{account_id}.{d:g}",
+                        )
                         self._register_early_cookie_task(account_id, t)
             
         except Exception as e:
@@ -712,9 +766,10 @@ class PlaywrightBrowserService(QObject):
                     logger.debug("额外标签守卫异常（可忽略）: %s", e)
 
             try:
-                import asyncio as _asyncio
-                loop = _asyncio.get_running_loop()
-                loop.create_task(_check_and_close())
+                self._create_background_task(
+                    _check_and_close(),
+                    name=f"browser.extra_tab_guard.{platform or 'unknown'}",
+                )
             except Exception:
                 pass
 
@@ -737,9 +792,6 @@ class PlaywrightBrowserService(QObject):
 
             def _schedule(reason: str):
                 try:
-                    import asyncio
-                    loop = asyncio.get_running_loop()
-
                     async def _safe_manual_close():
                         try:
                             await self._on_manual_browser_closed(str(account_id), platform, username, reason)
@@ -749,7 +801,10 @@ class PlaywrightBrowserService(QObject):
                             else:
                                 logger.warning("手动关闭清理异常: %s", e, exc_info=True)
 
-                    loop.create_task(_safe_manual_close())
+                    self._create_background_task(
+                        _safe_manual_close(),
+                        name=f"browser.manual_close.{account_id}",
+                    )
                 except Exception:
                     pass
 
@@ -795,7 +850,10 @@ class PlaywrightBrowserService(QObject):
                             )
 
                         try:
-                            asyncio.get_running_loop().create_task(_deferred_page_close())
+                            self._create_background_task(
+                                _deferred_page_close(),
+                                name=f"browser.deferred_page_close.{account_id}",
+                            )
                         except Exception:
                             pass
 
@@ -981,12 +1039,20 @@ class PlaywrightBrowserService(QObject):
             try:
                 if hasattr(browser, "service") and hasattr(browser.service, "save_state"):
                     sync_tasks.append(
-                        asyncio.create_task(browser.service.save_state())
+                        self._create_background_task(
+                            browser.service.save_state(),
+                            name=f"browser.shutdown_save_state.{account_id}",
+                        )
                     )
             except Exception:
                 pass
             # _sync_before_close（从 context.cookies() 写回 cookies.json）
-            sync_tasks.append(asyncio.create_task(self._sync_before_close(account_id)))
+            sync_tasks.append(
+                self._create_background_task(
+                    self._sync_before_close(account_id),
+                    name=f"browser.shutdown_sync.{account_id}",
+                )
+            )
         if sync_tasks:
             try:
                 await asyncio.wait_for(asyncio.gather(*sync_tasks, return_exceptions=True), timeout=3.0)

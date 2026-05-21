@@ -31,6 +31,7 @@ except ImportError:
 from src.ui.components.rubber_band_row_table import RubberBandRowSelectTable
 from src.ui.utils.fluent_tooltips import ToolTipPosition, apply_instructional_tooltip
 from src.ui.utils.async_helper import AsyncWorker
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 from src.services.material.media_library_stats_cache import get_media_library_stats_cache
 from src.services.material.media_library_stats_service import get_media_library_stats_service
 
@@ -58,6 +59,7 @@ class AccountTableWidget(QWidget):
         super().__init__(parent)
         self.table = None
         self._stats_cache = get_media_library_stats_cache()
+        self._render_batch_timers: List[QTimer] = []
         try:
             self._stats_cache.statsUpdated.connect(self._on_media_stats_updated)
         except Exception:
@@ -70,6 +72,32 @@ class AccountTableWidget(QWidget):
         self._latest_publish_style_timer.setInterval(60_000)
         self._latest_publish_style_timer.timeout.connect(self._refresh_latest_publish_time_column_styles)
         self._setup_ui()
+
+    def closeEvent(self, event):
+        self._cancel_render_batch_timers()
+        super().closeEvent(event)
+
+    def _schedule_render_batch(self, callback) -> None:
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+
+        def _fire() -> None:
+            try:
+                self._render_batch_timers.remove(timer)
+            except ValueError:
+                pass
+            timer.deleteLater()
+            callback()
+
+        timer.timeout.connect(_fire)
+        self._render_batch_timers.append(timer)
+        timer.start(0)
+
+    def _cancel_render_batch_timers(self) -> None:
+        for timer in list(self._render_batch_timers):
+            timer.stop()
+            timer.deleteLater()
+        self._render_batch_timers = []
 
     @staticmethod
     def _fmt_counts(total: int, used: int, unused: int) -> str:
@@ -313,6 +341,7 @@ class AccountTableWidget(QWidget):
         table.setRowCount(n)
 
         _BATCH = 100
+        self._cancel_render_batch_timers()
         self._load_render_gen = getattr(self, "_load_render_gen", 0) + 1
         render_gen = self._load_render_gen
 
@@ -325,7 +354,7 @@ class AccountTableWidget(QWidget):
                 self._add_account_row(accounts[row], row)
             table.blockSignals(False)
             if end < n:
-                QTimer.singleShot(0, lambda: _render_batch(end))
+                self._schedule_render_batch(lambda end=end: _render_batch(end))
             else:
                 table.setSortingEnabled(True)
                 table.setUpdatesEnabled(True)
@@ -349,9 +378,11 @@ class AccountTableWidget(QWidget):
     def _refresh_media_stats_async(self) -> None:
         """触发媒体库统计刷新（异步，结果通过 statsUpdated 推送）。"""
         try:
-            import asyncio
-
-            asyncio.ensure_future(get_media_library_stats_service().refresh())
+            get_async_task_registry().create_task(
+                get_media_library_stats_service().refresh(),
+                name="ui.account_table.media_stats_refresh",
+                group="ui",
+            )
         except Exception:
             return
     

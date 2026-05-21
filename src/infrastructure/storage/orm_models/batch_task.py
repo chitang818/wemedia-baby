@@ -33,7 +33,7 @@ class BatchTask(Model):
         updated_at: 更新时间（可选）
     """
 
-    id = fields.IntField(pk=True)
+    id = fields.IntField(primary_key=True)
     user = fields.ForeignKeyField(
         "models.User", related_name="batch_tasks", on_delete=fields.CASCADE
     )

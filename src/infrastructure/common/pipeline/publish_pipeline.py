@@ -76,6 +76,34 @@ class PublishPipeline:
         """
         self.filters.insert(position, filter_instance)
         self.logger.debug(f"插入过滤器: {type(filter_instance).__name__} at position {position}")
+
+    async def _run_failure_finalizers(
+        self,
+        context: PublishContext,
+        failed_filter: IPublishFilter,
+        start_index: int,
+    ) -> None:
+        """实际发布失败后继续执行记录类收尾过滤器，保留失败可观测性。"""
+        if not getattr(failed_filter, "allow_failure_finalizers", False):
+            return
+        for finalizer in self.filters[start_index:]:
+            if not getattr(finalizer, "run_after_failure", False):
+                continue
+            try:
+                ok = await finalizer.process(context)
+                if not ok:
+                    self.logger.error(
+                        "失败收尾过滤器处理失败: %s, 错误: %s",
+                        type(finalizer).__name__,
+                        finalizer.get_error(),
+                    )
+            except Exception as e:
+                self.logger.error(
+                    "失败收尾过滤器执行异常: %s, 错误: %s",
+                    type(finalizer).__name__,
+                    e,
+                    exc_info=True,
+                )
     
     async def execute(
         self,
@@ -119,12 +147,17 @@ class PublishPipeline:
             )
             
             try:
-                for filter_instance in self.filters:
+                for index, filter_instance in enumerate(self.filters):
                     success = await filter_instance.process(context)
                     if not success:
                         error = filter_instance.get_error() or "过滤器处理失败"
                         context.error_message = error
                         self.logger.error(f"过滤器处理失败: {type(filter_instance).__name__}, 错误: {error}")
+                        await self._run_failure_finalizers(
+                            context,
+                            filter_instance,
+                            index + 1,
+                        )
                         
                         return [PipelineResult(
                             success=False,
@@ -257,4 +290,3 @@ class PublishPipeline:
         except Exception as e:
             self.logger.error(f"恢复任务失败: {e}", exc_info=True)
             return []
-

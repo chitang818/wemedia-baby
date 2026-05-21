@@ -39,7 +39,7 @@ class PublishRecord(Model):
         task_source: 任务来源（account=账号创建/group=账号组创建/NULL=旧数据兼容）
     """
 
-    id = fields.IntField(pk=True)
+    id = fields.IntField(primary_key=True)
     # 使用普通整数字段存储用户ID（兼容旧数据，不强制外键约束）
     user_id = fields.IntField()
     platform_username = fields.CharField(max_length=200)

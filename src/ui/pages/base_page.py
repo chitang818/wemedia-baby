@@ -5,7 +5,7 @@
 """
 
 import time
-from typing import Optional
+from typing import Callable, Optional
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QAbstractItemView, QGraphicsOpacityEffect
 from PySide6.QtCore import QTimer, Qt, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QShowEvent
@@ -44,6 +44,7 @@ class BasePage(QWidget):
         self.title = title
         self.enable_scroll = enable_scroll
         self._content_initialized = False
+        self._base_page_timers: dict[str, QTimer] = {}
         self._needs_show_transition = True   # 首次 show 需要过渡动画
         self._setup_ui()
     
@@ -192,15 +193,27 @@ class BasePage(QWidget):
 
         if self._lazy_content and not self._content_initialized:
             self.setUpdatesEnabled(False)
-            QTimer.singleShot(0, self._ensure_content_and_unfreeze)
+            self._schedule_base_page_timer(
+                "ensure_content",
+                0,
+                self._ensure_content_and_unfreeze,
+            )
         elif self._needs_show_transition:
             self._needs_show_transition = False
             self.setUpdatesEnabled(False)
-            QTimer.singleShot(10, self._unfreeze_with_fade)
+            self._schedule_base_page_timer(
+                "unfreeze",
+                10,
+                self._unfreeze_with_fade,
+            )
         # 最大化/还原等窗口状态变化：不冻结、不动画
 
     def hideEvent(self, event):
         """页面被隐藏（导航切走）时，清理残留动画并标记下次显示需要过渡。"""
+        self._cancel_base_page_timer("ensure_content")
+        self._cancel_base_page_timer("unfreeze")
+        if not self.updatesEnabled():
+            self.setUpdatesEnabled(True)
         old_ani = getattr(self, '_page_fade_ani', None)
         if old_ani is not None:
             old_ani.stop()
@@ -208,6 +221,39 @@ class BasePage(QWidget):
             self._page_fade_ani = None
         self._needs_show_transition = True
         super().hideEvent(event)
+
+    def closeEvent(self, event):
+        self._cancel_base_page_timers()
+        super().closeEvent(event)
+
+    def _schedule_base_page_timer(
+        self,
+        key: str,
+        interval_ms: int,
+        callback: Callable[[], None],
+    ) -> None:
+        self._cancel_base_page_timer(key)
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+
+        def _fire() -> None:
+            self._base_page_timers.pop(key, None)
+            timer.deleteLater()
+            callback()
+
+        timer.timeout.connect(_fire)
+        self._base_page_timers[key] = timer
+        timer.start(max(0, interval_ms))
+
+    def _cancel_base_page_timer(self, key: str) -> None:
+        timer = self._base_page_timers.pop(key, None)
+        if timer is not None:
+            timer.stop()
+            timer.deleteLater()
+
+    def _cancel_base_page_timers(self) -> None:
+        for key in list(self._base_page_timers):
+            self._cancel_base_page_timer(key)
 
     def _ensure_content_and_unfreeze(self):
         """构建页面内容后立即解冻更新，消除首次显示时的空白闪烁。"""

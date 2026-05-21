@@ -1,4 +1,4 @@
-"""
+﻿"""
 工作台页面
 文件路径：src/ui/pages/workspace_page.py
 功能：工作台页面，显示概览信息、快速操作、数据图表和最近活动
@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QFrame, QSizePolicy
 )
 from PySide6.QtGui import QFont, QColor
-from PySide6.QtCore import QTimer, Qt, QEvent
+from PySide6.QtCore import QTimer, Qt, QEvent, Signal
 from PySide6.QtGui import QResizeEvent
 import logging
 
@@ -24,6 +24,7 @@ from qfluentwidgets import (
 FLUENT_WIDGETS_AVAILABLE = True
 
 from .base_page import BasePage
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 from src.utils.platform_names import PLATFORM_ID_TO_NAME as PLATFORM_NAME_MAP
 from src.services.material.media_library_stats_cache import get_media_library_stats_cache
 from src.services.material.media_library_stats_service import get_media_library_stats_service
@@ -33,6 +34,8 @@ logger = logging.getLogger(__name__)
 
 class WorkspacePage(BasePage):
     """工作台页面"""
+
+    refreshRequested = Signal()
     
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__("工作台", parent)
@@ -42,6 +45,7 @@ class WorkspacePage(BasePage):
         self.dashboard_service = None
         self._is_loading = False
         self._refresh_task = None
+        self.refreshRequested.connect(self._refresh_data)
         self._init_services()
         self._setup_content()
         self._setup_refresh_timer()
@@ -86,9 +90,7 @@ class WorkspacePage(BasePage):
             self._publish_queue_event_handler = None
             try:
                 def _on_publish_queue_executing_changed(_event) -> None:
-                    # 事件总线通过 run_in_executor 在线程池中调用此处，不能直接调用 create_task
-                    # 使用 QTimer.singleShot(0) 将刷新调度回 Qt 主线程（主线程有 qasync 事件循环）
-                    QTimer.singleShot(0, self._refresh_data)
+                    self.refreshRequested.emit()
 
                 self._publish_queue_event_handler = _on_publish_queue_executing_changed
                 event_bus.subscribe(
@@ -102,8 +104,7 @@ class WorkspacePage(BasePage):
             try:
                 def _on_account_updated_for_dashboard(_event) -> None:
                     if self.isVisible():
-                        # 同上：事件总线在线程池中调用，必须回到主线程再执行
-                        QTimer.singleShot(0, self._refresh_data)
+                        self.refreshRequested.emit()
 
                 self._account_updated_event_handler = _on_account_updated_for_dashboard
                 event_bus.subscribe("AccountUpdatedEvent", self._account_updated_event_handler)
@@ -341,9 +342,11 @@ class WorkspacePage(BasePage):
     def _refresh_media_stats_async(self) -> None:
         """触发媒体库素材统计刷新（异步）。"""
         try:
-            import asyncio
-
-            asyncio.ensure_future(get_media_library_stats_service().refresh())
+            get_async_task_registry().create_task(
+                get_media_library_stats_service().refresh(),
+                name="ui.workspace.media_stats_refresh",
+                group="ui",
+            )
         except Exception:
             return
 
@@ -420,8 +423,12 @@ class WorkspacePage(BasePage):
         self._apply_welcome_desc_style()
         self._sync_recent_activity_layout()
         # 从账号库等页面返回时立即拉取统计，避免仍显示离开前的旧在线/离线数字
-        QTimer.singleShot(0, self._refresh_data)
-        QTimer.singleShot(0, self._refresh_media_stats_async)
+        self._schedule_base_page_timer("workspace_refresh", 0, self._refresh_data)
+        self._schedule_base_page_timer(
+            "workspace_media_stats_refresh",
+            0,
+            self._refresh_media_stats_async,
+        )
 
     def resizeEvent(self, event: QResizeEvent):
         super().resizeEvent(event)
@@ -454,15 +461,18 @@ class WorkspacePage(BasePage):
         import asyncio
         try:
             # 尝试获取当前正在运行的事件循环（Qt 主线程由 qasync 管理）
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             # 有运行中的循环，直接创建 task
-            self._refresh_task = loop.create_task(_load_and_update())
+            self._refresh_task = get_async_task_registry().create_task(
+                _load_and_update(),
+                name="ui.workspace.refresh",
+                group="ui",
+            )
         except RuntimeError:
             # 没有运行中的事件循环（如从线程池回调中触发），回到主线程重试
-            # QTimer.singleShot 会在 Qt 主线程中执行，届时 qasync 已接管事件循环
             logger.debug("[WorkspacePage] _refresh_data 在非事件循环线程中调用，已转发到主线程")
             self._is_loading = False  # 重置状态，等主线程执行时重新加锁
-            QTimer.singleShot(0, self._refresh_data)
+            self.refreshRequested.emit()
 
     def _on_data_loaded(self, dashboard_data: Dict[str, Any]):
         try:

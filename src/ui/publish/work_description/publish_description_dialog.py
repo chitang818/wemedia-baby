@@ -37,6 +37,7 @@ from qfluentwidgets import (
 from src.ui.components.base_dialog import AppMessageBoxBase
 from src.ui.utils.fluent_tooltips import apply_instructional_tooltip
 from src.domain.publish.work_description.topics import normalize_topics_for_paste
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 
 from .work_description_edit_controller import WorkDescriptionEditController
 from src.infrastructure.common.config.config_center import get_registered_config_center
@@ -1392,6 +1393,13 @@ class PublishDescriptionDialog(AppMessageBoxBase):
 
         ev = QEventLoop(self)
         future = asyncio.ensure_future(_load(), loop=loop)
+        if isinstance(future, asyncio.Task):
+            future.set_name("ui.publish_description.ensure_library_filled")
+            get_async_task_registry().register(
+                future,
+                group="ui",
+                log_exceptions=False,
+            )
         future.add_done_callback(lambda _: ev.quit())
         ev.exec()
         try:

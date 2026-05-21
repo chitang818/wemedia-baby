@@ -21,7 +21,7 @@ class User(Model):
         last_login_at: 最后登录时间（可选）
     """
 
-    id = fields.IntField(pk=True)
+    id = fields.IntField(primary_key=True)
     username = fields.CharField(max_length=100, unique=True)
     password_hash = fields.TextField()
     email = fields.CharField(max_length=200)

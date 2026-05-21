@@ -62,6 +62,17 @@ async def verify_login_status(
     session = http_session
 
     try:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            result["error"] = "事件循环不可用，跳过登录校验（应用可能正在退出）"
+            result["is_valid"] = False
+            logger.info(
+                "账号 %s (ID: %s, 平台: %s) 校验跳过：事件循环不可用，应用可能正在退出",
+                account_name, account_id, platform,
+            )
+            return result
+
         from src.plugins.core.plugin_manager import PluginManager
         from src.infrastructure.common.di.service_locator import ServiceLocator
         from src.plugins.core.interfaces.login_plugin import AccountVerificationContext

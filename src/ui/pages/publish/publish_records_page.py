@@ -4,7 +4,7 @@
 功能：显示已成功发布的任务列表；子类 PublishListPage 用于「待发布」。
 """
 
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Callable, Optional, List, Dict, Any, Tuple
 from collections import defaultdict
 from PySide6.QtWidgets import (
     QWidget,
@@ -532,8 +532,35 @@ class PublishRecordsPage(BasePage):
         self._selected_rows_cache: List[int] = []
         # 分批渲染：当前渲染代次，用于取消旧批次
         self._render_generation: int = 0
+        self._render_batch_timers: List[QTimer] = []
         # id→record 索引字典：避免 next(r for r in publish_records if r.get('id')==rid) 的 O(n) 扫描
         self._records_by_id: Dict[int, Any] = {}
+
+    def closeEvent(self, event):
+        self._cancel_render_batch_timers()
+        super().closeEvent(event)
+
+    def _schedule_render_batch(self, callback: Callable[[], None]) -> None:
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+
+        def _fire() -> None:
+            try:
+                self._render_batch_timers.remove(timer)
+            except ValueError:
+                pass
+            timer.deleteLater()
+            callback()
+
+        timer.timeout.connect(_fire)
+        self._render_batch_timers.append(timer)
+        timer.start(0)
+
+    def _cancel_render_batch_timers(self) -> None:
+        for timer in list(getattr(self, "_render_batch_timers", [])):
+            timer.stop()
+            timer.deleteLater()
+        self._render_batch_timers = []
 
     def _show_publish_queue_toolbar(self) -> bool:
         """待发布列表需要发布队列控制；已发布（仅 success）为历史记录，不展示发布相关按钮与选项。"""
@@ -674,7 +701,11 @@ class PublishRecordsPage(BasePage):
         layout.addWidget(filter_card)
 
         # 根据当前宽度应用筛选行单行/双行与紧凑样式
-        QTimer.singleShot(0, self._sync_filter_bar_layout)
+        self._schedule_base_page_timer(
+            "records_sync_filter_layout",
+            0,
+            self._sync_filter_bar_layout,
+        )
         
         # 记录表格
         table_container = CardWidget(self)
@@ -891,7 +922,11 @@ class PublishRecordsPage(BasePage):
         if hasattr(self, "records_table"):
             self._apply_filters()
             # 数据就绪后预创建右键菜单，消除首次右键的一次性延迟
-            QTimer.singleShot(200, self._ensure_records_table_round_menu)
+            self._schedule_base_page_timer(
+                "records_prepare_context_menu",
+                200,
+                self._ensure_records_table_round_menu,
+            )
         # 记录数超过 1000 时提示用户清理（每个页面实例只提示一次）
         total = getattr(self, "_total_record_count", 0)
         if total > 1000 and not getattr(self, "_over_limit_warned", False):
@@ -1008,6 +1043,7 @@ class PublishRecordsPage(BasePage):
         self._filtered_records = filtered  # 供子类（如发布列表）做任务统计等
 
         # 递增渲染代次，取消正在进行中的旧批次
+        self._cancel_render_batch_timers()
         self._render_generation += 1
         render_gen = self._render_generation
 
@@ -1042,11 +1078,11 @@ class PublishRecordsPage(BasePage):
                 )
             table.blockSignals(False)
             if end < total:
-                QTimer.singleShot(0, lambda: _render_text_batch(end))
+                self._schedule_render_batch(lambda end=end: _render_text_batch(end))
             else:
                 table.setSortingEnabled(True)
                 table.setUpdatesEnabled(True)
-                QTimer.singleShot(0, lambda: _render_btn_batch(0))
+                self._schedule_render_batch(lambda: _render_btn_batch(0))
 
         def _render_btn_batch(start: int) -> None:
             if render_gen != self._render_generation:
@@ -1055,7 +1091,7 @@ class PublishRecordsPage(BasePage):
             for row in range(start, end):
                 self._fill_table_row_btn(row, filtered[row], btn_text)
             if end < total:
-                QTimer.singleShot(0, lambda: _render_btn_batch(end))
+                self._schedule_render_batch(lambda end=end: _render_btn_batch(end))
 
         if total <= _TEXT_BATCH:
             table.blockSignals(True)
@@ -1067,7 +1103,7 @@ class PublishRecordsPage(BasePage):
             table.blockSignals(False)
             table.setSortingEnabled(True)
             table.setUpdatesEnabled(True)
-            QTimer.singleShot(0, lambda: _render_btn_batch(0))
+            self._schedule_render_batch(lambda: _render_btn_batch(0))
         else:
             _render_text_batch(0)
 
@@ -1659,7 +1695,11 @@ class PublishRecordsPage(BasePage):
         super().showEvent(event)
         self.user_id = self._current_user_svc.get_user_id_or_default(1)
         if hasattr(self, "_filter_widgets_order") and self._filter_widgets_order:
-            QTimer.singleShot(0, self._sync_filter_bar_layout)
+            self._schedule_base_page_timer(
+                "records_sync_filter_layout",
+                0,
+                self._sync_filter_bar_layout,
+            )
         # 仅在表格已创建（_setup_content 已执行）后才立即加载，避免时序问题
         if self._data_stale and hasattr(self, 'records_table'):
             self._load_publish_records()
@@ -1912,4 +1952,3 @@ class PublishRecordsPage(BasePage):
         pass
     
     # 速度设置已移至发布设置弹窗（list_settings_dialog），通过 get_speed_rate() 读取
-

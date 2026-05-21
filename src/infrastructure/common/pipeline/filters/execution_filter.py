@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 class PublishExecutionFilter(BaseFilter):
     """发布执行过滤器 - 调用执行器进行发布"""
+    allow_failure_finalizers = True
     
     async def process(self, context: PublishContext) -> bool:
         """执行发布"""

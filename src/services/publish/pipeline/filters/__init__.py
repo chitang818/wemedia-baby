@@ -9,10 +9,7 @@ from .account_load_filter_async import AccountLoadFilterAsync
 from .record_save_filter_async import RecordSaveFilterAsync
 
 # PlatformPublishFilterAsync 依赖已废弃的 src.platforms，当前 main 流水线使用 PublishExecutionFilter 代替；可选导入避免启动失败
-try:
-    from .platform_publish_filter_async import PlatformPublishFilterAsync
-except ModuleNotFoundError:
-    PlatformPublishFilterAsync = None  # type: ignore[misc, assignment]
+PlatformPublishFilterAsync = None  # type: ignore[misc, assignment]
 
 # 兼容性别名
 PermissionCheckFilter = PermissionCheckFilterAsync

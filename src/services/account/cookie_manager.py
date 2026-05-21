@@ -65,8 +65,8 @@ class CookieManager:
             encrypted = EncryptionManager.encrypt_data(plain_text.encode("utf-8"), _COOKIE_KEY_NAME)
             return _ENCRYPTED_PREFIX + base64.b64encode(encrypted)
         except Exception as e:
-            logger.warning("Cookie 加密失败，回退明文存储: %s", e)
-            return plain_text.encode("utf-8")
+            logger.error("Cookie 加密失败，已拒绝明文落盘: %s", e)
+            raise RuntimeError("Cookie 加密失败，无法安全保存 Cookie。") from e
 
     @staticmethod
     def _decrypt_content(raw: bytes) -> str:

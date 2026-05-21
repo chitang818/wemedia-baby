@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QScrollArea,
     QGridLayout, QSizePolicy, QSpacerItem
 )
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from qfluentwidgets import (
     CardWidget, BodyLabel, SubtitleLabel, CaptionLabel,
     PushButton, ToolButton, FluentIcon, InfoBar, InfoBarPosition,
@@ -22,6 +22,7 @@ from qfluentwidgets import (
 
 from src.services.account import AccountGroupService
 from src.infrastructure.common.di.service_locator import ServiceLocator
+from src.ui.utils.task_tracking import TrackedTaskMixin
 
 logger = logging.getLogger(__name__)
 
@@ -169,12 +170,13 @@ class AccountGroupCard(CardWidget):
         return get_platform_display_name(platform)
 
 
-class AccountGroupPage(QWidget):
+class AccountGroupPage(TrackedTaskMixin, QWidget):
     """账号组管理页面"""
     
     def __init__(self, parent=None):
         super().__init__(parent)  # type: ignore
         self.setObjectName("account_group_page")
+        self._init_task_tracking()
         
         # 服务
         self.group_service = AccountGroupService()
@@ -185,8 +187,10 @@ class AccountGroupPage(QWidget):
         self._setup_ui()
         
         # 延迟加载数据
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(100, self._load_data)
+        self._load_timer = QTimer(self)
+        self._load_timer.setSingleShot(True)
+        self._load_timer.timeout.connect(self._load_data)
+        self._load_timer.start(100)
     
     def _setup_ui(self):
         """设置UI"""
@@ -261,7 +265,20 @@ class AccountGroupPage(QWidget):
     def _load_data(self):
         """加载账号组数据。延后到下一轮事件循环再创建任务，避免 qasync 下与其它 async 槽并发时触发 “Cannot enter into task” 的 reentrancy 错误。"""
         loop = asyncio.get_event_loop()
-        loop.call_soon(lambda: asyncio.ensure_future(self._async_load_data()))  # type: ignore
+        loop.call_soon(lambda: self._run_task(self._async_load_data()))  # type: ignore
+
+    def _run_task(self, coro) -> asyncio.Task:
+        name = getattr(getattr(coro, "cr_code", None), "co_name", "task")
+        return self._create_tracked_task(
+            coro,
+            name=f"ui.account_group.{name}",
+        )
+
+    def closeEvent(self, event):
+        if hasattr(self, "_load_timer") and self._load_timer.isActive():
+            self._load_timer.stop()
+        self._cancel_tracked_tasks()
+        super().closeEvent(event)
     
     async def _async_load_data(self):
         """异步加载账号组数据（单用户模式：加载本地全部账号组）"""
@@ -337,7 +354,7 @@ class AccountGroupPage(QWidget):
         if dialog.exec():
             group_name = dialog.get_group_name()
             description = dialog.get_description()
-            asyncio.ensure_future(self._async_create_group(group_name, description))
+            self._run_task(self._async_create_group(group_name, description))
     
     async def _async_create_group(self, group_name: str, description: str):
         """异步创建账号组"""
@@ -391,7 +408,7 @@ class AccountGroupPage(QWidget):
         if dialog.exec():
             group_name = dialog.get_group_name()
             description = dialog.get_description()
-            asyncio.ensure_future(self._async_update_group(
+            self._run_task(self._async_update_group(
                 group_data['group_id'], group_name, description
             ))
     
@@ -425,7 +442,7 @@ class AccountGroupPage(QWidget):
             self, "确认删除",
             f"确定要删除账号组 '{group_name}' 吗？\n组内账号不会被删除，只会解除分组关联。"
         ):
-            asyncio.ensure_future(self._async_delete_group(group_data['group_id']))
+            self._run_task(self._async_delete_group(group_data['group_id']))
     
     async def _async_delete_group(self, group_id: int):
         """异步删除账号组"""
@@ -451,7 +468,7 @@ class AccountGroupPage(QWidget):
 
     def _on_add_account_to_group(self, group_data: Dict):
         """添加到账号组"""
-        asyncio.ensure_future(self._async_add_account_to_group(group_data))
+        self._run_task(self._async_add_account_to_group(group_data))
 
     async def _async_add_account_to_group(self, group_data: Dict):
         """异步处理添加账号到组（单用户模式：加载本地全部账号）"""
@@ -518,7 +535,7 @@ class AccountGroupPage(QWidget):
         """从组中移除账号"""
         from src.ui.utils.fluent_dialogs import show_confirm
         if show_confirm(self, "确认移除", "确定要将该账号从当前组中移除吗？\n账号本身不会被删除。"):
-             asyncio.ensure_future(self._async_remove_account(account_id))
+             self._run_task(self._async_remove_account(account_id))
 
     async def _async_remove_account(self, account_id: int):
         try:

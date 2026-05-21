@@ -13,6 +13,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+try:
+    from config.feature_flags import FeatureFlags
+except Exception:
+    FeatureFlags = None
+
 # publish_check 结果短时缓存：key=(token, platform, is_pro) → (allowed, expire_ts)
 # 仅缓存 allowed=True 的结果，拒绝结果不缓存（确保封禁/降权立即生效）
 _PUBLISH_CHECK_CACHE: dict = {}
@@ -76,8 +81,7 @@ class PermissionCheckFilterAsync(BaseFilter):
         try:
             # 开源/社区版：若未启用订阅能力或闭源控制器缺失，则跳过会员/云端校验，避免因缺失闭源代码导致崩溃。
             try:
-                from config.feature_flags import FeatureFlags
-                if not FeatureFlags.is_feature_enabled("subscription"):
+                if FeatureFlags is None or not FeatureFlags.is_feature_enabled("subscription"):
                     return True
             except Exception:
                 # 若 FeatureFlags 不可用，保守放行（避免阻断开源版运行）
@@ -169,4 +173,3 @@ class PermissionCheckFilterAsync(BaseFilter):
             self.set_error(f"权限检查失败: {str(e)}")
             logger.error(self.get_error(), exc_info=True)
             return False
-

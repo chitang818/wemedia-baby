@@ -20,6 +20,7 @@ from qfluentwidgets import (
 )
 
 from src.ui.pages.base_page import BasePage
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 from src.services.account.account_tag_service import AccountTagService
 from src.ui.pages.account_tag.dialogs.create_tag_dialog import CreateTagDialog
 from src.ui.dialogs.account_selection_dialog import AccountSelectionDialog
@@ -249,10 +250,22 @@ class AccountTagPage(BasePage):
         self._setup_page_ui()
         
     def _run_bg_task(self, coro):
-        task = asyncio.create_task(coro)
+        name = getattr(getattr(coro, "cr_code", None), "co_name", "task")
+        task = get_async_task_registry().create_task(
+            coro,
+            name=f"ui.account_tag.{name}",
+            group="ui",
+        )
         self._bg_tasks.add(task)
         task.add_done_callback(self._bg_tasks.discard)
         return task
+
+    def closeEvent(self, event):
+        for task in list(self._bg_tasks):
+            if not task.done():
+                task.cancel()
+        self._bg_tasks.clear()
+        super().closeEvent(event)
         
     def _setup_page_ui(self):
         """设置UI布局"""
@@ -433,8 +446,11 @@ class AccountTagPage(BasePage):
                     
                 groups = await grp_svc.get_groups(self.user_id)
                 
-                from PySide6.QtCore import QTimer
-                QTimer.singleShot(0, lambda: self._show_selection_dialog(tag_data, accounts, groups))
+                self._schedule_base_page_timer(
+                    "account_tag_show_selection_dialog",
+                    0,
+                    lambda: self._show_selection_dialog(tag_data, accounts, groups),
+                )
             except Exception as e:
                 InfoBar.error("错误", f"加载账号数据失败: {e}", parent=self, position=InfoBarPosition.TOP)
                 

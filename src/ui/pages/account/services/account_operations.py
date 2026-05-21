@@ -8,7 +8,9 @@
 import logging
 import asyncio
 from typing import List, Dict, Any, Optional, Union
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
+
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +38,40 @@ class AccountOperationsService(QObject):
         
         # 保存异步任务的强引用，防止被GC静默回收
         self._active_tasks = set()
+        self._deferred_timers = set()
+        self.destroyed.connect(lambda *_: self._cancel_active_tasks())
         
         # 订阅账号更新事件
         self._subscribe_events()
+
+    def _track_task(self, coro, *, name: str) -> asyncio.Task:
+        task = get_async_task_registry().create_task(
+            coro,
+            name=f"account_operations.{name}",
+            group="account",
+        )
+        self._active_tasks.add(task)
+        task.add_done_callback(self._active_tasks.discard)
+        return task
+
+    def _cancel_active_tasks(self) -> None:
+        for task in list(self._active_tasks):
+            if not task.done():
+                task.cancel()
+        self._active_tasks.clear()
+
+    def _defer_to_ui(self, callback) -> None:
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        self._deferred_timers.add(timer)
+
+        def _fire() -> None:
+            self._deferred_timers.discard(timer)
+            timer.deleteLater()
+            callback()
+
+        timer.timeout.connect(_fire)
+        timer.start(0)
 
     def _subscribe_events(self):
         """订阅事件"""
@@ -75,9 +108,7 @@ class AccountOperationsService(QObject):
             except Exception as e:
                 self._on_add_error(str(e))
                 
-        task = asyncio.create_task(run_add())
-        self._active_tasks.add(task)
-        task.add_done_callback(self._active_tasks.discard)
+        self._track_task(run_add(), name="add")
 
     def load_accounts(self):
         """加载账号列表"""
@@ -95,9 +126,7 @@ class AccountOperationsService(QObject):
                 logger.error(f"加载账号失败: {e}", exc_info=True)
                 self._on_load_error(str(e))
                 
-        task = asyncio.create_task(run_load())
-        self._active_tasks.add(task)
-        task.add_done_callback(self._active_tasks.discard)
+        self._track_task(run_load(), name="load")
 
     def delete_accounts(self, accounts: List[Dict], delete_cookie: bool = False):
         """批量删除账号"""
@@ -122,14 +151,11 @@ class AccountOperationsService(QObject):
                     logger.error(f"删除账号失败 {acc.get('username')}: {e}")
                     failed_names.append(acc.get('username') or str(acc.get('id', '')))
             if failed_names:
-                from PySide6.QtCore import QTimer
                 err_msg = f"以下账号删除失败：{', '.join(failed_names)}"
-                QTimer.singleShot(0, lambda: self._on_delete_error(err_msg))
+                self._defer_to_ui(lambda: self._on_delete_error(err_msg))
             self._on_delete_finished(success_count)
             
-        task = asyncio.create_task(run_delete())
-        self._active_tasks.add(task)
-        task.add_done_callback(self._active_tasks.discard)
+        self._track_task(run_delete(), name="delete")
 
     def clear_cookie(self, account_id: int, platform_username: str, platform: str):
         """清理账号 Cookie"""
@@ -141,9 +167,7 @@ class AccountOperationsService(QObject):
                 logger.error(f"清理Cookie失败: {e}")
                 self.clear_cookie_error.emit(str(e))
 
-        task = asyncio.create_task(run_clear())
-        self._active_tasks.add(task)
-        task.add_done_callback(self._active_tasks.discard)
+        self._track_task(run_clear(), name="clear_cookie")
 
     # --- 内部辅助方法 ---
 

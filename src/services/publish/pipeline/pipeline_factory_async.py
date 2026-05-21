@@ -14,6 +14,7 @@ from src.infrastructure.common.pipeline.filters.execution_filter import PublishE
 from src.services.publish.pipeline.filters.record_save_filter_async import RecordSaveFilterAsync
 from src.services.account.account_manager_async import AccountManagerAsync
 from src.services.common.media_validator import MediaValidator
+from src.domain.repositories.publish_record_repository_async import PublishRecordRepositoryAsync
 import logging
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ class PipelineFactoryAsync:
         Returns:
             配置好的发布管道实例
         """
-        pipeline = PublishPipeline(max_concurrent=5)
+        pipeline = PublishPipeline(max_concurrent=3)
         service_locator = ServiceLocator()
         
         # 获取所需服务
@@ -67,13 +68,17 @@ class PipelineFactoryAsync:
         
         if media_validator is None:
             media_validator = MediaValidator()
+
+        publish_record_repo = service_locator.get_optional(PublishRecordRepositoryAsync)
+        if publish_record_repo is None:
+            publish_record_repo = PublishRecordRepositoryAsync()
         
         # 添加过滤器（按顺序）
         pipeline.add_filter(PermissionCheckFilterAsync(permission_controller))
         pipeline.add_filter(MediaValidateFilterAsync(media_validator))
         pipeline.add_filter(AccountLoadFilterAsync(account_manager))
         pipeline.add_filter(PublishExecutionFilter())
-        pipeline.add_filter(RecordSaveFilterAsync())
+        pipeline.add_filter(RecordSaveFilterAsync(publish_record_repo))
         
         logger.info("发布管道创建成功，已注册5个过滤器（异步版本）")
         return pipeline

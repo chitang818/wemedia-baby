@@ -19,6 +19,7 @@ from qfluentwidgets import (
 
 from src.ui.components.base_dialog import AppMessageBoxBase
 from src.ui.utils.fluent_tooltips import ToolTipPosition, apply_instructional_tooltip
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 from src.services.material.media_library_stats_cache import get_media_library_stats_cache
 from src.services.material.media_library_stats_service import get_media_library_stats_service
 
@@ -649,13 +650,24 @@ class AccountSelectionDialog(AppMessageBoxBase):
                 except Exception as e:
                     pass
                 
-            task = asyncio.create_task(get_tags())
+            task = get_async_task_registry().create_task(
+                get_tags(),
+                name="ui.account_selection.load_tags",
+                group="ui",
+            )
             if not hasattr(self, '_bg_tasks'):
                 self._bg_tasks = set()
             self._bg_tasks.add(task)
             task.add_done_callback(self._bg_tasks.discard)
         except Exception as e:
             pass
+
+    def closeEvent(self, event):
+        for task in list(getattr(self, "_bg_tasks", set())):
+            if not task.done():
+                task.cancel()
+        getattr(self, "_bg_tasks", set()).clear()
+        super().closeEvent(event)
 
     def _setup_platform_filter_options(self):
         """初始化平台筛选下拉框（基于账号列表动态生成）"""
@@ -978,9 +990,11 @@ class AccountSelectionDialog(AppMessageBoxBase):
     def _refresh_media_stats_async(self) -> None:
         """触发统计刷新（异步，避免阻塞弹窗）。"""
         try:
-            import asyncio
-
-            asyncio.ensure_future(get_media_library_stats_service().refresh())
+            get_async_task_registry().create_task(
+                get_media_library_stats_service().refresh(),
+                name="ui.account_selection.media_stats_refresh",
+                group="ui",
+            )
         except Exception:
             return
 

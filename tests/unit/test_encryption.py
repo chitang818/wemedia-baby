@@ -86,9 +86,8 @@ class TestEncryptionManager:
             e2 = EncryptionManager.encrypt_data(b"same data")
             assert e1 != e2
 
-    def test_get_encryption_key_fallback_on_keyring_failure(self):
-        """keyring 不可用时应返回临时密钥（bytes）而不抛异常"""
+    def test_get_encryption_key_raises_on_keyring_failure(self):
+        """keyring 不可用时应显式失败，避免生成重启后无法解密的临时密钥。"""
         with patch("keyring.get_password", side_effect=Exception("keyring unavailable")):
-            key = EncryptionManager.get_encryption_key("test_key")
-            assert isinstance(key, bytes)
-            assert len(key) > 0
+            with pytest.raises(RuntimeError, match="系统密钥链不可用"):
+                EncryptionManager.get_encryption_key("test_key")

@@ -1,0 +1,14 @@
+{
+    "platform_id": "wechat_video",
+    "platform_name": "视频号",
+    "login_url": "https://channels.weixin.qq.com/login.html",
+    "cookie_domain": ".weixin.qq.com",
+    "cookie_keys": ["sessionid"],
+    "content_types": ["image", "video"],
+    "limits": {
+        "description_max_length": 1000,
+        "max_topics": -1,
+        "short_title_min_length": 6,
+        "short_title_max_length": 16
+    }
+}

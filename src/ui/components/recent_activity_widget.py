@@ -174,6 +174,9 @@ class RecentActivityWidget(CardWidget):
         self._reminder_rows: List[AccountPublishReminderRow] = []
         self._header_row: Optional[_ReminderHeaderRow] = None
         self._win_filter_installed = False
+        self._compact_layout_timer = QTimer(self)
+        self._compact_layout_timer.setSingleShot(True)
+        self._compact_layout_timer.timeout.connect(self._sync_compact_layout)
         self._init_ui()
         self._show_empty()
 
@@ -256,8 +259,12 @@ class RecentActivityWidget(CardWidget):
             QEvent.Type.Resize,
             QEvent.Type.WindowStateChange,
         ):
-            QTimer.singleShot(0, self._sync_compact_layout)
+            self._compact_layout_timer.start(0)
         return super().eventFilter(obj, event)
+
+    def closeEvent(self, event):
+        self._compact_layout_timer.stop()
+        super().closeEvent(event)
 
     def _sync_compact_layout(self) -> None:
         compact = self._should_use_compact_layout()

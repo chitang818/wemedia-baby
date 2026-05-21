@@ -15,6 +15,8 @@ from typing import Optional
 
 import aiohttp
 
+from src.infrastructure.common.async_task_registry import get_async_task_registry
+
 logger = logging.getLogger(__name__)
 
 # Gitee 仓库 version.json 的 raw 地址（版本与下载链接均由此获取，修改库中 version.json 即可生效）
@@ -285,7 +287,11 @@ async def _fetch_with_inflight_dedup() -> UpdateCheckResult:
         if _inflight_task is not None and not _inflight_task.done():
             task = _inflight_task
         else:
-            _inflight_task = asyncio.create_task(_fetch_and_cache())
+            _inflight_task = get_async_task_registry().create_task(
+                _fetch_and_cache(),
+                name="update_check.fetch",
+                group="network",
+            )
             task = _inflight_task
 
     try:

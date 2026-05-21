@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 class RecordSaveFilterAsync(BaseFilter):
     """记录保存过滤器（异步版本）"""
+    run_after_failure = True
     
     def __init__(self, publish_record_repository: Optional[PublishRecordRepositoryAsync] = None):
         """初始化记录保存过滤器

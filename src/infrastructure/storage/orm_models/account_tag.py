@@ -20,7 +20,7 @@ class AccountTag(Model):
         groups: 关联的账号组 (多对多)
     """
 
-    id = fields.IntField(pk=True)
+    id = fields.IntField(primary_key=True)
     user = fields.ForeignKeyField(
         "models.User", related_name="account_tags", on_delete=fields.CASCADE
     )

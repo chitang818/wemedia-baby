@@ -19,7 +19,9 @@ def _load_impl() -> tuple[Callable[[], str], Callable[[], bool]]:
     except Exception:
         # 开源版默认：不启用云端认证（由闭源版提供）
         def _base() -> str:
-            return os.environ.get("AUTH_API_BASE", "").rstrip("/")
+            if "AUTH_API_BASE" in os.environ:
+                return os.environ.get("AUTH_API_BASE", "").strip().rstrip("/")
+            return ""
 
         def _enabled() -> bool:
             return False

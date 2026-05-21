@@ -11,6 +11,7 @@ import asyncio
 from typing import List, Dict, Any, Callable, Optional
 from PySide6.QtCore import QObject, Signal
 
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 from src.services.account.account_verifier import AccountVerifier
 from src.infrastructure.browser.profile_manager import ProfileManager
 
@@ -64,7 +65,11 @@ class AccountValidatorService(QObject):
             finally:
                 self._current_task = None
 
-        self._current_task = asyncio.create_task(run_verify())
+        self._current_task = get_async_task_registry().create_task(
+            run_verify(),
+            name="account_validator.verify",
+            group="account",
+        )
 
     def start_verify_all(self, silent: bool = False):
         """开始验证所有账号"""
@@ -98,7 +103,11 @@ class AccountValidatorService(QObject):
             finally:
                 self._current_task = None
 
-        self._current_task = asyncio.create_task(fetch_and_verify_wrapper())
+        self._current_task = get_async_task_registry().create_task(
+            fetch_and_verify_wrapper(),
+            name="account_validator.fetch_and_verify",
+            group="account",
+        )
 
     async def _fetch_all_accounts(self) -> List[Dict]:
         """获取所有账号"""

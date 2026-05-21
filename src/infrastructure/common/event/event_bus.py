@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .events import DomainEvent
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 from src.infrastructure.common.path_manager import PathManager
 
 logger = logging.getLogger(__name__)
@@ -158,7 +159,11 @@ class EventBus:
         
         # 确保事件日志数据库已初始化
         if self._init_task is None:
-            self._init_task = asyncio.create_task(self._init_event_log())
+            self._init_task = get_async_task_registry().create_task(
+                self._init_event_log(),
+                name="event_bus.init_log",
+                group="infra",
+            )
             await self._init_task
         
         # 记录事件到日志（事件溯源）

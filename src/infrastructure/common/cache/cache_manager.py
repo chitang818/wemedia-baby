@@ -7,6 +7,8 @@
 import json
 import time
 import asyncio
+import os
+import pickle
 from typing import Dict, Any, Optional, List
 from collections import OrderedDict
 import logging
@@ -106,8 +108,11 @@ class CacheManager:
         l2_path = l2_path_json if l2_path_json.exists() else l2_path_pkl
         if await self._file_storage.file_exists(str(l2_path)):
             try:
-                content = await self._file_storage.read_file(str(l2_path), "r")
-                entry = json.loads(content)
+                entry = await self._read_l2_entry(l2_path)
+                if not entry:
+                    await self._file_storage.delete_file(str(l2_path))
+                    self._l2_misses += 1
+                    return default
                 
                 # 检查是否过期
                 if time.time() - entry['created_at'] < entry['ttl']:
@@ -181,9 +186,10 @@ class CacheManager:
             if key in self._l1_cache:
                 del self._l1_cache[key]
         
-        # 删除L2
-        l2_path = self.l2_cache_dir / f"{key}.pkl"
-        await self._file_storage.delete_file(str(l2_path))
+        # 删除L2，兼容新 .json 与旧 .pkl
+        for suffix in (".json", ".pkl"):
+            l2_path = self.l2_cache_dir / f"{key}{suffix}"
+            await self._file_storage.delete_file(str(l2_path))
     
     async def clear(self) -> Dict[str, Any]:
         """清空所有应用缓存（异步）
@@ -222,15 +228,33 @@ class CacheManager:
         return results
 
     async def _clear_l2_cache(self) -> int:
-        """清理L2 .pkl 缓存文件"""
+        """清理L2缓存文件，兼容新 .json 与旧 .pkl。"""
         count = 0
         try:
-            for cache_file in self.l2_cache_dir.glob("*.pkl"):
-                await self._file_storage.delete_file(str(cache_file))
-                count += 1
+            for pattern in ("*.json", "*.pkl"):
+                for cache_file in self.l2_cache_dir.glob(pattern):
+                    await self._file_storage.delete_file(str(cache_file))
+                    count += 1
         except Exception as e:
             logger.error(f"清空L2缓存失败: {e}")
         return count
+
+    async def _read_l2_entry(self, cache_file: Path) -> Optional[Dict[str, Any]]:
+        """读取 L2 缓存条目，支持 .json 和旧 pickle .pkl。"""
+        try:
+            if cache_file.suffix == ".pkl":
+                return await asyncio.to_thread(self._read_pickle_entry_sync, cache_file)
+            content = await self._file_storage.read_file(str(cache_file), "r")
+            entry = json.loads(content)
+            return entry if isinstance(entry, dict) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _read_pickle_entry_sync(cache_file: Path) -> Optional[Dict[str, Any]]:
+        with open(cache_file, "rb") as f:
+            entry = pickle.load(f)
+        return entry if isinstance(entry, dict) else None
 
     async def _clear_logs(self) -> int:
         """清理日志文件"""
@@ -375,9 +399,8 @@ class CacheManager:
             for pattern in ("*.json", "*.pkl"):
                 for cache_file in self.l2_cache_dir.glob(pattern):
                     try:
-                        content = await self._file_storage.read_file(str(cache_file), "r")
-                        entry = json.loads(content)
-                        if now - entry['created_at'] >= entry['ttl']:
+                        entry = await self._read_l2_entry(cache_file)
+                        if not entry or now - entry['created_at'] >= entry['ttl']:
                             await self._file_storage.delete_file(str(cache_file))
                             count += 1
                     except Exception:

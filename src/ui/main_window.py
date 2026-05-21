@@ -78,6 +78,7 @@ class MainWindow(FluentWindow):
         
         # 初始化页面工厂
         self.page_factory = PageFactory()
+        self._scheduled_timers: dict[str, QTimer] = {}
 
         # 设置窗口图标 (使用 PathManager 统一路径，兼容打包环境)
         from src.infrastructure.common.path_manager import PathManager
@@ -138,6 +139,76 @@ class MainWindow(FluentWindow):
         except Exception as e:
             logger.error(f"加载页面异常 {page_name}: {e}", exc_info=True)
             return None
+
+    def _schedule_single_shot(self, key: str, delay_ms: int, callback) -> QTimer:
+        """Schedule keyed startup work so it can be de-duplicated and cancelled."""
+        existing = self._scheduled_timers.get(key)
+        if existing is not None and existing.isActive():
+            return existing
+
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+
+        def _fire():
+            self._scheduled_timers.pop(key, None)
+            try:
+                callback()
+            finally:
+                timer.deleteLater()
+
+        timer.timeout.connect(_fire)
+        self._scheduled_timers[key] = timer
+        timer.start(delay_ms)
+        return timer
+
+    def _cancel_scheduled_timers(self, prefix: str | None = None) -> None:
+        """Cancel pending keyed timers during exit or when hiding before preload fires."""
+        for key, timer in list(getattr(self, "_scheduled_timers", {}).items()):
+            if prefix is not None and not key.startswith(prefix):
+                continue
+            self._scheduled_timers.pop(key, None)
+            try:
+                timer.stop()
+                timer.deleteLater()
+            except RuntimeError:
+                pass
+
+    def _startup_preload_page_names(self) -> list[str]:
+        pages = [
+            "publish_list_page",
+            "publish_records_page",
+            "single_task_creation_page",
+            "account_page",
+            "settings_page",
+        ]
+        if BATCH_FEATURE_AVAILABLE:
+            pages.append("batch_task_creation_page")
+        return pages
+
+    def _schedule_page_preload(self, page_name: str, delay_ms: int) -> None:
+        if hasattr(self, page_name):
+            return
+
+        def _preload():
+            if not self.isVisible():
+                logger.debug("窗口隐藏，跳过预加载页面: %s", page_name)
+                return
+            if hasattr(self, page_name):
+                return
+            self._get_or_create_page(page_name)
+
+        self._schedule_single_shot(f"preload:{page_name}", delay_ms, _preload)
+
+    def _schedule_startup_preloads(self) -> None:
+        base_ms = 800
+        step_ms = 260
+        missing_pages = [
+            page_name
+            for page_name in self._startup_preload_page_names()
+            if not hasattr(self, page_name)
+        ]
+        for index, page_name in enumerate(missing_pages):
+            self._schedule_page_preload(page_name, base_ms + index * step_ms)
     
     def _init_services(self):
         """初始化服务和事件监听"""
@@ -251,39 +322,32 @@ class MainWindow(FluentWindow):
             logger.debug("窗口显示完成")
         # 浏览器页已从导航移除，不再延迟初始化
         # 强制展开导航栏 (解决默认收起问题)
-        QTimer.singleShot(50, lambda: self._force_nav_expand())
+        self._schedule_single_shot("startup.force_nav_expand", 50, self._force_nav_expand)
         # 浏览器预热：默认按需触发；ENABLE_BROWSER_WARMUP_ON_START=1 时恢复启动后 3 秒预热
-        if os.environ.get("ENABLE_BROWSER_WARMUP_ON_START", "").strip().lower() in ("1", "true", "yes"):
-            QTimer.singleShot(3000, self._warmup_browser_service)
+        if (
+            os.environ.get("ENABLE_BROWSER_WARMUP_ON_START", "").strip().lower() in ("1", "true", "yes")
+            and not getattr(self, "_browser_warmup_startup_scheduled", False)
+        ):
+            self._browser_warmup_startup_scheduled = True
+            self._schedule_single_shot("startup.browser_warmup", 3000, self._warmup_browser_service)
         # 强制更新：打开软件立即检测，有新版本则弹窗并退出，旧版本不可用
         # 52POJIE 特别版不检测软件更新
         if not FeatureFlags.is_52pojie() and not getattr(self, "_update_check_startup_done", False):
             self._update_check_startup_done = True
-            QTimer.singleShot(5000, self._run_startup_update_check)
+            self._schedule_single_shot("startup.update_check", 5000, self._run_startup_update_check)
         # Chrome 检测：启动后约 2 秒检测一次，未安装时提示前往设置安装（仅提示一次）
         if not getattr(self, "_chrome_check_done", False):
-            QTimer.singleShot(2000, self._run_chrome_check)
+            self._schedule_single_shot("startup.chrome_check", 2000, self._run_chrome_check)
         # 媒体库：未配置根路径时弹窗引导前往设置（已配置则静默，仅检测一次）
         if not getattr(self, "_material_library_check_scheduled", False):
             self._material_library_check_scheduled = True
-            QTimer.singleShot(1200, self._run_material_library_startup_check)
+            self._schedule_single_shot(
+                "startup.material_library_check",
+                1200,
+                self._run_material_library_startup_check,
+            )
         # 空闲预加载高频页面：错开时间片，避免同一时刻多页 import/__init__ 抢满 UI 线程
-        if not getattr(self, "_preload_scheduled", False):
-            self._preload_scheduled = True
-            preload_pages = [
-                "publish_list_page",
-                "publish_records_page",
-                "single_task_creation_page",
-                "account_page",
-                "settings_page",
-            ]
-            if BATCH_FEATURE_AVAILABLE:
-                preload_pages.append("batch_task_creation_page")
-            _preload_base_ms = 800
-            _preload_step_ms = 260
-            for i, name in enumerate(preload_pages):
-                delay = _preload_base_ms + i * _preload_step_ms
-                QTimer.singleShot(delay, lambda n=name: self._get_or_create_page(n))
+        self._schedule_startup_preloads()
         try:
             from src.utils.startup_profiler import log_summary
             log_summary()
@@ -367,7 +431,11 @@ class MainWindow(FluentWindow):
             result = await check_for_updates(force_refresh=False)
             if not result.has_update or not result.remote_version or not result.download_url:
                 return
-            QTimer.singleShot(0, lambda: self._show_force_update_dialog(result))
+            self._schedule_single_shot(
+                "startup.force_update_dialog",
+                0,
+                lambda result=result: self._show_force_update_dialog(result),
+            )
         except Exception as e:
             logger.warning("启动更新检查异常: %s", e)
 
@@ -766,6 +834,7 @@ class MainWindow(FluentWindow):
                     pass
 
                 event.ignore()
+                self._cancel_scheduled_timers("preload:")
                 # 只有当“托盘行为已记住”或当前设置就是 tray 时，才让下次启动也藏到托盘
                 self._persist_start_in_tray_next_launch(remembered)
                 self.hide()
@@ -784,6 +853,7 @@ class MainWindow(FluentWindow):
         self._persist_start_in_tray_next_launch(False)
 
         logger.info("主窗口关闭事件触发，开始清理...")
+        self._cancel_scheduled_timers()
 
         if hasattr(self, '_tray_icon'):
             self._tray_icon.hide()
@@ -900,7 +970,11 @@ class MainWindow(FluentWindow):
             parent_key = child_to_parent.get(target_page_name)
             
             if parent_key:
-                QTimer.singleShot(50, lambda: self._expand_nav_item(parent_key))
+                self._schedule_single_shot(
+                    f"nav.expand:{parent_key}",
+                    50,
+                    lambda parent_key=parent_key: self._expand_nav_item(parent_key),
+                )
                 
         except Exception as e:
             logger.error(f"跳转失败: {e}")
@@ -1202,8 +1276,10 @@ class MainWindow(FluentWindow):
                     self.switchTo(page)
                 # 高亮由 FluentWindowBase._onCurrentInterfaceChanged 统一处理
 
-                QTimer.singleShot(
-                    0, lambda p=page_name, pg=page: self._refresh_publish_records_after_navigate(p, pg)
+                self._schedule_single_shot(
+                    f"nav.refresh_after_navigate:{page_name}",
+                    0,
+                    lambda p=page_name, pg=page: self._refresh_publish_records_after_navigate(p, pg),
                 )
 
                 logger.debug(f"平滑导航到: {page_name}")
@@ -1308,7 +1384,8 @@ class MainWindow(FluentWindow):
             super().switchTo(interface, popOut)
 
         if interface is not None:
-            QTimer.singleShot(0, lambda w=interface: self._deferred_publish_records_load(w))
+            key = f"nav.deferred_records_load:{id(interface)}"
+            self._schedule_single_shot(key, 0, lambda w=interface: self._deferred_publish_records_load(w))
 
     def _disable_all_indicators(self):
         """禁用所有导航项的蓝色选中指示器。

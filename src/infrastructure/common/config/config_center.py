@@ -29,6 +29,7 @@ from src.infrastructure.common.config.app_config_merge import (
     APP_CONFIG_FILENAME,
     _deep_merge_inplace,
 )
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 
 logger = logging.getLogger(__name__)
 
@@ -232,8 +233,11 @@ class ConfigCenter:
         """初始化配置中心（异步）"""
         # 加载配置
         if self._load_task is None:
-            import asyncio
-            self._load_task = asyncio.create_task(self._load_all_configs())
+            self._load_task = get_async_task_registry().create_task(
+                self._load_all_configs(),
+                name="config.load_all",
+                group="config",
+            )
             await self._load_task
 
         if self._app_config_skeleton_persist_pending:
@@ -244,8 +248,11 @@ class ConfigCenter:
         
         # 启动远程配置轮询
         if self.remote_config_url and self._poll_task is None:
-            import asyncio
-            self._poll_task = asyncio.create_task(self._poll_remote_config())
+            self._poll_task = get_async_task_registry().create_task(
+                self._poll_remote_config(),
+                name="config.remote_poll",
+                group="config",
+            )
     
     async def _load_local_configs(self) -> None:
         """加载本地配置（异步）"""
@@ -350,7 +357,11 @@ class ConfigCenter:
                 raise
             self._reload_debounce_tasks.pop(config_key, None)
             await self._reload_config(config_key, file_path)
-        self._reload_debounce_tasks[config_key] = asyncio.create_task(run())
+        self._reload_debounce_tasks[config_key] = get_async_task_registry().create_task(
+            run(),
+            name=f"config.reload_debounce.{config_key}",
+            group="config",
+        )
     
     async def _reload_config(self, config_key: str, file_path: str) -> None:
         """重新加载配置（异步）
@@ -585,6 +596,15 @@ class ConfigCenter:
     
     def close(self) -> None:
         """关闭配置中心"""
+        for task in (
+            self._load_task,
+            self._poll_task,
+            *list(self._reload_debounce_tasks.values()),
+        ):
+            if task and not task.done():
+                task.cancel()
+        self._reload_debounce_tasks.clear()
+
         if self._observer:
             self._observer.stop()
             self._observer.join()

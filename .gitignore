@@ -49,13 +49,9 @@ config/auth_config.json
 config/dist_mode.json
 .env
 
-# 闭源商业代码及内部文档（极其重要：禁止推送到公开的开源仓库）
-# 注意：src/services/auth/ 和 src/services/subscription/ 已改为开源包装层，不再忽略
-# 真实闭源实现均已迁移至 src/proprietary/（已在下方忽略）
-docs/
-src/proprietary/
-src/plugins/pro/
-src/pro_features/
+# 闭源目录在 main（私有主仓）中纳入版本管理。
+# 同步到公开仓时请使用 scripts/git/publish_oss_to_public.ps1，勿执行 git push public main。
+# src/services/auth/ 与 src/services/subscription/ 为开源包装层；真实闭源在 src/proprietary/ 等目录。
 
 # 操作系统
 .DS_Store
@@ -85,6 +81,9 @@ nuitka-crash-report.xml
 
 # pytest
 .pytest_cache/
+.pytest-cache/
+.pytest-tmp/
+.pytest-codex-tmp/
 
 # pytest 运行产物（由 scripts/run_tests.py 生成，用于刷新 summary.html）
 test-reports/junit.xml

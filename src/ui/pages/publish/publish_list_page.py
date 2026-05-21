@@ -56,6 +56,7 @@ from src.infrastructure.common.publish_material_path_policy import (
     message_for_auto_post_publish_change,
     resolve_effective_post_publish_action_for_queue,
 )
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 from src.ui.components.log_display_widget import LogDisplayWidget
 from src.ui.components.task_overview_card import TaskOverviewCard
 from src.ui.components.task_description_card import TaskDescriptionCard
@@ -288,7 +289,11 @@ class PublishListPage(PublishRecordsPage):
     def showEvent(self, event: QShowEvent) -> None:
         """进入待发布页时尝试弹出「发布后文件处理」说明弹窗（若有挂起提示）。"""
         super().showEvent(event)
-        QTimer.singleShot(0, self._flush_pending_publish_policy_modal)
+        self._schedule_base_page_timer(
+            "publish_policy_modal",
+            0,
+            self._flush_pending_publish_policy_modal,
+        )
 
     def _flush_pending_publish_policy_modal(self) -> None:
         """消费挂起的说明并用 Fluent 单按钮弹窗展示；页面不可见时保留待下次显示。"""
@@ -315,7 +320,11 @@ class PublishListPage(PublishRecordsPage):
     def _schedule_publish_policy_modal_if_pending(self) -> None:
         """当前页可见且有待展示说明时，下一事件循环弹出（避免与布局/拉库同一帧冲突）。"""
         if self._pending_publish_policy_modal_hint and self.isVisible():
-            QTimer.singleShot(0, self._flush_pending_publish_policy_modal)
+            self._schedule_base_page_timer(
+                "publish_policy_modal",
+                0,
+                self._flush_pending_publish_policy_modal,
+            )
 
     def _publish_queue_scoped_pending_ids(self) -> FrozenSet[int]:
         """当前表格筛选结果（_filtered_records）中 status=pending 的任务 ID 集合。"""
@@ -546,6 +555,14 @@ class PublishListPage(PublishRecordsPage):
 
     def closeEvent(self, event):
         """关闭时移除 Handler"""
+        ct = getattr(self, "current_task", None)
+        if ct is not None and not ct.done():
+            ct.cancel()
+        timer = getattr(self, "_table_refresh_timer", None)
+        if timer is not None:
+            timer.stop()
+            timer.deleteLater()
+            self._table_refresh_timer = None
         if self.log_widget:
             self.log_widget.stop_logging()
         super().closeEvent(event)
@@ -970,6 +987,14 @@ class PublishListPage(PublishRecordsPage):
     async def _await_with_publish_stop_cancel(self, awaitable):
         """对账号检测等长 IO 轮询「停止」：无原生取消点时，停止后取消子协程并尽快退出队列。"""
         task = asyncio.ensure_future(awaitable)
+        if hasattr(task, "set_name"):
+            task.set_name("publish.await_with_stop_cancel")
+        if isinstance(task, asyncio.Task):
+            get_async_task_registry().register(
+                task,
+                group="publish",
+                log_exceptions=False,
+            )
         try:
             while not task.done():
                 if not getattr(self, "_is_publishing_loop_active", False):
@@ -1573,7 +1598,7 @@ class PublishListPage(PublishRecordsPage):
                     await asyncio.sleep(0)
                              
                     # 开始包装一层单独的任务执行供中途可取消操作
-                    self.current_task = asyncio.create_task(publish_service.publish_single(
+                    self.current_task = get_async_task_registry().create_task(publish_service.publish_single(
                         user_id=self.user_id,
                         account_name=account_name,
                         platform=platform,
@@ -1598,7 +1623,7 @@ class PublishListPage(PublishRecordsPage):
                         anchor_info=task.get("anchor_info"),
                         micro_app_info=task.get("micro_app_info"),
                         music_info=task.get("music_info"),
-                    ))
+                    ), name=f"publish.single.{task_id}", group="publish", log_exceptions=False)
                     
                     _SINGLE_TASK_TIMEOUT = 600  # 单任务最大执行时间 10 分钟
                     try:
@@ -1759,7 +1784,11 @@ class PublishListPage(PublishRecordsPage):
                             "打开发布完成自动关机提示失败: %s", dlg_e, exc_info=True
                         )
 
-                QTimer.singleShot(0, _open_shutdown_dialog)
+                self._schedule_base_page_timer(
+                    "post_publish_shutdown_dialog",
+                    0,
+                    _open_shutdown_dialog,
+                )
 
     def _on_stop_publish(self):
         """停止发布：必须唤醒可能卡在暂停 wait 上的协程，否则界面会像「点了没反应」。"""
@@ -1845,7 +1874,11 @@ class PublishListPage(PublishRecordsPage):
         notify_publish_records_history_tab_refresh(self)
         self._check_auto_start()
         # 数据就绪后预创建待发布页专属右键菜单，消除首次右键的一次性延迟
-        QTimer.singleShot(250, self._ensure_list_table_round_menu)
+        self._schedule_base_page_timer(
+            "list_prepare_context_menu",
+            250,
+            self._ensure_list_table_round_menu,
+        )
 
     def _check_auto_start(self):
         """检查并触发自动发布"""
@@ -1869,6 +1902,14 @@ class PublishListPage(PublishRecordsPage):
         self.log_widget.append_text("⏳ 检测到自动发布开启与待办任务，准备启动...")
         # asyncSlot 调用时可能返回 Task，用 ensure_future 兼容协程与 Task
         task = asyncio.ensure_future(self._on_start_publish())
+        if hasattr(task, "set_name"):
+            task.set_name("publish.auto_start")
+        if isinstance(task, asyncio.Task):
+            get_async_task_registry().register(
+                task,
+                group="publish",
+                log_exceptions=False,
+            )
         task.add_done_callback(
             lambda t: logger.error("自动发布任务异常: %s", t.exception()) if not t.cancelled() and t.exception() else None
         )

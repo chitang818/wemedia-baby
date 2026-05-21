@@ -110,6 +110,17 @@ def print_banner(mode: str, quick: bool, keyword: str | None) -> None:
     print()
 
 
+def run_encoding_check() -> int:
+    """Run the UTF-8 repository text gate before pytest."""
+    cmd = [
+        sys.executable,
+        str(PROJECT_ROOT / "scripts" / "maintenance" / "check_text_encoding.py"),
+        str(PROJECT_ROOT),
+    ]
+    print(f"Encoding check: {' '.join(cmd)}\n")
+    return subprocess.run(cmd, cwd=str(PROJECT_ROOT)).returncode
+
+
 def parse_junit_stats(junit_path: Path) -> tuple[int, int, int] | None:
     """从 pytest --junitxml 输出解析 (通过数, 失败数含 error, 跳过数)；文件缺失或解析失败时返回 None。"""
     if not junit_path.is_file():
@@ -228,6 +239,11 @@ def main() -> int:
     )
     parser.add_argument("--no-cov", action="store_true", help="不生成覆盖率报告（加快速度）")
     parser.add_argument(
+        "--skip-encoding-check",
+        action="store_true",
+        help="Skip UTF-8 text encoding check",
+    )
+    parser.add_argument(
         "--open",
         action="store_true",
         dest="open_report",
@@ -241,6 +257,12 @@ def main() -> int:
         return 1
 
     print_banner(args.mode, args.quick, args.module)
+
+    if not args.skip_encoding_check:
+        encoding_result = run_encoding_check()
+        if encoding_result != 0:
+            print("[ERROR] UTF-8 encoding check failed")
+            return encoding_result
 
     pytest_args = build_pytest_args(
         mode=args.mode,

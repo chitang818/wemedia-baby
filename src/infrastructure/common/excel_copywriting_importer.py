@@ -81,6 +81,8 @@ def parse_excel(path: str, strict: bool = True) -> Dict[str, Any]:
         topics = str(row_map.get("话题") or "").strip()
         content = str(row_map.get("文案内容") or "").strip()
 
+        total += 1
+
         # 校验逻辑
         if strict:
             # 严格模式：编号和内容必填，且编号格式必须正确
@@ -100,8 +102,6 @@ def parse_excel(path: str, strict: bool = True) -> Dict[str, Any]:
             # 编号格式不规范仅记录警告，不阻断
             if work_id and not is_valid_copywriting_work_id(work_id):
                 errors.append(f"第 {i} 行：作品编号「{work_id}」格式不规范，但已允许导入。")
-
-        total += 1
 
         dto = {
             "work_id": work_id,

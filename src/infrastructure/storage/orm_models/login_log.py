@@ -19,7 +19,7 @@ class LoginLog(Model):
         login_status: 登录状态（可选）
     """
 
-    id = fields.IntField(pk=True)
+    id = fields.IntField(primary_key=True)
     user = fields.ForeignKeyField(
         "models.User", related_name="login_logs", on_delete=fields.CASCADE
     )

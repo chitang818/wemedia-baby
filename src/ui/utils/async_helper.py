@@ -31,6 +31,8 @@ from PySide6.QtCore import QThread, Signal, QObject, QTimer, Qt
 from PySide6.QtWidgets import QDialog
 import logging
 
+from src.infrastructure.common.async_task_registry import get_async_task_registry
+
 logger = logging.getLogger(__name__)
 
 
@@ -67,7 +69,12 @@ def run_async_from_ui(async_fn: Callable) -> Optional[asyncio.Task]:
         coro = async_fn() if callable(async_fn) else async_fn
         try:
             loop = asyncio.get_running_loop()
-            return loop.create_task(coro)
+            name = getattr(async_fn, "__name__", None) or "ui.run_async_from_ui"
+            return get_async_task_registry().create_task(
+                coro,
+                name=f"ui.{name}",
+                group="ui",
+            )
         except RuntimeError:
             asyncio.run(coro)
             return None
@@ -185,7 +192,12 @@ def run_async_task(async_func: Callable, *args, **kwargs) -> asyncio.Task:
     """
     try:
         loop = asyncio.get_running_loop()
-        return loop.create_task(async_func(*args, **kwargs))
+        name = getattr(async_func, "__name__", None) or "run_async_task"
+        return get_async_task_registry().create_task(
+            async_func(*args, **kwargs),
+            name=f"ui.{name}",
+            group="ui",
+        )
     except RuntimeError:
         # 如果没有运行中的事件循环，回退到 AsyncWorker 模式
         logger.warning("没有运行中的事件循环，回退到 AsyncWorker 模式")

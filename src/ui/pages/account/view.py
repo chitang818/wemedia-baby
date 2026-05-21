@@ -31,6 +31,7 @@ from .dialogs.set_group_dialog import SetGroupDialog # Import check
 from .services import AccountValidatorService, AccountOperationsService
 from .account_view_helpers import wait_page_networkidle_and_get_nickname
 from src.services.browser import PlaywrightBrowserService
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 from src.infrastructure.common.di.service_locator import ServiceLocator
 from src.ui.components.base_dialog import AppMessageBoxBase
 
@@ -266,7 +267,11 @@ class AccountPage(BasePage):
         if self._auto_refresh_config().get("enabled") and self._auto_refresh_config().get("on_show"):
             self._on_auto_refresh_timer()
         # 检测并提示长期未完成登录的占位账号
-        QTimer.singleShot(1500, self._check_stale_placeholder_accounts)
+        self._schedule_base_page_timer(
+            "account_check_stale_placeholders",
+            1500,
+            self._check_stale_placeholder_accounts,
+        )
 
     def _auto_refresh_config(self) -> Dict[str, Any]:
         try:
@@ -348,8 +353,11 @@ class AccountPage(BasePage):
             )):
                 content = "未检测到 Google Chrome 或浏览器启动失败。请前往 设置 → 工具依赖 下载安装 Chrome。"
                 try:
-                    from PySide6.QtCore import QTimer
-                    QTimer.singleShot(600, self._try_navigate_to_settings_for_chrome)
+                    self._schedule_base_page_timer(
+                        "account_navigate_chrome_settings",
+                        600,
+                        self._try_navigate_to_settings_for_chrome,
+                    )
                 except Exception:
                     pass
                 InfoBar.error(title=title, content=content, parent=self, duration=7000)
@@ -544,22 +552,27 @@ class AccountPage(BasePage):
     def _run_bg_task(self, coro, defer=False):
         """运行后台任务并保持强引用防止GC。defer=True 时延后到下一轮事件循环再 create_task，避免 qasync 下与其它 async 槽并发时触发 “Cannot enter into task” 的 reentrancy 错误。"""
         import asyncio
+        name = getattr(getattr(coro, "cr_code", None), "co_name", "task")
+
+        def _register_task():
+            task = get_async_task_registry().create_task(
+                coro,
+                name=f"ui.account.{name}",
+                group="ui",
+            )
+            if not hasattr(self, '_bg_tasks'):
+                self._bg_tasks = set()
+            self._bg_tasks.add(task)
+            task.add_done_callback(self._bg_tasks.discard)
+            return task
+
         if defer:
             loop = asyncio.get_event_loop()
             def _schedule():
-                task = asyncio.create_task(coro)
-                if not hasattr(self, '_bg_tasks'):
-                    self._bg_tasks = set()
-                self._bg_tasks.add(task)
-                task.add_done_callback(self._bg_tasks.discard)
+                _register_task()
             loop.call_soon(_schedule)  # type: ignore
             return None
-        task = asyncio.create_task(coro)
-        if not hasattr(self, '_bg_tasks'):
-            self._bg_tasks = set()
-        self._bg_tasks.add(task)
-        task.add_done_callback(self._bg_tasks.discard)
-        return task
+        return _register_task()
 
     @staticmethod
     def _get_platform_display_names():
@@ -748,8 +761,11 @@ class AccountPage(BasePage):
             if not pf:
                 self._show_error("无法解析账号数据目录，请先打开浏览器或刷新登录状态")
                 return
-            from PySide6.QtCore import QTimer
-            QTimer.singleShot(0, lambda: self._show_fingerprint_dialog(account_id, uname, plat, pf))
+            self._schedule_base_page_timer(
+                "account_show_fingerprint_dialog",
+                0,
+                lambda: self._show_fingerprint_dialog(account_id, uname, plat, pf),
+            )
         self._run_bg_task(_ensure_and_show())
 
     def _show_fingerprint_dialog(self, account_id, platform_username, platform, profile_folder_name):
@@ -1292,8 +1308,7 @@ class AccountPage(BasePage):
                 exc = t.exception()
                 if exc is not None:
                     msg = str(exc) or "未知错误"
-                    from PySide6.QtCore import QTimer
-                    QTimer.singleShot(0, lambda: InfoBar.error(
+                    self._schedule_base_page_timer("account_open_browser_error", 0, lambda: InfoBar.error(
                         title="打开浏览器失败",
                         content=msg,
                         parent=self,
@@ -1351,5 +1366,10 @@ class AccountPage(BasePage):
                     worker.terminate()
                     worker.wait(1000)
         
+        for task in list(getattr(self, '_bg_tasks', set())):
+            if not task.done():
+                task.cancel()
+        getattr(self, '_bg_tasks', set()).clear()
+
         super().closeEvent(event)
 

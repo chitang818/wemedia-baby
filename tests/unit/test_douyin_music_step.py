@@ -1,7 +1,7 @@
 import pytest
-from playwright.async_api import async_playwright
 
 from src.plugins.community.douyin.steps.step_07a_music import SelectMusicStep
+from tests.helpers.playwright_env import playwright_page_or_skip
 
 
 MUSIC_HTML = """
@@ -47,11 +47,8 @@ MUSIC_HTML = """
 
 @pytest.fixture
 async def page():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page(viewport={"width": 1440, "height": 1000})
+    async with playwright_page_or_skip(viewport={"width": 1440, "height": 1000}) as page:
         yield page
-        await browser.close()
 
 
 @pytest.mark.asyncio

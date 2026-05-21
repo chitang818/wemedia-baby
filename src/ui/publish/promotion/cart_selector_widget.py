@@ -14,13 +14,14 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QWidget, QHBoxLayout
 
 from qfluentwidgets import ComboBox, BodyLabel
 
 from src.domain.publish.promotion_limits import CART_SHORT_TITLE_MAX_LEN
 from src.domain.publish.promotion_settings import PLATFORM_FIELD_MAP
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,12 @@ class CartSelectorWidget(QWidget):
         self._platform: str = ""
         self._items: List[Dict[str, Any]] = []
         self._initial_short_name = (initial_short_name or "").strip()
+        self._load_task: Optional[asyncio.Task] = None
+        self._load_retry_count = 0
+        self._closed = False
+        self._load_retry_timer = QTimer(self)
+        self._load_retry_timer.setSingleShot(True)
+        self._load_retry_timer.timeout.connect(self._schedule_load_products)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -62,9 +69,30 @@ class CartSelectorWidget(QWidget):
         layout.addWidget(self._value_label)
         layout.addStretch()
 
-        asyncio.ensure_future(self._load_products())
+        self._load_retry_timer.start(0)
 
     # ---------- 公开接口 ----------
+
+    def _schedule_load_products(self) -> None:
+        if self._closed:
+            return
+        if self._load_task is not None and not self._load_task.done():
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self._load_retry_count += 1
+            if self._load_retry_count <= 20:
+                self._load_retry_timer.start(50)
+            else:
+                logger.warning("跳过购物车商品加载：qasync 事件循环未启动")
+            return
+
+        self._load_task = get_async_task_registry().create_task(
+            self._load_products(),
+            name="ui.cart_selector.load_products",
+            group="ui",
+        )
 
     def get_selected_short_name(self) -> str:
         """返回当前选中的商品简称；未选择时返回空字符串。"""
@@ -96,6 +124,13 @@ class CartSelectorWidget(QWidget):
         """切换当前平台，刷新右侧显示的平台对应值。"""
         self._platform = (platform or "").strip()
         self._refresh_value_label()
+
+    def closeEvent(self, event) -> None:
+        self._closed = True
+        self._load_retry_timer.stop()
+        if getattr(self, "_load_task", None) is not None and not self._load_task.done():
+            self._load_task.cancel()
+        super().closeEvent(event)
 
     def apply_record(self, short_name: str) -> None:
         """从发布记录回填选中的商品简称（编辑模式）。

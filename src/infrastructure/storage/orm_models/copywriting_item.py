@@ -21,7 +21,7 @@ class CopywritingItem(Model):
         updated_at: 更新时间
     """
 
-    id = fields.IntField(pk=True)
+    id = fields.IntField(primary_key=True)
     work_id = fields.CharField(max_length=200, unique=True)
     short_title = fields.CharField(max_length=500, null=True)
     description = fields.TextField(null=True)

@@ -68,10 +68,23 @@ class TestProPlatforms:
 
 # ─────────────────────────────── auth_config ───────────────────────────────── #
 
+@pytest.fixture
+def oss_auth_config_defaults(monkeypatch):
+    """模拟开源仓库默认：无环境变量、无本地 auth_config.json。"""
+    monkeypatch.delenv("AUTH_API_BASE", raising=False)
+    try:
+        import src.proprietary.auth.auth_config as prop_cfg
+
+        monkeypatch.setattr(prop_cfg, "_AUTH_CONFIG_CACHE", {})
+        monkeypatch.setattr(prop_cfg, "_load_auth_config", lambda: {})
+    except ImportError:
+        pass
+
+
 class TestAuthConfig:
-    def test_default_base_url_not_empty(self):
+    def test_default_base_url_is_empty_without_env(self, oss_auth_config_defaults):
         base = get_auth_api_base()
-        assert base.startswith("http")
+        assert base == ""
 
     def test_env_override(self, monkeypatch):
         monkeypatch.setenv("AUTH_API_BASE", "https://my-custom-api.com")
@@ -81,7 +94,11 @@ class TestAuthConfig:
         monkeypatch.setenv("AUTH_API_BASE", "https://my-custom-api.com/")
         assert not get_auth_api_base().endswith("/")
 
-    def test_cloud_auth_enabled_by_default(self):
+    def test_cloud_auth_disabled_by_default(self, oss_auth_config_defaults):
+        assert is_cloud_auth_enabled() is False
+
+    def test_cloud_auth_enabled_when_env_set(self, monkeypatch):
+        monkeypatch.setenv("AUTH_API_BASE", "https://my-custom-api.com")
         assert is_cloud_auth_enabled() is True
 
     def test_cloud_auth_disabled_when_empty(self, monkeypatch):

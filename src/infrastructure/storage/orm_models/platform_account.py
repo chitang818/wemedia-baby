@@ -23,7 +23,7 @@ class PlatformAccount(Model):
         created_at: 创建时间（自动填充）
     """
 
-    id = fields.IntField(pk=True)
+    id = fields.IntField(primary_key=True)
     user = fields.ForeignKeyField(
         "models.User", related_name="platform_accounts", on_delete=fields.CASCADE
     )

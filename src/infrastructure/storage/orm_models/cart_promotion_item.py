@@ -22,7 +22,7 @@ class CartPromotionItem(Model):
         updated_at: 更新时间
     """
 
-    id = fields.IntField(pk=True)
+    id = fields.IntField(primary_key=True)
     short_name = fields.CharField(max_length=500, unique=True)
     short_title = fields.TextField(null=True)
     douyin_link = fields.TextField(null=True)

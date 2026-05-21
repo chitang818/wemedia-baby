@@ -9,7 +9,11 @@ import pytest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
-from src.services.account.cookie_manager import CookieManager, COOKIE_FILENAME
+from src.services.account.cookie_manager import (
+    CookieManager,
+    COOKIE_FILENAME,
+    _ENCRYPTED_PREFIX,
+)
 
 
 @pytest.fixture
@@ -54,9 +58,15 @@ class TestCookieManager:
         )
         assert path == str(account_dir / COOKIE_FILENAME)
         assert os.path.exists(path)
-        with open(path, 'r', encoding='utf-8') as f:
-            saved = json.load(f)
-        assert saved == sample_cookies
+        with open(path, 'rb') as f:
+            saved_raw = f.read()
+        assert saved_raw.startswith(_ENCRYPTED_PREFIX)
+        assert sample_cookies["sessionid"].encode("utf-8") not in saved_raw
+        assert manager.load_cookie(
+            platform_username="test_user",
+            platform="douyin",
+            profile_folder_name="profile_abc123",
+        ) == sample_cookies
 
     def test_save_cookie_rejects_empty_username_or_platform(self, sample_cookies):
         """平台用户名或平台名称为空时应抛出 ValueError"""
@@ -76,7 +86,7 @@ class TestCookieManager:
                                 cookie_data=sample_cookies, profile_folder_name="")
 
     def test_load_cookie_from_json(self, sample_cookies, tmp_account_dir):
-        """load_cookie 应从 cookies.json 加载"""
+        """load_cookie 应兼容旧版明文 cookies.json。"""
         account_dir, _ = tmp_account_dir
         cookies_file = account_dir / COOKIE_FILENAME
         with open(str(cookies_file), 'w', encoding='utf-8') as f:

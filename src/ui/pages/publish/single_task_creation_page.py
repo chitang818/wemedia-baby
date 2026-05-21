@@ -24,7 +24,6 @@ from PySide6.QtCore import (
     QDateTime,
     QEasingCurve,
     QPropertyAnimation,
-    QTimer,
     QUrl,
 )
 import logging
@@ -58,6 +57,7 @@ _WORK_DECLARATION_COMBO_WIDTH = _SETTINGS_COMBO_WIDTH
 
 from src.ui.components.fast_calendar_picker import create_fast_calendar_picker
 from src.ui.utils.fluent_tooltips import ToolTipPosition, apply_instructional_tooltip
+from src.ui.utils.task_tracking import TrackedTaskMixin
 
 from ..base_page import BasePage
 from .single_task_creation_actions import add_or_update_publish_record, normalize_publish_record_id
@@ -411,7 +411,7 @@ def _record_looks_like_image(record: dict) -> bool:
     )
 
 
-class SingleTaskCreationPage(BasePage):
+class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
     """单视频 / 单个图文发布页面（由 media_mode 区分）"""
     
     # 发布完成信号
@@ -453,7 +453,7 @@ class SingleTaskCreationPage(BasePage):
         self._editing_record_original_file_path: Optional[str] = None
         # 从「待发布 / 已发布 / 回收站」哪一页进入编辑；点「返回」时回到该页；「保存修改」成功后一律去待发布
         self._publish_edit_return_route: Optional[str] = None
-        self._pending_tasks: List[asyncio.Task] = []
+        self._init_task_tracking()
 
         self._init_services()
 
@@ -486,6 +486,7 @@ class SingleTaskCreationPage(BasePage):
 
     def _disconnect_preview_first_frame_arm(self, w: Optional[QWidget]) -> None:
         """取消首帧预览用的 mediaStatus 监听，并使进行中的首帧脉冲失效。"""
+        self._cancel_base_page_timer("preview_first_frame")
         if w is None:
             return
         h = getattr(self, "_preview_first_frame_handler", None)
@@ -532,7 +533,11 @@ class SingleTaskCreationPage(BasePage):
                 player.setMuted(True)
                 player.setPosition(0)
                 player.play()
-                QTimer.singleShot(120, lambda: self._complete_preview_first_frame(gen, player))
+                self._schedule_base_page_timer(
+                    "preview_first_frame",
+                    120,
+                    lambda gen=gen, player=player: self._complete_preview_first_frame(gen, player),
+                )
             except Exception as e:
                 logger.debug("首帧预览触发失败: %s", e)
 
@@ -585,28 +590,23 @@ class SingleTaskCreationPage(BasePage):
         super().showEvent(event)
         if not hasattr(self, 'available_accounts') or not self.available_accounts:
             logger.info("showEvent: 账号列表为空，触发异步加载…")
-            self._track_task(asyncio.create_task(self._load_accounts()))
+            self._create_tracked_task(
+                self._load_accounts(),
+                name="ui.single_publish.load_accounts",
+            )
 
     def _track_task(self, task: asyncio.Task) -> asyncio.Task:
         """跟踪异步任务，自动清理已完成任务并记录异常"""
-        self._pending_tasks.append(task)
-        task.add_done_callback(self._on_task_done)
-        return task
+        return super()._track_task(task)
 
     def _on_task_done(self, task: asyncio.Task):
         """任务完成回调：移除引用并记录未捕获异常"""
-        if task in self._pending_tasks:
-            self._pending_tasks.remove(task)
-        if not task.cancelled() and task.exception():
-            logger.error("异步任务异常: %s", task.exception(), exc_info=task.exception())
+        super()._on_task_done(task)
 
     def closeEvent(self, event):
         """页面关闭时取消所有未完成的异步任务"""
         self._update_preview_video_source("")
-        for task in self._pending_tasks[:]:
-            if not task.done():
-                task.cancel()
-        self._pending_tasks.clear()
+        self._cancel_tracked_tasks()
         super().closeEvent(event)
     
     def _apply_preview_placeholder_style(self):
@@ -949,7 +949,11 @@ class SingleTaskCreationPage(BasePage):
             self._copywriting_mode_combo.currentIndexChanged.connect(self._on_copywriting_mode_changed)
             self._copywriting_category_combo.currentIndexChanged.connect(self._on_copywriting_category_changed)
 
-            QTimer.singleShot(0, self._refresh_copywriting_categories_async)
+            self._schedule_base_page_timer(
+                "copywriting_categories_refresh",
+                0,
+                self._refresh_copywriting_categories_async,
+            )
             self._update_copywriting_ui_visibility()
 
         # 一体化容器
@@ -2456,7 +2460,10 @@ class SingleTaskCreationPage(BasePage):
                 if gen == self._single_auto_apply_generation:
                     self._show_single_auto_shortage_dialog(f"自动匹配异常：{e}")
 
-        self._track_task(asyncio.create_task(_run()))
+        self._create_tracked_task(
+            _run(),
+            name="ui.single_publish.auto_video_match",
+        )
 
     def _selection_to_matcher_account(self) -> Optional[Dict[str, Any]]:
         """将当前「选择账号」弹窗结果转为 MaterialAutoMatcher 使用的账号/组结构。"""
@@ -2713,7 +2720,10 @@ class SingleTaskCreationPage(BasePage):
                         duration=4000,
                     )
 
-        self._track_task(asyncio.create_task(_run()))
+        self._create_tracked_task(
+            _run(),
+            name="ui.single_publish.auto_copywriting",
+        )
 
     async def _apply_copywriting_from_library_async(self, generation: int) -> None:
         if generation != self._copywriting_auto_apply_generation:
@@ -2936,7 +2946,10 @@ class SingleTaskCreationPage(BasePage):
             self.selected_file_path = ",".join(paths)
             self._set_file_info_label_for_paths(paths)
             self._update_publish_button_state()
-            self._track_task(asyncio.create_task(self._load_thumbnail_async(self.selected_file_path)))
+            self._create_tracked_task(
+                self._load_thumbnail_async(self.selected_file_path),
+                name="ui.single_publish.load_thumbnail",
+            )
             return
 
         start_dir = get_last_video_import_directory()
@@ -2985,7 +2998,10 @@ class SingleTaskCreationPage(BasePage):
         self.selected_file_path = marker + "," + ",".join(paths)
         self._set_file_info_label_for_paths(paths)
         self._update_publish_button_state()
-        self._track_task(asyncio.create_task(self._load_thumbnail_async(self.selected_file_path)))
+        self._create_tracked_task(
+            self._load_thumbnail_async(self.selected_file_path),
+            name="ui.single_publish.load_thumbnail",
+        )
 
     async def _load_thumbnail_async(self, file_path: str, *, prefer_image: bool = False):
         """异步加载预览图：仅图文页有 preview_label，按路径读图片字节（视频预览由 VideoWidget 负责）。"""
@@ -3015,7 +3031,11 @@ class SingleTaskCreationPage(BasePage):
 
             img_data = await loop.run_in_executor(None, _read_image_bytes)
             if img_data:
-                QTimer.singleShot(0, lambda: self._update_preview_from_data(img_data))
+                self._schedule_base_page_timer(
+                    "preview_thumbnail_apply",
+                    0,
+                    lambda img_data=img_data: self._update_preview_from_data(img_data),
+                )
         except Exception as e:
             logger.error(f"加载缩略图失败: {e}")
 
@@ -3217,16 +3237,15 @@ class SingleTaskCreationPage(BasePage):
         self.btn_publish.setEnabled(False)
 
         # 编辑 ID 必须在调度协程前固定下来：多协程并发时若先执行的任务清空 self.editing_record_id，后续会误走新建
-        self._track_task(
-            asyncio.create_task(
-                self._dispatch_add_to_list_after_duplicate_guard(
-                    target_accounts,
-                    norm_edit_id,
-                    title,
-                    description,
-                    tags,
-                )
-            )
+        self._create_tracked_task(
+            self._dispatch_add_to_list_after_duplicate_guard(
+                target_accounts,
+                norm_edit_id,
+                title,
+                description,
+                tags,
+            ),
+            name="ui.single_publish.dispatch_add_to_list",
         )
 
     async def _dispatch_add_to_list_after_duplicate_guard(
@@ -3281,18 +3300,17 @@ class SingleTaskCreationPage(BasePage):
 
         for i, account_data in enumerate(accounts_to_use):
             edit_rid = norm_edit_id if i == 0 else None
-            self._track_task(
-                asyncio.create_task(
-                    self._execute_add_to_list(
-                        account=account_data,
-                        file_path=self.selected_file_path,
-                        title=title,
-                        description=description,
-                        tags=tags,
-                        editing_record_id=edit_rid,
-                        task_source=_task_source,
-                    )
-                )
+            self._create_tracked_task(
+                self._execute_add_to_list(
+                    account=account_data,
+                    file_path=self.selected_file_path,
+                    title=title,
+                    description=description,
+                    tags=tags,
+                    editing_record_id=edit_rid,
+                    task_source=_task_source,
+                ),
+                name="ui.single_publish.execute_add_to_list",
             )
 
     async def _execute_add_to_list(
@@ -3602,7 +3620,11 @@ class SingleTaskCreationPage(BasePage):
             self._auto_match_video_switch.blockSignals(False)
             if self._auto_match_video_switch.isChecked():
                 self.btn_add_video.setEnabled(False)
-                QTimer.singleShot(0, self._schedule_single_auto_video_match)
+                self._schedule_base_page_timer(
+                    "single_auto_video_match",
+                    0,
+                    self._schedule_single_auto_video_match,
+                )
             else:
                 self.btn_add_video.setEnabled(True)
         if not self._is_image_mode and getattr(self, "_copywriting_auto_switch", None):
@@ -3611,7 +3633,11 @@ class SingleTaskCreationPage(BasePage):
             self._copywriting_auto_switch.setEnabled(True)
             self._copywriting_auto_switch.blockSignals(False)
             if self._copywriting_auto_switch.isChecked():
-                QTimer.singleShot(0, self._schedule_apply_copywriting_from_library)
+                self._schedule_base_page_timer(
+                    "single_auto_copywriting_match",
+                    0,
+                    self._schedule_apply_copywriting_from_library,
+                )
         self._reset_music_controls_to_default()
         self._update_publish_button_state()
 
@@ -3737,7 +3763,10 @@ class SingleTaskCreationPage(BasePage):
                     extra = f"（共 {len(paths)} 个路径）" if len(paths) > 1 else ""
                     self.file_info_label.setText(f"文件不存在: {hint}{extra}")
             if existing:
-                self._track_task(asyncio.create_task(self._load_thumbnail_async(file_path, prefer_image=True)))
+                self._create_tracked_task(
+                    self._load_thumbnail_async(file_path, prefer_image=True),
+                    name="ui.single_publish.load_thumbnail",
+                )
             self._update_preview_video_source("")
         else:
             self.selected_file_path = file_path
@@ -4007,10 +4036,9 @@ class SingleTaskCreationPage(BasePage):
                         self.account_label.setText(f"{platform_cn} | …")
                     self.selected_account = None
                     self._update_publish_button_state()
-                    self._track_task(
-                        asyncio.create_task(
-                            self._deferred_bind_publish_record_account(record, bind_gen)
-                        )
+                    self._create_tracked_task(
+                        self._deferred_bind_publish_record_account(record, bind_gen),
+                        name="ui.single_publish.bind_record_account",
                     )
                 else:
                     self._apply_account_label_missing_in_library(record)

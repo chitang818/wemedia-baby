@@ -10,6 +10,7 @@ from PySide6.QtCore import QTimer, Qt, Signal
 import logging
 import asyncio
 
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 from src.ui.components.base_dialog import install_escape_reject_shortcut, resolve_top_level_window_parent
 
 try:
@@ -69,6 +70,10 @@ class PlaywrightLoginDialog(QDialog):
         self._login_service = None
         self._check_timer = None
         self._is_closed = False
+        self._login_tasks = set()
+        self._accept_timer = QTimer(self)
+        self._accept_timer.setSingleShot(True)
+        self._accept_timer.timeout.connect(self.accept)
         
         self.setWindowTitle(f"登录 {self.platform_name}")
         self.setMinimumSize(400, 250)
@@ -138,7 +143,17 @@ class PlaywrightLoginDialog(QDialog):
     def _start_login(self):
         """启动登录流程"""
         # 在事件循环中启动异步任务
-        asyncio.create_task(self._start_login_async())
+        self._track_login_task(self._start_login_async(), name="start")
+
+    def _track_login_task(self, coro, *, name: str):
+        task = get_async_task_registry().create_task(
+            coro,
+            name=f"ui.playwright_login.{name}",
+            group="ui",
+        )
+        self._login_tasks.add(task)
+        task.add_done_callback(self._login_tasks.discard)
+        return task
     
     async def _start_login_async(self):
         """异步启动登录"""
@@ -177,7 +192,7 @@ class PlaywrightLoginDialog(QDialog):
         if self._is_closed or not self._login_service:
             return
         
-        asyncio.create_task(self._check_login_status_async())
+        self._track_login_task(self._check_login_status_async(), name="check_status")
     
     async def _check_login_status_async(self):
         """异步检测登录状态"""
@@ -201,7 +216,7 @@ class PlaywrightLoginDialog(QDialog):
     def _on_done_clicked(self):
         """用户点击"我已完成登录"按钮"""
         self.status_label.setText("正在验证登录状态...")
-        asyncio.create_task(self._verify_and_save())
+        self._track_login_task(self._verify_and_save(), name="verify_and_save")
     
     async def _verify_and_save(self):
         """验证登录并保存"""
@@ -241,7 +256,7 @@ class PlaywrightLoginDialog(QDialog):
             self.on_login_success_callback(self.platform_username, {'nickname': nickname})
         
         # 延迟关闭
-        QTimer.singleShot(1000, self.accept)
+        self._accept_timer.start(1000)
     
     def _handle_login_success(self, account_id: str, user_info: dict):
         """LoginService 登录成功回调"""
@@ -263,9 +278,19 @@ class PlaywrightLoginDialog(QDialog):
         if self._check_timer:
             self._check_timer.stop()
             self._check_timer = None
+        self._accept_timer.stop()
+
+        for task in list(self._login_tasks):
+            if not task.done():
+                task.cancel()
+        self._login_tasks.clear()
         
         if self._login_service:
-            asyncio.create_task(self._login_service.close())
+            get_async_task_registry().create_task(
+                self._login_service.close(),
+                name="ui.playwright_login.close_service",
+                group="ui",
+            )
             self._login_service = None
     
     def keyPressEvent(self, event):

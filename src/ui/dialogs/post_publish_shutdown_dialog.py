@@ -53,6 +53,12 @@ class PostPublishShutdownDialog(AppMessageBoxBase):
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_tick)
+        self._arm_timer = QTimer(self)
+        self._arm_timer.setSingleShot(True)
+        self._arm_timer.timeout.connect(self._arm_countdown_and_shutdown)
+        self._accept_timer = QTimer(self)
+        self._accept_timer.setSingleShot(True)
+        self._accept_timer.timeout.connect(self.accept)
 
         if hasattr(self, "yesButton"):
             self.yesButton.hide()
@@ -78,7 +84,7 @@ class PostPublishShutdownDialog(AppMessageBoxBase):
         if event.spontaneous() or self._arm_started:
             return
         self._arm_started = True
-        QTimer.singleShot(0, self._arm_countdown_and_shutdown)
+        self._arm_timer.start(0)
 
     def _arm_countdown_and_shutdown(self) -> None:
         if sys.platform != "win32":
@@ -135,7 +141,7 @@ class PostPublishShutdownDialog(AppMessageBoxBase):
         if self._remaining <= 0:
             self._timer.stop()
             self._countdown_label.setText("已到达预定关机时间，系统将关闭。")
-            QTimer.singleShot(800, self.accept)
+            self._accept_timer.start(800)
             return
         self._refresh_countdown_text()
 
@@ -154,6 +160,9 @@ class PostPublishShutdownDialog(AppMessageBoxBase):
             logger.warning("取消关机 shutdown /a 失败: %s", e)
 
     def done(self, r: int) -> None:
+        self._arm_timer.stop()
+        self._accept_timer.stop()
+        self._timer.stop()
         if r == QDialog.DialogCode.Rejected:
             self._abort_system_shutdown()
         super().done(r)

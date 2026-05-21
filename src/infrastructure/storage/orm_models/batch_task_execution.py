@@ -25,7 +25,7 @@ class BatchTaskExecution(Model):
         completed_at: 完成时间（可选）
     """
 
-    id = fields.IntField(pk=True)
+    id = fields.IntField(primary_key=True)
     task = fields.ForeignKeyField(
         "models.BatchTask", related_name="executions", on_delete=fields.CASCADE
     )

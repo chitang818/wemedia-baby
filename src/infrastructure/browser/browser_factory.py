@@ -2,6 +2,7 @@
 
 import logging
 from typing import Optional, Dict, Any
+from src.infrastructure.common.async_task_registry import get_async_task_registry
 from src.infrastructure.common.config.config_center import ConfigCenter, get_registered_config_center
 from .browser_manager import UndetectedBrowserManager
 from .process_supervisor import ProcessSupervisor
@@ -43,7 +44,11 @@ def _ensure_chrome_path_configured() -> None:
 
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(_upd())
+            get_async_task_registry().create_task(
+                _upd(),
+                name="browser_factory.persist_chrome_path",
+                group="browser",
+            )
             logger.info("已自动写入 chrome_executable_path 到 app_config: %s", path)
         except RuntimeError:
             # 同步环境（无运行中的 event loop）下不再强行 asyncio.run，避免在 GUI/嵌套循环场景引发问题
@@ -74,7 +79,11 @@ class BrowserFactory:
                 # 若当前已有事件循环在运行（例如 qasync 主循环），则在其中调度预热任务
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    loop.create_task(UndetectedBrowserManager.ensure_warmup())
+                    get_async_task_registry().create_task(
+                        UndetectedBrowserManager.ensure_warmup(),
+                        name="browser_factory.warmup",
+                        group="browser",
+                    )
             except Exception:
                 # 预热失败不影响正常功能，静默忽略
                 logger.debug("BrowserFactory 预热浏览器环境失败（忽略，不影响正常使用）", exc_info=True)

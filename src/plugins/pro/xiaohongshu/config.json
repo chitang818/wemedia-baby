@@ -1,0 +1,14 @@
+{
+    "platform_id": "xiaohongshu",
+    "platform_name": "小红书",
+    "login_url": "https://creator.xiaohongshu.com/login",
+    "publish_url": "https://creator.xiaohongshu.com/publish/publish",
+    "cookie_domain": ".xiaohongshu.com",
+    "cookie_keys": ["web_session"],
+    "content_types": ["image", "video"],
+    "limits": {
+        "title_max_length": 20,
+        "description_max_length": 1000,
+        "max_topics": 1
+    }
+}

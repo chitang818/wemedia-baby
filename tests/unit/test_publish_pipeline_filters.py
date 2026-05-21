@@ -15,6 +15,13 @@ from src.services.publish.pipeline.filters.permission_check_filter_async import 
     _evict_oldest_if_full,
     PermissionCheckFilterAsync,
 )
+from src.infrastructure.common.pipeline.base_filter import BaseFilter, PublishContext, PublishRequest
+from src.infrastructure.common.pipeline.publish_pipeline import PublishPipeline
+from src.infrastructure.common.pipeline.filters.execution_filter import PublishExecutionFilter
+from src.services.publish.pipeline.pipeline_factory_async import PipelineFactoryAsync
+from src.services.publish.pipeline.filters.account_load_filter_async import AccountLoadFilterAsync
+from src.services.publish.pipeline.filters.media_validate_filter_async import MediaValidateFilterAsync
+from src.services.publish.pipeline.filters.record_save_filter_async import RecordSaveFilterAsync
 
 
 @pytest.fixture(autouse=True)
@@ -77,3 +84,89 @@ class TestPermissionCheckFilterAsync:
         with patch.dict("sys.modules", {"config.feature_flags": MagicMock(FeatureFlags=mock_ff)}):
             result = await f.process(ctx)
         assert result is True
+
+
+class _FailingExecutionFilter(BaseFilter):
+    allow_failure_finalizers = True
+
+    async def process(self, context: PublishContext) -> bool:
+        self.set_error("publish failed")
+        return False
+
+
+class _FailingPreconditionFilter(BaseFilter):
+    async def process(self, context: PublishContext) -> bool:
+        self.set_error("precondition failed")
+        return False
+
+
+class _RecordingFinalizerFilter(BaseFilter):
+    run_after_failure = True
+
+    def __init__(self):
+        super().__init__()
+        self.called = False
+        self.error_seen = None
+
+    async def process(self, context: PublishContext) -> bool:
+        self.called = True
+        self.error_seen = context.error_message
+        return True
+
+
+def _request() -> PublishRequest:
+    return PublishRequest(
+        user_id=1,
+        account_name="account",
+        platform="douyin",
+        file_path="video.mp4",
+    )
+
+
+class TestPublishPipelineFailureFinalizers:
+    @pytest.mark.asyncio
+    async def test_publish_failure_runs_record_finalizer(self):
+        pipeline = PublishPipeline(max_concurrent=1)
+        finalizer = _RecordingFinalizerFilter()
+        pipeline.add_filter(_FailingExecutionFilter())
+        pipeline.add_filter(finalizer)
+
+        result = (await pipeline.execute(_request()))[0]
+
+        assert result.success is False
+        assert result.error_message == "publish failed"
+        assert finalizer.called is True
+        assert finalizer.error_seen == "publish failed"
+
+    @pytest.mark.asyncio
+    async def test_precondition_failure_does_not_run_record_finalizer(self):
+        pipeline = PublishPipeline(max_concurrent=1)
+        finalizer = _RecordingFinalizerFilter()
+        pipeline.add_filter(_FailingPreconditionFilter())
+        pipeline.add_filter(finalizer)
+
+        result = (await pipeline.execute(_request()))[0]
+
+        assert result.success is False
+        assert result.error_message == "precondition failed"
+        assert finalizer.called is False
+
+
+class TestPipelineFactoryAsync:
+    @pytest.mark.asyncio
+    async def test_factory_matches_main_pipeline_filter_order_and_limit(self):
+        pipeline = await PipelineFactoryAsync.create_pipeline(
+            user_id=1,
+            account_manager=MagicMock(),
+            permission_controller=MagicMock(),
+            media_validator=MagicMock(),
+        )
+
+        assert getattr(pipeline.semaphore, "_value", None) == 3
+        assert [type(f) for f in pipeline.filters] == [
+            PermissionCheckFilterAsync,
+            MediaValidateFilterAsync,
+            AccountLoadFilterAsync,
+            PublishExecutionFilter,
+            RecordSaveFilterAsync,
+        ]

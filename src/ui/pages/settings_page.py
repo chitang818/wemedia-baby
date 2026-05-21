@@ -1344,7 +1344,11 @@ class SettingsPage(BasePage):
                 current_version=ver,
                 error="检查更新失败，请稍后重试",
             )
-            QTimer.singleShot(0, lambda r=err_result: self._apply_update_result(r))
+            self._schedule_base_page_timer(
+                "settings_apply_update_result",
+                0,
+                lambda r=err_result: self._apply_update_result(r),
+            )
             return
         finally:
             if info_bar is not None:
@@ -1355,7 +1359,11 @@ class SettingsPage(BasePage):
             if btn is not None:
                 btn.setEnabled(True)
         # 弹窗须在主线程同步展示，不可在协程内直接 exec（会与 qasync 冲突导致无响应）
-        QTimer.singleShot(0, lambda r=result: self._apply_update_result(r))
+        self._schedule_base_page_timer(
+            "settings_apply_update_result",
+            0,
+            lambda r=result: self._apply_update_result(r),
+        )
 
     def _apply_update_result(self, result):
         """根据更新检查结果弹窗或提示；有新版本则强制更新（弹窗关闭后退出）"""
