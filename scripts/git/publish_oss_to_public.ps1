@@ -71,12 +71,6 @@ if (Test-Path $WorktreePath) {
 Run-GitIn $RepoRoot @("worktree", "add", "-B", "oss-release", $WorktreePath, "main") | Out-Null
 
 try {
-    foreach ($rel in $OssExcludePaths) {
-        if (Test-Path (Join-Path $WorktreePath $rel)) {
-            Run-GitIn $WorktreePath @("rm", "-r", "--cached", "--ignore-unmatch", $rel) | Out-Null
-        }
-    }
-
     $gitignorePath = Join-Path $WorktreePath ".gitignore"
     $gitignore = Get-Content $gitignorePath -Raw -Encoding UTF8
     if ($gitignore -notmatch "src/proprietary/") {
@@ -84,9 +78,15 @@ try {
         Run-GitIn $WorktreePath @("add", ".gitignore") | Out-Null
     }
 
+    foreach ($rel in $OssExcludePaths) {
+        if (Test-Path (Join-Path $WorktreePath $rel)) {
+            Run-GitIn $WorktreePath @("rm", "-r", "--cached", "--ignore-unmatch", $rel) | Out-Null
+        }
+    }
+
     $pending = (Run-GitIn $WorktreePath @("status", "--porcelain") | Out-String).Trim()
     if ($pending) {
-        Run-GitIn $WorktreePath @("add", "-A") | Out-Null
+        # 勿用 git add -A：会把已从索引移除的闭源文件再次加入
         Push-Location $WorktreePath
         try {
             & git commit -m "chore: OSS public sync snapshot" 2>&1 | Out-Null
