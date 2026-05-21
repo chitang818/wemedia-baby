@@ -67,6 +67,9 @@ dist_nuitka/
 .nuitka-cache/
 tools/ffmpeg/
 
+# Git OSS 同步临时 worktree（scripts/git/publish_oss_to_public.ps1）
+.git/oss-public-sync/
+
 # Gemini & MCP Agent
 .gemini/
 .agent/

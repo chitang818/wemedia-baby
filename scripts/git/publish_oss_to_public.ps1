@@ -6,6 +6,7 @@ $ErrorActionPreference = "Continue"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Set-Location $RepoRoot
 
+$WorktreePath = Join-Path $RepoRoot ".git/oss-public-sync"
 $OssExcludePaths = @(
     "docs",
     "src/proprietary",
@@ -31,19 +32,31 @@ function Fail([string]$Message) {
 }
 
 function Invoke-Git {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
-    $output = & git @Args 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        $text = ($output | Out-String).Trim()
-        Fail "git $($Args -join ' ') failed: $text"
+    param(
+        [string]$Cwd = $RepoRoot,
+        [Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs
+    )
+    Push-Location $Cwd
+    try {
+        $output = & git @GitArgs 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $text = ($output | Out-String).Trim()
+            Fail "git $($GitArgs -join ' ') failed: $text"
+        }
+        return $output
+    } finally {
+        Pop-Location
     }
-    return $output
 }
 
-# 1) clean working tree
+# 1) clean working tree on main
+$currentBranch = (Invoke-Git branch --show-current | Out-String).Trim()
+if ($currentBranch -ne "main") {
+    Invoke-Git checkout main | Out-Null
+}
 $status = (Invoke-Git status --porcelain | Out-String).Trim()
 if ($status) {
-    Fail "Uncommitted changes detected. Commit or stash before running this script."
+    Fail "Uncommitted changes on main. Commit or stash before running this script."
 }
 
 # 2) validate public remote
@@ -55,39 +68,42 @@ if ($publicUrl -notmatch "wemedia-baby") {
     Fail "Unexpected public remote URL: $publicUrl"
 }
 
-$currentBranch = (Invoke-Git branch --show-current | Out-String).Trim()
-if ($currentBranch -ne "main") {
-    Write-Warn "Not on main (current: $currentBranch). oss-release will be built from main."
+# 3) prepare isolated worktree (does not touch main working tree)
+if (Test-Path $WorktreePath) {
+    Invoke-Git worktree remove --force $WorktreePath | Out-Null
 }
+Invoke-Git worktree add -B oss-release $WorktreePath main | Out-Null
 
-Write-Info "Updating oss-release from main..."
-Invoke-Git checkout -B oss-release main | Out-Null
-
-foreach ($rel in $OssExcludePaths) {
-    $full = Join-Path $RepoRoot $rel
-    if (Test-Path $full) {
-        & git rm -r --cached --ignore-unmatch $rel 2>&1 | Out-Null
+try {
+    foreach ($rel in $OssExcludePaths) {
+        $full = Join-Path $WorktreePath $rel
+        if (Test-Path $full) {
+            Push-Location $WorktreePath
+            & git rm -r --cached --ignore-unmatch $rel 2>&1 | Out-Null
+            Pop-Location
+        }
     }
+
+    $gitignorePath = Join-Path $WorktreePath ".gitignore"
+    $gitignore = Get-Content $gitignorePath -Raw -Encoding UTF8
+    if ($gitignore -notmatch "src/proprietary/") {
+        Add-Content -Path $gitignorePath -Value $OssGitignoreBlock -Encoding UTF8
+        Invoke-Git -Cwd $WorktreePath add .gitignore | Out-Null
+    }
+
+    $pending = (Invoke-Git -Cwd $WorktreePath status --porcelain | Out-String).Trim()
+    if ($pending) {
+        Invoke-Git -Cwd $WorktreePath add -A | Out-Null
+        Invoke-Git -Cwd $WorktreePath commit -m "chore: OSS public sync snapshot" | Out-Null
+        Write-Ok "Created oss-release commit in worktree."
+    } else {
+        Write-Warn "No changes on oss-release; skip commit."
+    }
+
+    Write-Info "Pushing oss-release to public/main..."
+    Invoke-Git -Cwd $WorktreePath push public oss-release:main | Out-Null
+} finally {
+    Invoke-Git worktree remove --force $WorktreePath | Out-Null
 }
 
-$gitignorePath = Join-Path $RepoRoot ".gitignore"
-$gitignore = Get-Content $gitignorePath -Raw -Encoding UTF8
-if ($gitignore -notmatch "src/proprietary/") {
-    Add-Content -Path $gitignorePath -Value $OssGitignoreBlock -Encoding UTF8
-    Invoke-Git add .gitignore | Out-Null
-}
-
-$pending = (Invoke-Git status --porcelain | Out-String).Trim()
-if ($pending) {
-    Invoke-Git add -A | Out-Null
-    Invoke-Git commit -m "chore: OSS public sync snapshot" | Out-Null
-    Write-Ok "Created oss-release commit."
-} else {
-    Write-Warn "No changes on oss-release; skip commit."
-}
-
-Write-Info "Pushing oss-release to public/main..."
-Invoke-Git push public oss-release:main | Out-Null
-
-Invoke-Git checkout main | Out-Null
-Write-Ok "Back on main. Public sync done: $publicUrl"
+Write-Ok "Public sync done (main branch untouched): $publicUrl"
