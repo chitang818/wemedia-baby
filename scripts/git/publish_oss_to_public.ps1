@@ -87,8 +87,19 @@ try {
     $pending = (Run-GitIn $WorktreePath @("status", "--porcelain") | Out-String).Trim()
     if ($pending) {
         Run-GitIn $WorktreePath @("add", "-A") | Out-Null
-        Run-GitIn $WorktreePath @("commit", "-m", "chore: OSS public sync snapshot") | Out-Null
-        Write-Ok "Created oss-release commit in worktree."
+        Push-Location $WorktreePath
+        try {
+            & git commit -m "chore: OSS public sync snapshot" 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                $porcelain = (git status --porcelain | Out-String).Trim()
+                if ($porcelain) { Fail "git commit failed on oss-release." }
+                Write-Warn "No commit created (already up to date)."
+            } else {
+                Write-Ok "Created oss-release commit in worktree."
+            }
+        } finally {
+            Pop-Location
+        }
     } else {
         Write-Warn "No changes on oss-release; skip commit."
     }
