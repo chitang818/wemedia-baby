@@ -32,12 +32,13 @@ function Fail([string]$Message) {
 function Run-GitIn([string]$Dir, [string[]]$GitArgs) {
     Push-Location $Dir
     try {
+        # git 常把正常输出写到 stderr，不能据此判失败
         $output = & git @GitArgs 2>&1
         if ($LASTEXITCODE -ne 0) {
             $text = ($output | Out-String).Trim()
-            Fail "git $($GitArgs -join ' ') failed: $text"
+            Fail "git $($GitArgs -join ' ') failed (exit=$LASTEXITCODE): $text"
         }
-        return $output
+        return ,($output | Where-Object { $_ -is [string] })
     } finally {
         Pop-Location
     }
@@ -104,8 +105,8 @@ try {
         Write-Warn "No changes on oss-release; skip commit."
     }
 
-    Write-Info "Pushing oss-release to public/main..."
-    Run-GitIn $WorktreePath @("push", "public", "oss-release:main") | Out-Null
+    Write-Info "Pushing oss-release to public/main (force-with-lease)..."
+    Run-GitIn $WorktreePath @("push", "--force-with-lease", "public", "oss-release:main") | Out-Null
 } finally {
     Run-GitIn $RepoRoot @("worktree", "remove", "--force", $WorktreePath) | Out-Null
 }
