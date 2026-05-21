@@ -94,7 +94,7 @@ if ($status) {
 
 $ahead = Invoke-GitCommand -GitArguments @("rev-list", "--count", "origin/main..main")
 if ($ahead.Code -eq 0 -and [int]$ahead.Text -gt 0) {
-    Write-Warn "main is $ahead.Text commit(s) ahead of origin/main. Consider: git push origin main"
+    Write-Warn "main is $($ahead.Text) commit(s) ahead of origin/main. Consider: git push origin main"
 }
 
 $publicRemote = Invoke-GitCommand -GitArguments @("remote", "get-url", "public")
