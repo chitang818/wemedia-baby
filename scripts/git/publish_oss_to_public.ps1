@@ -39,7 +39,7 @@ if ($status) {
 
 # 2) 校验 public 远程，防止推到 Pro 私有仓
 $publicUrl = (git remote get-url public 2>$null)
-if (-not $publicUrl) { Fail "未找到远程 public，请先配置：git remote add public <开源仓 URL>" }
+if (-not $publicUrl) { Fail "未找到远程 public，请先执行：git remote add public 开源仓地址" }
 if ($publicUrl -match "wemedia-baby-Pro") {
     Fail "public 远程指向了私有仓（wemedia-baby-Pro），请修正后再运行。"
 }
