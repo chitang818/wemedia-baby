@@ -1,8 +1,7 @@
-# 将开源快照同步到公开仓 wemedia-baby（不含闭源目录）
-# 用法：在项目根目录执行 .\scripts\git\publish_oss_to_public.ps1
+# Sync OSS snapshot to public repo wemedia-baby (no proprietary paths)
+# Run from repo root: .\scripts\git\publish_oss_to_public.ps1
 
-$ErrorActionPreference = "Stop"
-Set-StrictMode -Version Latest
+$ErrorActionPreference = "Continue"
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Set-Location $RepoRoot
@@ -16,7 +15,7 @@ $OssExcludePaths = @(
 
 $OssGitignoreBlock = @"
 
-# --- OSS 公开仓同步：以下路径仅存在于 oss-release，main（私有主仓）可跟踪 ---
+# --- OSS public sync: excluded on oss-release only ---
 docs/
 src/proprietary/
 src/plugins/pro/
@@ -31,61 +30,64 @@ function Fail([string]$Message) {
     exit 1
 }
 
-# 1) 工作区须干净
-$status = git status --porcelain
-if ($status) {
-    Fail "工作区有未提交改动，请先 commit 或 stash 后再运行本脚本。"
+function Invoke-Git {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
+    $output = & git @Args 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $text = ($output | Out-String).Trim()
+        Fail "git $($Args -join ' ') failed: $text"
+    }
+    return $output
 }
 
-# 2) 校验 public 远程，防止推到 Pro 私有仓
-$publicUrl = (& git remote get-url public 2>&1 | Out-String).Trim()
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($publicUrl)) {
-    Fail "未找到远程 public，请先执行：git remote add public 开源仓地址"
+# 1) clean working tree
+$status = (Invoke-Git status --porcelain | Out-String).Trim()
+if ($status) {
+    Fail "Uncommitted changes detected. Commit or stash before running this script."
 }
+
+# 2) validate public remote
+$publicUrl = (Invoke-Git remote get-url public | Out-String).Trim()
 if ($publicUrl -match "wemedia-baby-Pro") {
-    Fail "public 远程指向了私有仓（wemedia-baby-Pro），请修正后再运行。"
+    Fail "Remote 'public' points to private repo (wemedia-baby-Pro). Fix remotes first."
 }
 if ($publicUrl -notmatch "wemedia-baby") {
-    Fail "public 远程 URL 异常：$publicUrl"
+    Fail "Unexpected public remote URL: $publicUrl"
 }
 
-$currentBranch = git branch --show-current
+$currentBranch = (Invoke-Git branch --show-current | Out-String).Trim()
 if ($currentBranch -ne "main") {
-    Write-Warn "当前不在 main 分支（当前：$currentBranch），将从 main 生成 oss-release。"
+    Write-Warn "Not on main (current: $currentBranch). oss-release will be built from main."
 }
 
-Write-Info "基于 main 更新 oss-release 分支..."
-git checkout -B oss-release main
+Write-Info "Updating oss-release from main..."
+Invoke-Git checkout -B oss-release main | Out-Null
 
-# 3) 从索引移除闭源路径（保留本地工作区文件）
 foreach ($rel in $OssExcludePaths) {
     $full = Join-Path $RepoRoot $rel
     if (Test-Path $full) {
-        git rm -r --cached --ignore-unmatch $rel 2>$null | Out-Null
+        & git rm -r --cached --ignore-unmatch $rel 2>&1 | Out-Null
     }
 }
 
-# 4) 在 oss-release 恢复开源版 .gitignore 规则
 $gitignorePath = Join-Path $RepoRoot ".gitignore"
 $gitignore = Get-Content $gitignorePath -Raw -Encoding UTF8
 if ($gitignore -notmatch "src/proprietary/") {
     Add-Content -Path $gitignorePath -Value $OssGitignoreBlock -Encoding UTF8
-    git add .gitignore
+    Invoke-Git add .gitignore | Out-Null
 }
 
-# 5) 提交快照（无变更则跳过）
-$pending = git status --porcelain
+$pending = (Invoke-Git status --porcelain | Out-String).Trim()
 if ($pending) {
-    git add -A
-    git commit -m "chore: OSS 公开仓同步快照"
-    Write-Ok "已创建 oss-release 提交。"
+    Invoke-Git add -A | Out-Null
+    Invoke-Git commit -m "chore: OSS public sync snapshot" | Out-Null
+    Write-Ok "Created oss-release commit."
 } else {
-    Write-Warn "oss-release 与上次快照无差异，跳过提交。"
+    Write-Warn "No changes on oss-release; skip commit."
 }
 
-# 6) 推送到公开仓
-Write-Info "推送到 public（oss-release -> main）..."
-git push public oss-release:main
+Write-Info "Pushing oss-release to public/main..."
+Invoke-Git push public oss-release:main | Out-Null
 
-git checkout main
-Write-Ok "已切回 main。公开仓同步完成：$publicUrl"
+Invoke-Git checkout main | Out-Null
+Write-Ok "Back on main. Public sync done: $publicUrl"
