@@ -210,6 +210,12 @@ python -m pytest tests/unit
 - 浏览器自动化相关代码需要兼顾登录态持久化、Cookie 加密/保存、反风控延迟和失败诊断。
 - 不要提交本地生成物、缓存、测试报告、打包产物或用户数据。
 
+## Git 双仓库（私有主仓）
+
+- **主远程 `origin`**：`wemedia-baby-Pro`（私有），`main` 含开源 + 闭源；日常 `git push origin main`。
+- **公开远程 `public`**：`wemedia-baby`（开源）；仅通过 `scripts/git/publish_oss_to_public.ps1` 同步，**禁止** `git push public main`。
+- 详细流程见 [docs/internal/GIT_DUAL_REPO.md](docs/internal/GIT_DUAL_REPO.md)。
+
 ## 当前工作区状态提示
 
-本次整理时，工作区已有大量未提交改动和新增文件，`AGENTS.md` 原本为空文件。后续开发时应先查看 `git status --short`，避免误改或回滚他人的工作。
+后续开发前先执行 `git status --short`，避免误改或回滚他人工作。
