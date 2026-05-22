@@ -24,10 +24,9 @@ logger = logging.getLogger(__name__)
 
 
 class WorkspaceLoadOrchestrator:
-    """按 fast / slow 分阶段加载；图表独立 loading → reveal 动画。"""
+    """按 fast / slow 分阶段加载；统计卡与媒体库并行；图表独立 loading → reveal。"""
 
     STARTUP_DELAY_MS = 50
-    MEDIA_IDLE_DELAY_MS = 1000
     DEBOUNCE_MS = 300
 
     def __init__(self, page: "WorkspacePage") -> None:
@@ -46,7 +45,7 @@ class WorkspaceLoadOrchestrator:
         if cached is None:
             return False
         has_charts = bool(cached.publish)
-        self._page._apply_snapshot(cached, charts=False)
+        self._page._apply_snapshot(cached, charts=False, animate_entry=False)
         if has_charts and cached.account:
             self._page.reveal_platform_chart(cached.account, animate_entry=False)
         if has_charts and cached.publish:
@@ -102,8 +101,8 @@ class WorkspaceLoadOrchestrator:
         if self._pipeline_task and not self._pipeline_task.done():
             self._pipeline_task.cancel()
         self._page._cancel_chart_pending_reveals()
+        self._page._cancel_stats_pending_reveals()
         self._page._cancel_base_page_timer("workspace_orchestrator_start")
-        self._page._cancel_base_page_timer("workspace_media_idle")
         self._page._cancel_base_page_timer("workspace_trend_reveal")
         if self._debounce_timer is not None:
             try:
@@ -113,23 +112,48 @@ class WorkspaceLoadOrchestrator:
                 pass
             self._debounce_timer = None
 
+    async def _refresh_media_stats(self) -> None:
+        """与仪表盘查询并行刷新；UI 由 statsUpdated 信号更新。"""
+        try:
+            await get_media_library_stats_service().refresh()
+        except Exception as e:
+            logger.debug("媒体库统计刷新失败（可忽略）: %s", e)
+
     async def _run_pipeline(self, generation: int, *, include_media: bool) -> None:
         svc = self._page.dashboard_service
         use_entry_animation = not getattr(self._page, "_chart_first_reveal_done", False)
+        use_stats_animation = not getattr(self._page, "_stats_first_reveal_done", False)
+
+        had_media_cache = self._apply_media_cache_first()
 
         try:
             if use_entry_animation:
                 self._page.begin_charts_loading()
 
-            fast_coro = svc.load_fast()
-            publish_coro = svc.get_publish_statistics()
-            fast_result, publish_stats = await asyncio.gather(fast_coro, publish_coro)
+            need_media_loading = include_media and not had_media_cache
+            if use_stats_animation:
+                self._page.begin_stats_loading(top=True, media=need_media_loading)
+            elif need_media_loading:
+                self._page.begin_stats_loading(top=False, media=True)
+
+            coros = [svc.load_fast(), svc.get_publish_statistics()]
+            if include_media:
+                coros.append(self._refresh_media_stats())
+
+            gathered = await asyncio.gather(*coros)
             if generation != self._generation:
                 return
 
+            fast_result = gathered[0]
+            publish_stats = gathered[1]
+
             fast, accounts = fast_result
             self._accounts_cache = accounts
-            self._page._apply_snapshot(fast, charts=False)
+            self._page._apply_snapshot(
+                fast,
+                charts=False,
+                animate_entry=use_stats_animation,
+            )
 
             if fast.account:
                 self._page.reveal_platform_chart(
@@ -152,7 +176,10 @@ class WorkspaceLoadOrchestrator:
             svc.cache_snapshot(full)
 
             if publish_stats:
-                self._page._apply_publish_stats(publish_stats)
+                self._page._apply_publish_stats(
+                    publish_stats,
+                    animate_entry=use_stats_animation,
+                )
 
                 def _reveal_trend() -> None:
                     if generation != self._generation:
@@ -177,31 +204,16 @@ class WorkspaceLoadOrchestrator:
                 self._page.recent_activity.set_account_reminders(reminders)
 
             self._page._chart_first_reveal_done = True
+            self._page._stats_first_reveal_done = True
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.error("工作台数据管道失败: %s", e, exc_info=True)
             self._page._on_data_load_error(str(e))
-        finally:
-            if include_media and generation == self._generation:
-                self._page._schedule_base_page_timer(
-                    "workspace_media_idle",
-                    self.MEDIA_IDLE_DELAY_MS,
-                    self._schedule_media_refresh,
-                )
 
-    def _schedule_media_refresh(self) -> None:
-        self._apply_media_cache_first()
-        try:
-            get_async_task_registry().create_task(
-                get_media_library_stats_service().refresh(),
-                name="ui.workspace.media_stats_refresh",
-                group="ui",
-            )
-        except Exception:
-            return
-
-    def _apply_media_cache_first(self) -> None:
+    def _apply_media_cache_first(self) -> bool:
         stats = get_media_library_stats_cache().get()
         if stats is not None:
-            self._page._on_media_stats_updated(stats)
+            self._page._on_media_stats_updated(stats, animate_entry=False)
+            return True
+        return False

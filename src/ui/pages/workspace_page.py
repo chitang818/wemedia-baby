@@ -1,4 +1,4 @@
-﻿"""
+"""
 工作台页面
 文件路径：src/ui/pages/workspace_page.py
 功能：渐进式仪表盘——静态壳立即可见，数据分阶段加载
@@ -61,6 +61,7 @@ class WorkspacePage(BasePage):
         self._orchestrator: Optional[WorkspaceLoadOrchestrator] = None
         self._charts_created = False
         self._chart_first_reveal_done = False
+        self._stats_first_reveal_done = False
 
         self.refreshRequested.connect(self._on_refresh_requested)
         self._init_services()
@@ -71,6 +72,7 @@ class WorkspacePage(BasePage):
         self._schedule_base_page_timer("workspace_charts_prewarm", 0, self._prewarm_chart_widgets)
         if cached_applied:
             self._chart_first_reveal_done = True
+            self._stats_first_reveal_done = True
 
         self._stats_cache = get_media_library_stats_cache()
         try:
@@ -146,6 +148,7 @@ class WorkspacePage(BasePage):
         if hasattr(self, "refresh_timer") and self.refresh_timer:
             self.refresh_timer.stop()
         self._cancel_chart_pending_reveals()
+        self._cancel_stats_pending_reveals()
         if self._orchestrator:
             self._orchestrator.cancel_pending()
         super().hideEvent(event)
@@ -159,19 +162,48 @@ class WorkspacePage(BasePage):
             except Exception:
                 pass
 
-    def _set_stats_loading(self) -> None:
-        loading = "加载中…"
+    def begin_stats_loading(self, *, top: bool = True, media: bool = True) -> None:
+        """数据管道开始：顶部四卡与媒体库卡统一进入骨架屏加载态。"""
+        cards = []
+        if top:
+            cards.extend(
+                (
+                    getattr(self, "account_card", None),
+                    getattr(self, "publish_card", None),
+                    getattr(self, "task_card", None),
+                    getattr(self, "success_rate_card", None),
+                )
+            )
+        if media:
+            cards.extend(
+                (
+                    getattr(self, "_video_library_card", None),
+                    getattr(self, "_image_library_card", None),
+                )
+            )
+        for card in cards:
+            if card is None:
+                continue
+            try:
+                card.show_value_loading()
+            except Exception:
+                pass
+
+    def _cancel_stats_pending_reveals(self) -> None:
         for card in (
             getattr(self, "account_card", None),
             getattr(self, "publish_card", None),
             getattr(self, "task_card", None),
             getattr(self, "success_rate_card", None),
+            getattr(self, "_video_library_card", None),
+            getattr(self, "_image_library_card", None),
         ):
-            if card is not None:
-                try:
-                    card.set_description(loading)
-                except Exception:
-                    pass
+            if card is None:
+                continue
+            try:
+                card.cancel_pending_reveal()
+            except Exception:
+                pass
 
     def _setup_content(self) -> None:
         from ..components.statistics_card import StatisticsCard
@@ -226,10 +258,10 @@ class WorkspacePage(BasePage):
         self._stats_grid.setHorizontalSpacing(12)
         self._stats_grid.setVerticalSpacing(12)
 
-        self.account_card = StatisticsCard("账号总数", "0", "加载中…", FluentIcon.PEOPLE, self)
-        self.publish_card = StatisticsCard("今日发布", "0", "加载中…", FluentIcon.SEND, self)
-        self.task_card = StatisticsCard("待执行任务", "0", "加载中…", FluentIcon.FOLDER, self)
-        self.success_rate_card = StatisticsCard("发布成功率", "0%", "加载中…", FluentIcon.ACCEPT, self)
+        self.account_card = StatisticsCard("账号总数", "—", "—", FluentIcon.PEOPLE, self)
+        self.publish_card = StatisticsCard("今日发布", "—", "—", FluentIcon.SEND, self)
+        self.task_card = StatisticsCard("待执行任务", "—", "—", FluentIcon.FOLDER, self)
+        self.success_rate_card = StatisticsCard("发布成功率", "—", "—", FluentIcon.ACCEPT, self)
 
         self._stats_cards = [
             self.account_card,
@@ -371,20 +403,26 @@ class WorkspacePage(BasePage):
         if self._orchestrator:
             self._orchestrator.request_refresh()
 
-    def _apply_snapshot(self, snapshot: DashboardSnapshot, *, charts: bool = True) -> None:
+    def _apply_snapshot(
+        self,
+        snapshot: DashboardSnapshot,
+        *,
+        charts: bool = True,
+        animate_entry: bool = False,
+    ) -> None:
         try:
             data = snapshot.to_legacy_dict()
             account_stats = data.get("account", {})
             if account_stats:
-                self._apply_account_stats(account_stats)
+                self._apply_account_stats(account_stats, animate_entry=animate_entry)
 
             task_stats = data.get("task", {})
             if task_stats:
-                self._apply_task_stats(task_stats)
+                self._apply_task_stats(task_stats, animate_entry=animate_entry)
 
             publish_stats = data.get("publish", {})
             if publish_stats:
-                self._apply_publish_stats(publish_stats)
+                self._apply_publish_stats(publish_stats, animate_entry=animate_entry)
 
             reminders = data.get("account_publish_reminders", [])
             if reminders and hasattr(self, "recent_activity"):
@@ -472,67 +510,70 @@ class WorkspacePage(BasePage):
         self._charts_layout.addWidget(self.trend_chart, 1)
         self._charts_created = True
 
-    def _apply_account_stats(self, account_stats: Dict[str, Any]) -> None:
-        if hasattr(self, "account_card"):
-            self.account_card.set_value(str(account_stats.get("total", 0)))
-            self.account_card.set_description(
-                f"{account_stats.get('online', 0)} 在线 | {account_stats.get('offline', 0)} 离线"
-            )
+    def _apply_account_stats(self, account_stats: Dict[str, Any], *, animate_entry: bool = False) -> None:
+        if not hasattr(self, "account_card"):
+            return
+        value = str(account_stats.get("total", 0))
+        desc = f"{account_stats.get('online', 0)} 在线 | {account_stats.get('offline', 0)} 离线"
+        self.account_card.reveal(value, desc, animate=animate_entry)
 
-    def _apply_task_stats(self, task_stats: Dict[str, Any]) -> None:
+    def _apply_task_stats(self, task_stats: Dict[str, Any], *, animate_entry: bool = False) -> None:
         if not hasattr(self, "task_card"):
             return
         batch_total = task_stats.get("total", 0)
         total_pending = task_stats.get("total_pending", 0)
         completion_rate = task_stats.get("completion_rate", 0)
         if batch_total > 0:
-            self.task_card.set_value(str(total_pending))
-            self.task_card.set_description(
-                f"批量任务: {batch_total} | 完成: {completion_rate:.0f}%"
-            )
+            value = str(total_pending)
+            desc = f"批量任务: {batch_total} | 完成: {completion_rate:.0f}%"
         else:
             pub_tab = task_stats.get("publish_tab_total", task_stats.get("total_pending", 0))
             pub_wait = task_stats.get("publish_waiting", task_stats.get("publish_pending", 0))
             pub_exec = task_stats.get("publish_executing_ui", task_stats.get("publish_running", 0))
-            self.task_card.set_value(str(pub_tab))
-            self.task_card.set_description(f"{pub_wait} 等待 | {pub_exec} 执行中")
+            value = str(pub_tab)
+            desc = f"{pub_wait} 等待 | {pub_exec} 执行中"
+        self.task_card.reveal(value, desc, animate=animate_entry)
 
-    def _apply_publish_stats(self, publish_stats: Dict[str, Any]) -> None:
+    def _apply_publish_stats(self, publish_stats: Dict[str, Any], *, animate_entry: bool = False) -> None:
         if hasattr(self, "publish_card"):
-            self.publish_card.set_value(str(publish_stats.get("today_count", 0)))
-            self.publish_card.set_description(
-                f"{publish_stats.get('today_success', 0)} 成功 | {publish_stats.get('today_failed', 0)} 失败"
+            value = str(publish_stats.get("today_count", 0))
+            desc = (
+                f"{publish_stats.get('today_success', 0)} 成功 | "
+                f"{publish_stats.get('today_failed', 0)} 失败"
             )
+            self.publish_card.reveal(value, desc, animate=animate_entry)
         if hasattr(self, "success_rate_card"):
-            self.success_rate_card.set_value(f"{publish_stats.get('success_rate_7d', 0):.1f}%")
-            self.success_rate_card.set_description(f"近7天 {publish_stats.get('finished_7d', 0)}条")
+            value = f"{publish_stats.get('success_rate_7d', 0):.1f}%"
+            desc = f"近7天 {publish_stats.get('finished_7d', 0)}条"
+            self.success_rate_card.reveal(value, desc, animate=animate_entry)
 
-    def _on_media_stats_updated(self, stats) -> None:
+    def _on_media_stats_updated(self, stats, *, animate_entry: Optional[bool] = None) -> None:
         v_card = getattr(self, "_video_library_card", None)
         i_card = getattr(self, "_image_library_card", None)
         if v_card is None or i_card is None:
             return
+        if animate_entry is None:
+            animate_entry = bool(
+                (v_card.is_value_loading if v_card else False)
+                or (i_card.is_value_loading if i_card else False)
+            )
         try:
             v_counts = getattr(getattr(stats, "video", None), "counts", None)
             i_counts = getattr(getattr(stats, "image", None), "counts", None)
             if v_counts is None:
-                v_card.set_value("—")
-                v_card.set_description("总 — | 已占用 — | 未占用 —")
+                v_card.reveal("—", "总 — | 已占用 — | 未占用 —", animate=animate_entry)
             else:
                 vt = int(getattr(v_counts, "total", 0) or 0)
                 vu = int(getattr(v_counts, "used", 0) or 0)
                 vn = int(getattr(v_counts, "unused", 0) or 0)
-                v_card.set_value(str(vt))
-                v_card.set_description(f"总 {vt} | 已占用 {vu} | 未占用 {vn}")
+                v_card.reveal(str(vt), f"总 {vt} | 已占用 {vu} | 未占用 {vn}", animate=animate_entry)
             if i_counts is None:
-                i_card.set_value("—")
-                i_card.set_description("总 — | 已占用 — | 未占用 —")
+                i_card.reveal("—", "总 — | 已占用 — | 未占用 —", animate=animate_entry)
             else:
                 it = int(getattr(i_counts, "total", 0) or 0)
                 iu = int(getattr(i_counts, "used", 0) or 0)
                 inn = int(getattr(i_counts, "unused", 0) or 0)
-                i_card.set_value(str(it))
-                i_card.set_description(f"总 {it} | 已占用 {iu} | 未占用 {inn}")
+                i_card.reveal(str(it), f"总 {it} | 已占用 {iu} | 未占用 {inn}", animate=animate_entry)
         except Exception:
             return
 

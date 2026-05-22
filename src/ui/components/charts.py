@@ -236,11 +236,6 @@ class ChartBase(CardWidget):
             self._skeleton_host.deleteLater()
             self._skeleton_host = None
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self._loading_overlay.isVisible():
-            self._loading_overlay._sync_geometry()
-
 
 def _get_platform_color(name: str, index: int) -> QColor:
     hex_color = PLATFORM_BRAND_COLORS.get(name)

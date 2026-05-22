@@ -15,3 +15,9 @@ CHART_STAGGER_MS = 80
 
 # 后台刷新时 loading 最短展示，避免闪烁
 CHART_MIN_LOADING_MS_REFRESH = 150
+
+# 统计卡片骨架最短展示（避免数据过快返回时闪烁）
+STATS_SKELETON_MIN_MS = 180
+
+# 数值淡入时长（与遮罩淡出对齐）
+STATS_VALUE_FADE_MS = 200
