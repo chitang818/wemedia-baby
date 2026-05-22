@@ -11,15 +11,12 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QTableWidgetItem,
     QMenu,
-    QSizePolicy,
 )
-from PySide6.QtCore import Qt, QTimer, QSize, QEvent, QObject, QPoint, QUrl
+from PySide6.QtCore import Qt, QTimer, QSize, QEvent, QUrl
 from PySide6.QtGui import QKeyEvent, QResizeEvent, QDesktopServices
 import logging
 import os
-import json as _json_module
 
 from qfluentwidgets import (
     CardWidget, SubtitleLabel, BodyLabel, PushButton,
@@ -29,193 +26,16 @@ from qfluentwidgets import (
 FLUENT_WIDGETS_AVAILABLE = True
 
 from ..base_page import BasePage
-from src.ui.components.rubber_band_row_table import RubberBandRowSelectTable
+from src.ui.pages.publish.publish_records_controller import PublishRecordsController
+from src.ui.pages.publish.publish_record_table_view import PublishRecordTableView
 from src.ui.utils.fluent_tooltips import (
     ToolTipPosition,
     install_fluent_tool_tip,
     apply_instructional_tooltip,
 )
 from src.utils.date_utils import format_schedule_time_st_str
-from src.ui.pages.publish.poi_info_display import format_poi_table_cell_display
-from src.ui.pages.publish.task_field_display import (
-    TASK_FIELD_EMPTY_DISPLAY,
-    format_cart_info_table_cell,
-    task_field_str_or_dash,
-)
-from src.domain.publish.work_declaration import (
-    ellipsize,
-    format_work_declaration_table_cell,
-)
 
 logger = logging.getLogger(__name__)
-
-
-class _TableViewportResizeDispatcher(QObject):
-    """表格 viewport 级别单一 Resize 事件分发器。
-
-    替代原先「每个 _TableCellCenterHost 各装一个 viewport eventFilter」的方案。
-    5000 行时原方案会在 viewport 上累积 5000 个过滤器，每次鼠标/Resize 事件都走
-    5000 次 eventFilter 链，严重拖慢 UI。
-    此分发器只安装一次，viewport Resize 时批量通知所有已注册的 _TableCellCenterHost。
-    """
-
-    def __init__(self, viewport: QWidget):
-        super().__init__(viewport)
-        self._viewport = viewport
-        self._hosts: List["_TableCellCenterHost"] = []
-        viewport.installEventFilter(self)
-
-    def register(self, host: "_TableCellCenterHost") -> None:
-        self._hosts.append(host)
-
-    def unregister(self, host: "_TableCellCenterHost") -> None:
-        try:
-            self._hosts.remove(host)
-        except ValueError:
-            pass
-
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched is self._viewport and event.type() == QEvent.Type.Resize:
-            for host in self._hosts:
-                try:
-                    host._on_viewport_resize()
-                except RuntimeError:
-                    pass
-        return False
-
-
-class _TableCellCenterHost(QWidget):
-    """将单个子控件按父控件几何矩形摆放（默认水平居中）。
-
-    Fluent TableWidget 末列由 TableItemDelegate 绘制圆角背景时与 QTableWidget
-    的 indexWidget 布局存在偏置，嵌套 QLayout + stretch 在部分环境下仍会水平靠右；
-    用 resize/show 时根据父尺寸直接 move 子控件，不依赖布局分配剩余空间。
-
-    非最大化/拖拽改窗体大小时，QTableWidget 往往在首帧或视口 resize 之后才落定单元格
-    几何；仅处理本控件 resizeEvent 会偶发错过最终尺寸。此处：立即居中 + 0ms 防抖再居中
-    一次，并监听表格 viewport 的 Resize 再触发（与行内子控件 resize 互补）。
-
-    竖直方向：indexWidget 偶发高于「行高」，仍用整高做 (h-h_btn)/2 会把按钮算得过低；
-    用 min(自身高度, 当前行 rowHeight) 作为有效高度，并减去与 TableItemDelegate.margin(2)
-    一致的上边距，使与相邻列文字区视觉中线对齐。
-
-    水平方向：在「中间列 Stretch + 末列 Fixed」的窄表（如发布时间排期弹窗）中，末列
-    indexWidget 偶发获得接近整行宽度的几何，此时若仍对子控件水平居中，按钮会落在行中
-    央并压在「时间」列文字上。末列操作按钮应传 horizontal=\"right\"，将子控件贴齐宿主右缘。
-
-    viewport 事件监听由 _TableViewportResizeDispatcher 统一管理，不再每行自行
-    installEventFilter，避免大数据量下 5000 个过滤器堆积在同一 viewport 上。
-    """
-
-    # 与 qfluentwidgets.components.widgets.table_view.TableItemDelegate.margin 一致
-    _FLUENT_CELL_V_MARGIN = 2
-
-    # 表格 -> 分发器 弱引用字典，确保同一个 viewport 只装一次过滤器
-    _dispatcher_map: Dict = {}
-
-    def __init__(
-        self,
-        inner: QWidget,
-        table,
-        row: int,
-        col: int,
-        *,
-        horizontal: str = "center",
-        horizontal_margin: int = 4,
-    ):
-        super().__init__(table)
-        self._table = table
-        self._row = row
-        self._col = col
-        self._horizontal = horizontal if horizontal in ("center", "right") else "center"
-        self._horizontal_margin = max(0, int(horizontal_margin))
-        self._inner = inner
-        self._dispatcher: Optional["_TableViewportResizeDispatcher"] = None
-        inner.setParent(self)
-        inner.show()
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._relayout_timer = QTimer(self)
-        self._relayout_timer.setSingleShot(True)
-        self._relayout_timer.timeout.connect(self._relayout_inner)
-        vp = table.viewport() if callable(getattr(table, "viewport", None)) else None
-        if vp is not None:
-            # 获取或创建共享分发器（每个 viewport 实例只创建一次）
-            dispatcher = _TableCellCenterHost._dispatcher_map.get(id(vp))
-            if dispatcher is None or not self._is_dispatcher_alive(dispatcher):
-                dispatcher = _TableViewportResizeDispatcher(vp)
-                _TableCellCenterHost._dispatcher_map[id(vp)] = dispatcher
-            dispatcher.register(self)
-            self._dispatcher = dispatcher
-
-    @staticmethod
-    def _is_dispatcher_alive(obj) -> bool:
-        try:
-            obj.parent()
-            return True
-        except RuntimeError:
-            return False
-
-    def __del__(self):
-        if self._dispatcher is not None:
-            try:
-                self._dispatcher.unregister(self)
-            except Exception:
-                pass
-
-    def _on_viewport_resize(self) -> None:
-        """由 _TableViewportResizeDispatcher 在 viewport Resize 时调用。"""
-        self._schedule_relayout()
-
-    def _effective_row_height(self) -> int:
-        tw = self._table
-        if tw is None:
-            return 0
-        vp = tw.viewport()
-        if vp is None or not self.isVisible():
-            if 0 <= self._row < tw.rowCount():
-                return tw.rowHeight(self._row)
-            return 0
-        try:
-            y_vp = self.mapTo(vp, QPoint(self.width() // 2, 1)).y()
-            r = tw.rowAt(y_vp)
-        except Exception:
-            r = -1
-        if r < 0 and 0 <= self._row < tw.rowCount():
-            return tw.rowHeight(self._row)
-        if r < 0:
-            return 0
-        return tw.rowHeight(r)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._schedule_relayout()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        self._schedule_relayout()
-
-    def _schedule_relayout(self) -> None:
-        self._relayout_inner()
-        self._relayout_timer.stop()
-        self._relayout_timer.start(0)
-
-    def _relayout_inner(self) -> None:
-        w, h = self.width(), self.height()
-        if w <= 0 or h <= 0:
-            return
-        sz = self._inner.size()
-        if sz.width() <= 0 or sz.height() <= 0:
-            return
-        if self._horizontal == "right":
-            x = max(0, w - sz.width() - self._horizontal_margin)
-        else:
-            x = max(0, (w - sz.width()) // 2)
-        rh = self._effective_row_height()
-        h_v = min(h, rh) if rh > 0 else h
-        # 与 delegate 上下各 inset 后的文字区中线对齐，略向上修正
-        y = max(0, (h_v - sz.height()) // 2 - self._FLUENT_CELL_V_MARGIN)
-        self._inner.move(x, y)
-        self._inner.raise_()
 
 
 def notify_publish_records_history_tab_refresh(source_widget: QWidget) -> None:
@@ -285,11 +105,6 @@ def _record_is_image_task(record: dict) -> bool:
     )
 
 
-def _record_task_type_label(record: dict) -> str:
-    """表格「类型」列展示：图文 / 视频。"""
-    return "图文" if _record_is_image_task(record) else "视频"
-
-
 def _record_is_scheduled_publish(record: dict) -> bool:
     """是否与表格「定时时间」列一致：有有效 scheduled_publish_time 视为定时发布，否则立即发布。"""
     return bool(format_schedule_time_st_str(record.get("scheduled_publish_time")))
@@ -340,15 +155,6 @@ def _disambiguate_account_filter_labels(key_to_display: Dict[str, str]) -> Dict[
     return out
 
 
-def _format_record_timestamp_display(value) -> str:
-    """表格日期时间列：支持 datetime 或 ISO 字符串。"""
-    if value is None:
-        return "—"
-    if hasattr(value, "strftime"):
-        return value.strftime("%Y-%m-%d %H:%M:%S")
-    s = str(value).replace("T", " ")
-    return s[:19] if len(s) >= 19 else (s or "—")
-
 
 _FILE_DELETED_MARKER = "__DELETED__"
 _FOLDER_MARKER_PREFIX = "__FOLDER__:"
@@ -363,15 +169,6 @@ def _file_path_is_deleted(fp: str) -> bool:
         if p.strip() and not p.strip().startswith(_FOLDER_MARKER_PREFIX)
     ]
     return bool(parts) and all(p == _FILE_DELETED_MARKER for p in parts)
-
-
-def _extract_folder_marker(fp: str) -> Optional[str]:
-    """从 file_path 中提取文件夹来源路径；若非文件夹来源则返回 None。"""
-    for part in fp.split(","):
-        part = part.strip()
-        if part.startswith(_FOLDER_MARKER_PREFIX):
-            return part[len(_FOLDER_MARKER_PREFIX):]
-    return None
 
 
 def _record_media_folder_path(record: dict) -> str:
@@ -392,31 +189,6 @@ def _record_media_folder_path(record: dict) -> str:
         return parent if parent else ""
     except Exception:
         return ""
-
-
-def _short_path_after_account_library(full_dir: str) -> str:
-    """仅用于表格展示：只保留路径中「\\账号库\\」之后的片段（如 账号组_xxx\\视频\\未发布）。"""
-    if not full_dir:
-        return ""
-    p = os.path.normpath(full_dir).replace("/", "\\")
-    needle = "\\账号库\\"
-    pos = p.find(needle)
-    if pos >= 0:
-        return p[pos + len(needle) :]
-    return p
-
-
-def _record_media_folder_cell(record: dict) -> Tuple[str, str]:
-    """表格「文件位置」列：(展示文案, 悬停提示全文)。单元格只显示账号库之后的路径；悬停仍为完整绝对路径。"""
-    fp = (record.get("file_path") or "").strip()
-    if _file_path_is_deleted(fp):
-        return "已删除", ""
-    full = _record_media_folder_path(record)
-    if not full:
-        return "—", ""
-    short = _short_path_after_account_library(full)
-    display = short if short else full
-    return display, full
 
 
 def open_record_media_folder(parent: QWidget, record: dict) -> None:
@@ -476,6 +248,7 @@ class PublishRecordsPage(BasePage):
     """发布记录页面"""
 
     _lazy_content = True
+    _enable_show_fade = False
 
     # 表格列索引常量，统一管理，避免子类硬编码列号导致列顺序调整后出错
     COL_CREATE_TIME = 0
@@ -506,12 +279,14 @@ class PublishRecordsPage(BasePage):
         self.user_id = self._current_user_svc.get_user_id_or_default(1)
         self.publish_records = []
         self._active_workers = []
+        self._records_controller = PublishRecordsController(self)
 
         self.target_statuses = target_statuses if target_statuses is not None else ["success"]
         # 已发布页（仅 success）首次只加载最近 500 条以提升响应；待发布页保持全量加载
-        self._records_load_limit: int = 500 if self.target_statuses == ["success"] else 5000
+        self._records_load_limit: int = 500
         self._records_load_step: int = 500  # 每次「加载更多」增加的条数
         self._has_more_records: bool = False  # 是否还有更多记录可加载
+        self._loading_more_records: bool = False
         self._filter_bar_compact = None
         self._filter_single_line_built = False  # 筛选控件已铺到单行（不再按宽度拆成两行）
         self._enable_task_type_filter = True
@@ -535,6 +310,18 @@ class PublishRecordsPage(BasePage):
         self._render_batch_timers: List[QTimer] = []
         # id→record 索引字典：避免 next(r for r in publish_records if r.get('id')==rid) 的 O(n) 扫描
         self._records_by_id: Dict[int, Any] = {}
+        self._account_filter_options_cache: Optional[List[Tuple[str, str]]] = None
+        self._record_filter_meta_by_id: Dict[int, Dict[str, Any]] = {}
+        self._records_version: int = 0
+        self._last_filter_render_state: Optional[tuple] = None
+        self._last_filter_criteria: Optional[tuple] = None
+        self._last_rendered_record_ids: List[int] = []
+        # id→当前表格行号：发布队列局部状态更新时避免全表扫描
+        self._row_by_record_id: Dict[int, int] = {}
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(120)
+        self._filter_timer.timeout.connect(self._apply_filters)
 
     def closeEvent(self, event):
         self._cancel_render_batch_timers()
@@ -719,77 +506,23 @@ class PublishRecordsPage(BasePage):
         self._table_loading_bar.setVisible(False)
         table_layout.addWidget(self._table_loading_bar)
 
-        self.records_table = RubberBandRowSelectTable(table_container)
+        self.records_table = PublishRecordTableView(
+            table_container,
+            success_page=self.target_statuses == ["success"],
+            action_text=self._record_table_action_button_text(),
+        )
         # 统一 ::item padding = 2px；完全绕过 Fluent setBorderVisible/setBorderRadius，
         # 避免触发 StyleSheetManager watcher 在懒加载 showEvent / 动画期间崩溃。
         self.records_table.setObjectName("PublishRecordsTable")
         self.records_table.setWordWrap(False)
-        # RubberBandRowSelectTable 自带 NoDragDrop；显式设置选择模式
+        # Model/View 表格保持原行选择交互。
         self.records_table.setSelectionBehavior(self.records_table.SelectionBehavior.SelectRows)
         self.records_table.setSelectionMode(self.records_table.SelectionMode.ExtendedSelection)
         self.records_table.setEditTriggers(self.records_table.EditTrigger.NoEditTriggers)
 
-        self.records_table.setColumnCount(19)
-        first_time_header = (
-            "发布时间"
-            if self.target_statuses == ["success"]
-            else "创建时间"
-        )
-        self.records_table.setHorizontalHeaderLabels([
-            first_time_header,
-            "类型",
-            "平台",
-            "账号组",
-            "任务源",
-            "平台昵称",
-            "文件/文件夹",
-            "封面",
-            "作品标题",
-            "作品描述",
-            "定时时间",
-            "作品申明",
-            "音乐",
-            "购物车",
-            "团购",
-            "位置",
-            "状态",
-            "文件位置",
-            "操作",
-        ])
-
-        # 各列均可拖拽调整宽度；操作列固定
-        _rh = self.records_table.horizontalHeader()
-        from PySide6.QtWidgets import QHeaderView as _QHV
-        for _c in range(19):
-            _rh.setSectionResizeMode(_c, _QHV.ResizeMode.Interactive)
-        _rh.setSectionResizeMode(self.COL_ACTION, _QHV.ResizeMode.Fixed)
-        _rh.setMinimumSectionSize(52)
-        _rh.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-
-        # 列宽设置（适配 1400+ 内容区）
-        self.records_table.setColumnWidth(self.COL_CREATE_TIME, 140)    # 创建时间 / 发布时间
-        self.records_table.setColumnWidth(self.COL_TYPE, 52)            # 类型  图文/视频
-        self.records_table.setColumnWidth(self.COL_PLATFORM, 72)        # 平台      抖音/快手等
-        self.records_table.setColumnWidth(self.COL_ACCOUNT_GROUP, 88)   # 账号组
-        self.records_table.setColumnWidth(self.COL_TASK_SOURCE, 72)     # 任务源    账号/账号组
-        self.records_table.setColumnWidth(self.COL_ACCOUNT_NAME, 120)   # 平台昵称
-        self.records_table.setColumnWidth(self.COL_FILE, 140)           # 文件      省略号截断
-        self.records_table.setColumnWidth(self.COL_COVER, 65)           # 封面      首帧/本地
-        self.records_table.setColumnWidth(self.COL_TITLE, 100)          # 作品标题  省略号截断
-        self.records_table.setColumnWidth(self.COL_DESCRIPTION, 140)    # 作品描述  省略号截断
-        self.records_table.setColumnWidth(self.COL_SCHEDULED_TIME, 120) # 定时时间  立即发布/排期
-        self.records_table.setColumnWidth(self.COL_ORIGINAL, 118)       # 作品申明
-        self.records_table.setColumnWidth(self.COL_MUSIC, 100)          # 音乐      歌曲名/—
-        self.records_table.setColumnWidth(self.COL_CART, 100)           # 购物车    短标题/✅/—
-        self.records_table.setColumnWidth(self.COL_GROUP_BUY, 55)       # 团购      ✅/—
-        self.records_table.setColumnWidth(self.COL_LOCATION, 88)        # 位置      POI
-        self.records_table.setColumnWidth(self.COL_STATUS, 78)          # 状态      ✅成功等
-        self.records_table.setColumnWidth(self.COL_FILE_LOCATION, 200)  # 文件位置  媒体所在文件夹
-        self.records_table.setColumnWidth(self.COL_ACTION, 76)          # 操作列「编辑」按钮（固定略宽避免裁切）
-        self.records_table.verticalHeader().setDefaultSectionSize(42)
-
         self.records_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.records_table.customContextMenuRequested.connect(self._on_context_menu)
+        self.records_table.cellClicked.connect(self._on_record_table_cell_clicked)
         self.records_table.cellDoubleClicked.connect(self._on_view_record_detail)
         self.records_table.installEventFilter(self)
         self.records_table.selectionModel().selectionChanged.connect(self._on_table_selection_changed)
@@ -799,7 +532,7 @@ class PublishRecordsPage(BasePage):
         # 「加载更多」底栏（仅已发布等分页场景显示）
         self._load_more_bar = QHBoxLayout()
         self._load_more_bar.setContentsMargins(8, 4, 8, 8)
-        self._load_more_btn = PushButton("加载更多历史记录…")
+        self._load_more_btn = PushButton(self._load_more_button_text())
         self._load_more_btn.setFixedHeight(32)
         self._load_more_btn.clicked.connect(self._on_load_more_clicked)
         self._load_more_btn.setVisible(False)
@@ -887,9 +620,70 @@ class PublishRecordsPage(BasePage):
         task.add_done_callback(on_done)
 
     def _on_load_more_clicked(self):
-        """点击「加载更多」按钮：增加 limit 并重新加载。"""
-        self._records_load_limit += self._records_load_step
-        self._load_publish_records()
+        """点击「加载更多」按钮：按 offset 追加下一页，避免重复拉取旧记录。"""
+        self._records_controller.load_more()
+
+    def _load_more_button_text(self) -> str:
+        return "加载更多历史记录…" if self.target_statuses == ["success"] else "加载更多待发布任务…"
+
+    def _load_more_publish_records(self) -> None:
+        from src.infrastructure.common.di.service_locator import ServiceLocator
+        from src.domain.repositories.publish_record_repository_async import PublishRecordRepositoryAsync
+        from src.ui.utils.async_helper import run_async_task
+
+        if getattr(self, "_loading_more_records", False):
+            return
+        service_locator = ServiceLocator()
+        if not service_locator.is_registered(PublishRecordRepositoryAsync):
+            logger.warning("PublishRecordRepositoryAsync 未注册")
+            return
+
+        repo = service_locator.get(PublishRecordRepositoryAsync)
+        target_statuses = getattr(self, "target_statuses", None)
+        offset = len(self.publish_records or [])
+        step = int(getattr(self, "_records_load_step", 500) or 500)
+        self._loading_more_records = True
+        btn = getattr(self, "_load_more_btn", None)
+        if btn is not None:
+            btn.setEnabled(False)
+            btn.setText("加载中…")
+
+        self._load_publish_generation += 1
+        load_gen = self._load_publish_generation
+
+        async def load_async():
+            try:
+                records = await repo.find_records(
+                    user_id=None,
+                    status_in=target_statuses if target_statuses else None,
+                    limit=step,
+                    offset=offset,
+                )
+                total = await repo.count_records(
+                    user_id=None,
+                    status_in=target_statuses if target_statuses else None,
+                )
+                return records, total
+            except Exception as e:
+                logger.error("加载更多发布记录异常: %s", e, exc_info=True)
+                return [], getattr(self, "_total_record_count", 0)
+
+        def on_done(task):
+            self._loading_more_records = False
+            if btn is not None:
+                btn.setEnabled(True)
+                btn.setText(self._load_more_button_text())
+            if load_gen != self._load_publish_generation:
+                return
+            try:
+                records, total = task.result()
+                self._append_records_loaded(records or [], total)
+            except Exception as e:
+                logger.error("加载更多发布记录失败: %s", e, exc_info=True)
+                self._update_load_more_bar()
+
+        task = run_async_task(load_async)
+        task.add_done_callback(on_done)
 
     def _update_load_more_bar(self):
         """根据已加载/总数更新底部提示条可见性和文案。"""
@@ -917,7 +711,22 @@ class PublishRecordsPage(BasePage):
             self._table_loading_bar.setVisible(False)
         self._cover_exists_cache = {}
         self.publish_records = records
-        self._records_by_id = {r.get("id"): r for r in records if r.get("id") is not None}
+        self._records_version += 1
+        self._last_filter_render_state = None
+        self._last_filter_criteria = None
+        self._last_rendered_record_ids = []
+        records_by_id: Dict[int, Any] = {}
+        for r in records:
+            try:
+                records_by_id[int(r.get("id"))] = r
+            except (TypeError, ValueError):
+                continue
+        self._records_by_id = records_by_id
+        self._account_filter_options_cache = None
+        self._record_filter_meta_by_id = {
+            rid: self._build_record_filter_meta(record)
+            for rid, record in records_by_id.items()
+        }
         self._data_stale = False
         if hasattr(self, "records_table"):
             self._apply_filters()
@@ -939,6 +748,44 @@ class PublishRecordsPage(BasePage):
                 duration=6000,
             )
 
+    def _append_records_loaded(self, records: List[dict], total: int) -> None:
+        """追加分页加载结果，保留当前表格视觉路径但避免数据库重复取旧页。"""
+        existing_ids = set()
+        for r in self.publish_records or []:
+            try:
+                existing_ids.add(int(r.get("id")))
+            except (TypeError, ValueError):
+                continue
+        new_records: List[dict] = []
+        for r in records or []:
+            try:
+                rid = int(r.get("id"))
+            except (TypeError, ValueError):
+                continue
+            if rid in existing_ids:
+                continue
+            existing_ids.add(rid)
+            new_records.append(r)
+
+        if new_records:
+            self.publish_records.extend(new_records)
+            for r in new_records:
+                try:
+                    rid = int(r.get("id"))
+                except (TypeError, ValueError):
+                    continue
+                self._records_by_id[rid] = r
+                self._record_filter_meta_by_id[rid] = self._build_record_filter_meta(r)
+            self._account_filter_options_cache = None
+            self._records_version += 1
+            self._last_filter_render_state = None
+            if hasattr(self, "records_table"):
+                self._apply_filters()
+
+        self._total_record_count = int(total or len(self.publish_records))
+        self._has_more_records = len(self.publish_records) < self._total_record_count
+        self._update_load_more_bar()
+
     def _ensure_content(self):
         """懒加载创建表格后：若拉库早于建表完成，在此补一次 _apply_filters；否则按 _data_stale 拉库。"""
         first_init = not self._content_initialized
@@ -959,16 +806,19 @@ class PublishRecordsPage(BasePage):
             return
         combo.blockSignals(True)
         combo.clear()
-        key_to_disp: Dict[str, str] = {}
-        for r in self.publish_records or []:
-            st = r.get("status", "")
-            if self.target_statuses and st not in self.target_statuses:
-                continue
-            k = _record_account_filter_key(r)
-            if k not in key_to_disp:
-                key_to_disp[k] = _record_account_filter_display(r)
-        labels = _disambiguate_account_filter_labels(key_to_disp)
-        ordered: List[Tuple[str, str]] = sorted(labels.items(), key=lambda it: it[1])
+        ordered = getattr(self, "_account_filter_options_cache", None)
+        if ordered is None:
+            key_to_disp: Dict[str, str] = {}
+            for r in self.publish_records or []:
+                st = r.get("status", "")
+                if self.target_statuses and st not in self.target_statuses:
+                    continue
+                k = _record_account_filter_key(r)
+                if k not in key_to_disp:
+                    key_to_disp[k] = _record_account_filter_display(r)
+            labels = _disambiguate_account_filter_labels(key_to_disp)
+            ordered = sorted(labels.items(), key=lambda it: it[1])
+            self._account_filter_options_cache = ordered
         combo.addItem("全部", userData=None)
         for k, text in ordered:
             combo.addItem(text, userData=k)
@@ -980,14 +830,54 @@ class PublishRecordsPage(BasePage):
         combo.setCurrentIndex(restore_idx)
         combo.blockSignals(False)
 
-    def _apply_filters(self, *, skip_account_rebuild: bool = False):
-        """应用筛选。
+    def _build_record_filter_meta(self, record: dict) -> Dict[str, Any]:
+        try:
+            rid = int(record.get("id"))
+        except (TypeError, ValueError):
+            rid = -1
+        return {
+            "id": rid,
+            "status": record.get("status", ""),
+            "platform": record.get("platform"),
+            "account_key": _record_account_filter_key(record),
+            "is_image": _record_is_image_task(record),
+            "is_scheduled": _record_is_scheduled_publish(record),
+        }
 
-        skip_account_rebuild=True 时跳过账号下拉重建，适用于发布循环中仅更新状态的刷新，
-        避免每次都对全量 publish_records 扫描重建下拉选项。
-        大数据量时使用分批渲染，每批 150 行后让出事件循环，避免 UI 冻结。
-        """
-        if not hasattr(self, 'records_table'):
+    def _record_filter_meta(self, record: dict) -> Dict[str, Any]:
+        try:
+            rid = int(record.get("id"))
+        except (TypeError, ValueError):
+            return self._build_record_filter_meta(record)
+        meta = self._record_filter_meta_by_id.get(rid)
+        if meta is None:
+            meta = self._build_record_filter_meta(record)
+            self._record_filter_meta_by_id[rid] = meta
+        return meta
+
+    def _filtered_record_ids(self, records: List[dict]) -> List[int]:
+        ids: List[int] = []
+        for r in records or []:
+            try:
+                ids.append(int(r.get("id")))
+            except (TypeError, ValueError):
+                ids.append(-1)
+        return ids
+
+    def _table_has_active_sort(self) -> bool:
+        table = getattr(self, "records_table", None)
+        if table is None:
+            return False
+        try:
+            section = table.horizontalHeader().sortIndicatorSection()
+        except Exception:
+            return False
+        return section is not None and int(section) >= 0
+
+
+    def _apply_filters(self, *, skip_account_rebuild: bool = False):
+        """Apply filters and render records through the Model/View table path."""
+        if not hasattr(self, "records_table"):
             return
 
         platform_filter = self.platform_filter.currentText()
@@ -1014,260 +904,76 @@ class PublishRecordsPage(BasePage):
         account_key = af.currentData() if af is not None else None
 
         from src.utils.platform_names import PLATFORM_NAME_TO_ID as platform_map
-        from src.utils.platform_names import get_platform_display_name
+
         status_map = {"成功": "success", "失败": "failed", "待发布": "pending"}
-        
+        filter_criteria = (
+            tuple(self.target_statuses or []),
+            platform_filter,
+            account_key,
+            status_filter,
+            task_type_filter_text,
+            publish_timing_text,
+        )
+        filter_render_state = (
+            *filter_criteria,
+            getattr(self, "_records_version", 0),
+        )
+        if filter_render_state == getattr(self, "_last_filter_render_state", None):
+            return
+
         filtered = []
-        for r in self.publish_records:
-            r_status = r.get('status', '')
+        for record in self.publish_records:
+            meta = self._record_filter_meta(record)
+            r_status = meta["status"]
             if self.target_statuses and r_status not in self.target_statuses:
                 continue
-                
-            if platform_filter != "全部" and r.get('platform') != platform_map.get(platform_filter):
+            if platform_filter != "全部" and meta["platform"] != platform_map.get(platform_filter):
                 continue
-            if account_key is not None and _record_account_filter_key(r) != account_key:
+            if account_key is not None and meta["account_key"] != account_key:
                 continue
             if status_filter != "全部" and r_status != status_map.get(status_filter):
                 continue
-            if task_type_filter_text == "视频" and _record_is_image_task(r):
+            if task_type_filter_text == "视频" and meta["is_image"]:
                 continue
-            if task_type_filter_text == "图文" and not _record_is_image_task(r):
+            if task_type_filter_text == "图文" and not meta["is_image"]:
                 continue
-            if publish_timing_text == "定时发布" and not _record_is_scheduled_publish(r):
+            if publish_timing_text == "定时发布" and not meta["is_scheduled"]:
                 continue
-            if publish_timing_text == "立即发布" and _record_is_scheduled_publish(r):
+            if publish_timing_text == "立即发布" and meta["is_scheduled"]:
                 continue
-            filtered.append(r)
-        
-        filtered = self._sort_filtered(filtered)
-        self._filtered_records = filtered  # 供子类（如发布列表）做任务统计等
+            filtered.append(record)
 
-        # 递增渲染代次，取消正在进行中的旧批次
+        filtered = self._sort_filtered(filtered)
+        self._filtered_records = filtered
+        filtered_ids = self._filtered_record_ids(filtered)
+        self._last_filter_render_state = filter_render_state
+        self._last_filter_criteria = filter_criteria
+        self._last_rendered_record_ids = filtered_ids
+
         self._cancel_render_batch_timers()
         self._render_generation += 1
-        render_gen = self._render_generation
 
         table = self.records_table
         table.setUpdatesEnabled(False)
         table.setSortingEnabled(False)
         table.blockSignals(True)
-        table.setRowCount(0)
-        table.setRowCount(len(filtered))
-        table.blockSignals(False)
-
-        _cell_center = Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
-        _cell_left_v = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        is_success_page = self.target_statuses == ["success"]
-        btn_text = self._record_table_action_button_text()
-
-        # ---------- 分批渲染（文本 + 按钮）----------
-        # 小数据量（≤200）同步填充文本保证即时可见；大数据量分批避免卡主线程
-        _TEXT_BATCH = 200
-        _BTN_BATCH = 15
-        total = len(filtered)
-
-        def _render_text_batch(start: int) -> None:
-            if render_gen != self._render_generation:
-                return
-            end = min(start + _TEXT_BATCH, total)
-            table.blockSignals(True)
-            for row in range(start, end):
-                self._fill_table_row_text(
-                    row, filtered[row], is_success_page,
-                    get_platform_display_name, _cell_center, _cell_left_v,
-                )
-            table.blockSignals(False)
-            if end < total:
-                self._schedule_render_batch(lambda end=end: _render_text_batch(end))
-            else:
-                table.setSortingEnabled(True)
-                table.setUpdatesEnabled(True)
-                self._schedule_render_batch(lambda: _render_btn_batch(0))
-
-        def _render_btn_batch(start: int) -> None:
-            if render_gen != self._render_generation:
-                return
-            end = min(start + _BTN_BATCH, total)
-            for row in range(start, end):
-                self._fill_table_row_btn(row, filtered[row], btn_text)
-            if end < total:
-                self._schedule_render_batch(lambda end=end: _render_btn_batch(end))
-
-        if total <= _TEXT_BATCH:
-            table.blockSignals(True)
-            for row in range(total):
-                self._fill_table_row_text(
-                    row, filtered[row], is_success_page,
-                    get_platform_display_name, _cell_center, _cell_left_v,
-                )
+        try:
+            table.set_success_page(self.target_statuses == ["success"])
+            table.set_action_text(self._record_table_action_button_text())
+            table.set_records(filtered)
+            self._row_by_record_id = {
+                rid: row
+                for row, rid in enumerate(filtered_ids)
+                if rid is not None and rid >= 0
+            }
+        finally:
             table.blockSignals(False)
             table.setSortingEnabled(True)
             table.setUpdatesEnabled(True)
-            self._schedule_render_batch(lambda: _render_btn_batch(0))
-        else:
-            _render_text_batch(0)
 
-    def _fill_table_row_text(
-        self,
-        row: int,
-        r: dict,
-        is_success_page: bool,
-        get_platform_display_name,
-        _cell_center,
-        _cell_left_v,
-    ) -> None:
-        """填充单行纯文本单元格（不含操作按钮，速度快）。"""
-        table = self.records_table
-
-        ts = (r.get("updated_at") or r.get("created_at")) if is_success_page else r.get("created_at")
-        item_created = QTableWidgetItem(_format_record_timestamp_display(ts))
-        item_created.setData(Qt.UserRole, r.get('id'))
-        item_created.setTextAlignment(_cell_center)
-        table.setItem(row, 0, item_created)
-
-        item_type = QTableWidgetItem(_record_task_type_label(r))
-        item_type.setTextAlignment(_cell_center)
-        table.setItem(row, 1, item_type)
-
-        p_display = task_field_str_or_dash(get_platform_display_name(r.get("platform", "") or ""))
-        item_plat = QTableWidgetItem(p_display)
-        item_plat.setTextAlignment(_cell_center)
-        table.setItem(row, 2, item_plat)
-
-        grp = (r.get("account_group_name") or "").strip()
-        item_grp = QTableWidgetItem(grp or TASK_FIELD_EMPTY_DISPLAY)
-        item_grp.setTextAlignment(_cell_center)
-        table.setItem(row, self.COL_ACCOUNT_GROUP, item_grp)
-
-        _ts_val = r.get("task_source") or ""
-        _ts_display = "账号组" if _ts_val == "group" else ("账号" if _ts_val == "account" else TASK_FIELD_EMPTY_DISPLAY)
-        item_src = QTableWidgetItem(_ts_display)
-        item_src.setTextAlignment(_cell_center)
-        table.setItem(row, self.COL_TASK_SOURCE, item_src)
-
-        item_name = QTableWidgetItem(task_field_str_or_dash(r.get("platform_username")))
-        item_name.setTextAlignment(_cell_center)
-        table.setItem(row, self.COL_ACCOUNT_NAME, item_name)
-
-        _fp_raw = r.get("file_path", "") or ""
-        if _file_path_is_deleted(_fp_raw):
-            fname = "已删除"
-        elif _fp_raw:
-            _folder = _extract_folder_marker(_fp_raw)
-            if _folder:
-                fname = os.path.basename(_folder.rstrip("/\\")) or os.path.basename(_folder)
-            else:
-                fname = os.path.basename(_fp_raw.split(",")[0].strip())
-        else:
-            fname = ""
-        item_file = QTableWidgetItem(task_field_str_or_dash(fname))
-        item_file.setTextAlignment(_cell_center)
-        table.setItem(row, self.COL_FILE, item_file)
-
-        cover_path = r.get('cover_path', '')
-        if cover_path:
-            cache = getattr(self, '_cover_exists_cache', None)
-            if cache is None:
-                cache = self._cover_exists_cache = {}
-            if cover_path not in cache:
-                cache[cover_path] = os.path.exists(cover_path)
-            cover_text = "本地封面" if cache[cover_path] else "首帧封面"
-        else:
-            cover_text = "首帧封面"
-        item_cover = QTableWidgetItem(cover_text)
-        item_cover.setTextAlignment(_cell_center)
-        table.setItem(row, self.COL_COVER, item_cover)
-
-        item_title = QTableWidgetItem(task_field_str_or_dash(r.get("title")))
-        item_title.setTextAlignment(_cell_center)
-        table.setItem(row, self.COL_TITLE, item_title)
-
-        item_desc = QTableWidgetItem(task_field_str_or_dash(r.get("description")))
-        item_desc.setTextAlignment(_cell_center)
-        table.setItem(row, self.COL_DESCRIPTION, item_desc)
-
-        time_display = format_schedule_time_st_str(r.get('scheduled_publish_time')) or "立即发布"
-        item_sched = QTableWidgetItem(time_display)
-        item_sched.setTextAlignment(_cell_center)
-        table.setItem(row, self.COL_SCHEDULED_TIME, item_sched)
-
-        platform_id = (r.get("platform") or "").strip()
-        try:
-            full_wd = format_work_declaration_table_cell(
-                platform_id, r.get("privacy_settings"), empty_display=TASK_FIELD_EMPTY_DISPLAY,
-            )
-        except Exception:
-            full_wd = TASK_FIELD_EMPTY_DISPLAY
-        short_wd = ellipsize(full_wd, 14)
-        item_orig = QTableWidgetItem(short_wd)
-        item_orig.setToolTip(full_wd if full_wd and full_wd != TASK_FIELD_EMPTY_DISPLAY else "")
-        item_orig.setTextAlignment(_cell_center)
-        table.setItem(row, self.COL_ORIGINAL, item_orig)
-
-        if _record_is_image_task(r):
-            music_info_raw = (r.get('music_info') or '').strip()
-            music_display = TASK_FIELD_EMPTY_DISPLAY
-            if music_info_raw:
-                try:
-                    _mi = _json_module.loads(music_info_raw)
-                    if _mi.get('music_type') == 'random':
-                        music_display = "随机"
-                    else:
-                        music_display = _mi.get('music_name') or _mi.get('name') or _mi.get('title') or "✅"
-                except Exception:
-                    music_display = "✅"
-        else:
-            music_display = TASK_FIELD_EMPTY_DISPLAY
-        item_music = QTableWidgetItem(music_display)
-        item_music.setTextAlignment(_cell_center)
-        table.setItem(row, self.COL_MUSIC, item_music)
-
-        goods_display = format_cart_info_table_cell((r.get('cart_info') or '').strip())
-        item_cart = QTableWidgetItem(goods_display)
-        item_cart.setTextAlignment(_cell_center)
-        table.setItem(row, self.COL_CART, item_cart)
-
-        anchor_display = "✅" if (r.get('anchor_info') or '').strip() else TASK_FIELD_EMPTY_DISPLAY
-        item_anchor = QTableWidgetItem(anchor_display)
-        item_anchor.setTextAlignment(_cell_center)
-        table.setItem(row, self.COL_GROUP_BUY, item_anchor)
-
-        poi_display = format_poi_table_cell_display(
-            r.get("poi_info"),
-            platform=platform_id,
-            wechat_empty_location_open_picker=r.get("wechat_empty_location_open_picker"),
-        )
-        item_poi = QTableWidgetItem(poi_display)
-        item_poi.setTextAlignment(_cell_center)
-        table.setItem(row, self.COL_LOCATION, item_poi)
-
-        status = (r.get("status") or "").strip()
-        s_display = {
-            "success": "✅ 成功",
-            "failed": "❌ 失败",
-            "pending": "⏳ 待发布",
-        }.get(status, status) if status else TASK_FIELD_EMPTY_DISPLAY
-        item_status = QTableWidgetItem(s_display)
-        item_status.setTextAlignment(_cell_center)
-        table.setItem(row, self.COL_STATUS, item_status)
-
-        folder_text, folder_tip = _record_media_folder_cell(r)
-        item_folder = QTableWidgetItem(folder_text)
-        item_folder.setTextAlignment(_cell_left_v)
-        if folder_tip:
-            item_folder.setToolTip(folder_tip)
-        table.setItem(row, self.COL_FILE_LOCATION, item_folder)
-
-    def _fill_table_row_btn(self, row: int, r: dict, btn_text: str) -> None:
-        """延后创建操作按钮（QWidget 开销大，单独分批执行）。"""
-        table = self.records_table
-        btn_view = PushButton(btn_text, None)
-        btn_view.setFixedSize(56, 30)
-        btn_view.clicked.connect(lambda checked, rec=r: self._on_view_detail(rec))
-        table.setCellWidget(
-            row, self.COL_ACTION,
-            _TableCellCenterHost(btn_view, table, row, self.COL_ACTION)
-        )
+    def _on_record_table_cell_clicked(self, row: int, col: int) -> None:
+        if col == self.COL_ACTION and self.records_table.cellWidget(row, col) is None:
+            self._on_view_record_detail(row, col)
 
     def _get_extra_filter_widgets(self):
         """子类可重写，在状态筛选右侧插入额外控件（如列表设置按钮）。返回 widget 列表。"""
@@ -1311,7 +1017,10 @@ class PublishRecordsPage(BasePage):
         return filtered
 
     def _on_filter_changed(self):
-        self._apply_filters()
+        try:
+            self._filter_timer.start()
+        except Exception:
+            self._apply_filters()
 
     def resizeEvent(self, event: QResizeEvent):
         super().resizeEvent(event)
@@ -1390,7 +1099,7 @@ class PublishRecordsPage(BasePage):
         if rid_item:
             try:
                 rid = int(rid_item.data(Qt.UserRole))
-                rec = next((r for r in self.publish_records if r.get('id') == rid), None)
+                rec = self._records_by_id.get(rid)
                 if rec:
                     self._on_view_detail(rec)
             except (ValueError, TypeError):
@@ -1446,9 +1155,7 @@ class PublishRecordsPage(BasePage):
             rid = int(rid_item.data(Qt.UserRole))
         except (ValueError, TypeError):
             return None
-        return self._records_by_id.get(rid) or next(
-            (r for r in self.publish_records if r.get("id") == rid), None
-        )
+        return self._records_by_id.get(rid)
 
     def _on_records_table_ctx_view_clicked(self) -> None:
         rows = getattr(self, "_records_table_ctx_pending_rows", None) or []
@@ -1583,9 +1290,7 @@ class PublishRecordsPage(BasePage):
                 rid = int(rid_item.data(Qt.UserRole))
             except (ValueError, TypeError):
                 continue
-            rec = self._records_by_id.get(rid) or next(
-                (r for r in self.publish_records if r.get("id") == rid), None
-            )
+            rec = self._records_by_id.get(rid)
             if rec:
                 records_to_copy.append(rec)
 
@@ -1714,16 +1419,21 @@ class PublishRecordsPage(BasePage):
         if not hasattr(self, 'records_table'):
             return
             
-        selected_rows = self.records_table.selectionModel().selectedRows()
+        selected_rows = list(getattr(self, "_selected_rows_cache", None) or [])
+        if not selected_rows:
+            selected_rows = [
+                index.row()
+                for index in self.records_table.selectionModel().selectedRows()
+            ]
         if not selected_rows:
             InfoBar.warning("未选择", "请先选择要删除的发布任务", parent=self)
             return
             
         # 获取选中行的ID
         record_ids = []
-        for index in selected_rows:
+        for row in selected_rows:
             # ID存储在第0列（平台）的 UserRole 中
-            item = self.records_table.item(index.row(), 0)
+            item = self.records_table.item(row, 0)
             if item:
                 try:
                     rid = item.data(Qt.UserRole)

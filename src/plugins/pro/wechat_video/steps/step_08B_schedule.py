@@ -28,6 +28,7 @@ from typing import Any, Dict, Optional, Tuple
 from playwright.async_api import Page
 
 from src.plugins.core.interfaces.publish_plugin import PublishResult
+from src.plugins.core.wait_helper import PluginWaitHelper
 from ._base import BasePublishStep, StepOutcome
 from ..wujie_shadow import WUJIE_SHADOW_ROOT_JS as _SHADOW_JS
 
@@ -326,7 +327,7 @@ class ScheduleSettingStep(BasePublishStep):
         except Exception as e:
             logger.debug("[视频号] 滚动到定时区域异常（忽略）: %s", e)
 
-        await page.wait_for_timeout(w(1200))
+        await page.wait_for_timeout(w(400))
 
         # ── 立即发布：不操作 ──────────────────────────────────────────────────
         if not schedule_time:
@@ -417,7 +418,12 @@ class ScheduleSettingStep(BasePublishStep):
                 failed_step="ScheduleSettingStep",
             )
         logger.info("[视频号] 已点击「发表时间」输入框，等待日历弹窗展开")
-        await page.wait_for_timeout(w(2000))
+        await PluginWaitHelper.wait_for_condition(
+            page,
+            lambda: _picker_is_open(page),
+            timeout_ms=w(2000),
+            poll_interval_ms=250,
+        )
 
         # ── 步骤 3：翻月导航到目标年月 ───────────────────────────────────────
         target_ym = t_year * 12 + t_month
@@ -506,7 +512,7 @@ class ScheduleSettingStep(BasePublishStep):
                 failed_step="ScheduleSettingStep",
             )
         logger.info("[视频号] 已选择日期：%d 号", t_day)
-        await page.wait_for_timeout(w(1200))
+        await page.wait_for_timeout(w(400))
 
         # ── 步骤 5：点击时间区域打开时分列表 ─────────────────────────────────
         # 报告验证：点击 term（dt）元素 e375 打开时间列表
@@ -535,7 +541,18 @@ class ScheduleSettingStep(BasePublishStep):
                 failed_step="ScheduleSettingStep",
             )
         logger.info("[视频号] 已点击时间区域，等待时分列表展开")
-        await page.wait_for_timeout(w(2000))
+        await PluginWaitHelper.wait_for_condition(
+            page,
+            lambda: _eval_xy(
+                page,
+                """
+                const items = pickerRoot.querySelectorAll('.weui-desktop-picker__time__hour li');
+                return items && items.length ? { x: 1, y: 1 } : null;
+                """,
+            ),
+            timeout_ms=w(2000),
+            poll_interval_ms=250,
+        )
 
         # ── 步骤 6：点击目标小时 ──────────────────────────────────────────────
         xy_hour = await _eval_xy(page, f"""
@@ -583,7 +600,7 @@ class ScheduleSettingStep(BasePublishStep):
                 failed_step="ScheduleSettingStep",
             )
         logger.info("[视频号] 已选择分钟：%s", minute_str)
-        await page.wait_for_timeout(w(800))
+        await page.wait_for_timeout(w(400))
 
         USER_LOG.info(
             "%s 时分已选择（%s:%s），准备关闭弹窗并校验",

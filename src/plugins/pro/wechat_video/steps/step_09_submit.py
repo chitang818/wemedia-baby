@@ -16,6 +16,7 @@ from typing import Any, Dict, Union
 from playwright.async_api import Locator, Page
 
 from src.plugins.core.interfaces.publish_plugin import PublishResult
+from src.plugins.core.wait_helper import PluginWaitHelper
 from ._base import BasePublishStep, NeedsAction, StepOutcome
 from ..selectors import Selectors
 from ..shadow_mouse import (
@@ -245,9 +246,7 @@ class SubmitStep(BasePublishStep):
                 failed_step="SubmitStep",
             )
 
-        is_ready = False
-        for _ in range(60):
-            await self._await_pause(metadata)
+        async def _submit_button_ready() -> bool:
             try:
                 if isinstance(target_btn, Locator):
                     is_disabled = not await target_btn.is_enabled()
@@ -255,16 +254,20 @@ class SubmitStep(BasePublishStep):
                     is_disabled = await target_btn.evaluate("(node) => node.disabled")
             except Exception:
                 is_disabled = False
-            if not is_disabled:
-                is_ready = True
-                break
-            logger.info("[视频号] 发表按钮当前不可用，继续等待...")
-            try:
-                from src.infrastructure.anti_risk.delays import random_delay
+            return not is_disabled
 
-                await random_delay(page, wait_ms(3000), metadata, config)
-            except Exception:
-                await page.wait_for_timeout(wait_ms(3000))
+        is_ready = bool(
+            await PluginWaitHelper.wait_for_condition(
+                page,
+                _submit_button_ready,
+                timeout_ms=180_000,
+                poll_interval_ms=700,
+                pause_callback=lambda: self._await_pause(metadata),
+                on_poll=lambda _attempt: logger.info(
+                    "[???] ??????????????..."
+                ),
+            )
+        )
 
         if not is_ready:
             return PublishResult(

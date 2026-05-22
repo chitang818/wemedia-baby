@@ -27,6 +27,7 @@ from typing import Dict, Any, Optional
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
+from src.plugins.core.wait_helper import PluginWaitHelper
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from ._base import BasePublishStep, StepOutcome
 from .wizard_utils import dismiss_kuaishou_publish_guides
@@ -226,7 +227,12 @@ class EnterPublishEntryStep(BasePublishStep):
                     await tab.wait_for(state="visible", timeout=6000)
                     await tab.click()
                     logger.info("步骤2(图文): 已切换到「上传图文」Tab，sel=%s", sel)
-                    await page.wait_for_timeout(800)
+                    await PluginWaitHelper.wait_for_any_visible(
+                        page,
+                        Selectors.HOME.get("IMAGE_PUBLISH_PAGE_MARKERS", []),
+                        timeout_ms=3000,
+                        poll_interval_ms=250,
+                    )
                     return
             except Exception as e:
                 logger.debug("步骤2(图文): Tab 切换选择器 %s 失败: %s", sel, e)
@@ -266,10 +272,17 @@ class EnterPublishEntryStep(BasePublishStep):
                 error_message=f"发布页特征元素选择器未配置（{markers_key} 为空），请检查 selectors.py",
             )
 
-        ok = False
+        matched_marker = await PluginWaitHelper.wait_for_any_visible(
+            page,
+            markers,
+            timeout_ms=12000,
+            poll_interval_ms=300,
+            pause_callback=lambda: self._await_pause(metadata),
+        )
+        ok = bool(matched_marker)
         try:
             loc = page.locator(primary_marker).first
-            await loc.wait_for(state="visible", timeout=12000)
+            await loc.wait_for(state="visible", timeout=1 if ok else 12000)
             ok = True
             logger.info("已检测到发布页特征元素（is_visible）: %s", primary_marker)
         except Exception:

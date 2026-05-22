@@ -100,6 +100,7 @@ def move_sources_to_assign_target(
     返回成功移动的文件数量。
     """
     moved = 0
+    touched_bucket_dirs: Set[Path] = set()
     for src in source_paths:
         if not src.exists():
             continue
@@ -123,6 +124,8 @@ def move_sources_to_assign_target(
         try:
             shutil.move(str(src), str(dst))
             moved += 1
+            touched_bucket_dirs.add(src.parent)
+            touched_bucket_dirs.add(target_dir)
         except Exception as e:
             logger.warning("移动素材文件失败: %s -> %s (%s)", src, dst, e, exc_info=True)
     if moved > 0:
@@ -131,7 +134,7 @@ def move_sources_to_assign_target(
             from src.ui.utils.async_helper import run_async_from_ui
 
             svc = get_media_library_stats_service()
-            svc.invalidate(clear_cache=True)
+            svc.invalidate_bucket_paths(touched_bucket_dirs, kinds=("video",))
             run_async_from_ui(lambda: svc.refresh(min_interval_seconds=0))
         except Exception:
             logger.debug("移动视频后刷新媒体库统计失败", exc_info=True)
@@ -176,7 +179,10 @@ def move_folder_to_assign_target(
             from src.ui.utils.async_helper import run_async_from_ui
 
             svc = get_media_library_stats_service()
-            svc.invalidate(clear_cache=True)
+            svc.invalidate_bucket_paths(
+                [source_folder.parent, target_dir],
+                kinds=("image",),
+            )
             run_async_from_ui(lambda: svc.refresh(min_interval_seconds=0))
         except Exception:
             logger.debug("移动图文文件夹后刷新媒体库统计失败", exc_info=True)

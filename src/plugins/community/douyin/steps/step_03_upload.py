@@ -25,6 +25,7 @@ from typing import Dict, Any, Optional, List
 
 from playwright.async_api import Page
 
+from src.plugins.core.wait_helper import PluginWaitHelper
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from ._base import BasePublishStep, StepOutcome
 from ..selectors import Selectors
@@ -83,28 +84,27 @@ class UploadMediaStep(BasePublishStep):
         USER_LOG.info("[步骤3/9 上传视频/图文] 正在上传中，等待上传成功（最长 %d 秒）…", max_wait_seconds)
         speed_rate = max(0.5, float(metadata.get("speed_rate", 1.0)))
         # 唯一判定：出现 label.upload-btn-PdfuUv（重新上传）即代表视频已上传成功
-        success_marker = ", ".join(Selectors.PUBLISH["VIDEO_UPLOAD_SUCCESS_MARKER"])
-        for i in range(max_wait_seconds // 2):
-            await self._await_pause(metadata)
-            if await page.locator(success_marker).count() > 0:
-                logger.info("检测到「重新上传」按钮已出现，视频上传成功")
-                USER_LOG.info("[步骤3/9 上传视频/图文] ✓ 上传成功")
-                return None
+        success_markers = Selectors.PUBLISH["VIDEO_UPLOAD_SUCCESS_MARKER"]
 
-            elapsed = i * 2
-            if i % 30 == 0:
-                logger.info(f"等待上传中... ({elapsed}s/{max_wait_seconds}s)")
-            if i > 0 and i % 15 == 0:
+        def _log_wait(attempt: int) -> None:
+            elapsed = int(attempt * max(0.2, speed_rate))
+            if attempt % 60 == 0:
+                logger.info("等待上传中... (%ss/%ss)", elapsed, max_wait_seconds)
+            if attempt > 0 and attempt % 30 == 0:
                 USER_LOG.info("[步骤3/9 上传视频/图文] 正在上传中，已等待 %d 秒，等待「重新上传」按钮出现…", elapsed)
-            config = metadata.get("anti_risk_config") or {}
-            try:
-                from src.infrastructure.anti_risk.delays import random_delay
-                await random_delay(page, int(2000 * speed_rate), metadata, config)
-            except Exception:
-                await page.wait_for_timeout(int(2000 * speed_rate))
-            # 每轮让出一次事件循环控制权，防止长时间上传等待期间 Qt UI 无响应
-            import asyncio as _asyncio
-            await _asyncio.sleep(0)
+
+        matched = await PluginWaitHelper.wait_for_any_visible(
+            page,
+            success_markers,
+            timeout_ms=max_wait_seconds * 1000,
+            poll_interval_ms=max(200, int(1000 * speed_rate)),
+            pause_callback=lambda: self._await_pause(metadata),
+            on_poll=_log_wait,
+        )
+        if matched:
+            logger.info("检测到「重新上传」按钮已出现，视频上传成功: %s", matched)
+            USER_LOG.info("[步骤3/9 上传视频/图文] ✓ 上传成功")
+            return None
 
         return PublishResult(success=False, error_message=f"等待视频上传超时 ({max_wait_seconds}秒)")
 
@@ -152,27 +152,25 @@ class UploadMediaStep(BasePublishStep):
         USER_LOG.info("[步骤3/9 上传视频/图文] 正在上传图文，等待「清空并重新上传」出现（最长 %d 秒）…", max_wait_seconds)
         speed_rate = max(0.5, float(metadata.get("speed_rate", 1.0)))
 
-        for i in range(max_wait_seconds // 2):
-            await self._await_pause(metadata)
-            if await self._image_upload_success_visible(page):
-                logger.info("已检测到「清空并重新上传」按钮，图文上传成功")
-                USER_LOG.info("[步骤3/9 上传视频/图文] ✓ 上传成功")
-                return None
-
-            elapsed = i * 2
-            if i % 10 == 0:
-                logger.info(f"等待图文上传就绪... ({elapsed}s/{max_wait_seconds}s)")
-            if i > 0 and i % 15 == 0:
+        def _log_wait(attempt: int) -> None:
+            elapsed = int(attempt * max(0.2, speed_rate))
+            if attempt % 20 == 0:
+                logger.info("等待图文上传就绪... (%ss/%ss)", elapsed, max_wait_seconds)
+            if attempt > 0 and attempt % 30 == 0:
                 USER_LOG.info("[步骤3/9 上传视频/图文] 正在上传图文，已等待 %d 秒，等待「清空并重新上传」…", elapsed)
-            config = metadata.get("anti_risk_config") or {}
-            try:
-                from src.infrastructure.anti_risk.delays import random_delay
-                await random_delay(page, int(2000 * speed_rate), metadata, config)
-            except Exception:
-                await page.wait_for_timeout(int(2000 * speed_rate))
-            # 每轮让出一次事件循环控制权，防止长时间上传等待期间 Qt UI 无响应
-            import asyncio as _asyncio
-            await _asyncio.sleep(0)
+
+        matched = await PluginWaitHelper.wait_for_condition(
+            page,
+            lambda: self._image_upload_success_visible(page),
+            timeout_ms=max_wait_seconds * 1000,
+            poll_interval_ms=max(200, int(1000 * speed_rate)),
+            pause_callback=lambda: self._await_pause(metadata),
+            on_poll=_log_wait,
+        )
+        if matched:
+            logger.info("已检测到「清空并重新上传」按钮，图文上传成功")
+            USER_LOG.info("[步骤3/9 上传视频/图文] ✓ 上传成功")
+            return None
 
         return PublishResult(
             success=False,

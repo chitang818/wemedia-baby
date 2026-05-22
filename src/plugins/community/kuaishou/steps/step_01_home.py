@@ -14,6 +14,7 @@ from typing import Dict, Any, Optional
 
 from playwright.async_api import Page
 
+from src.plugins.core.wait_helper import PluginWaitHelper
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from ._base import BasePublishStep, StepOutcome
 from ..selectors import Selectors
@@ -38,7 +39,12 @@ class NavigateHomeStep(BasePublishStep):
         wait_after_nav = int(3000 * speed_rate)
         try:
             await page.goto(self.home_url, timeout=30000, wait_until="domcontentloaded")
-            await page.wait_for_timeout(wait_after_nav)
+            await PluginWaitHelper.wait_for_load_state_or_timeout(
+                page,
+                state="networkidle",
+                timeout_ms=wait_after_nav,
+                fallback_ms=300,
+            )
 
             current_url = page.url
             logger.info(f"当前页面 URL: {current_url}")

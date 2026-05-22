@@ -99,6 +99,8 @@ class UploadMediaStep(BasePublishStep):
         logger.info(f"等待上传就绪（最长 {max_wait_seconds} 秒）…")
         USER_LOG.info(f"[步骤3 上传] 正在上传中（最长 {max_wait_seconds} 秒）…")
         speed_rate = max(0.5, float(metadata.get("speed_rate", 1.0)))
+        poll_ms = max(300, int(700 * speed_rate))
+        max_attempts = max(1, int(max_wait_seconds * 1000 / poll_ms))
 
         success_selectors = (
             Selectors.PUBLISH["UPLOAD_SUCCESS_MARKER"]
@@ -106,7 +108,7 @@ class UploadMediaStep(BasePublishStep):
         )
         combined = ", ".join(success_selectors)
 
-        for i in range(max_wait_seconds // 2):
+        for i in range(max_attempts):
             await self._await_pause(metadata)
 
             try:
@@ -117,18 +119,13 @@ class UploadMediaStep(BasePublishStep):
             except Exception:
                 pass
 
-            elapsed = i * 2
+            elapsed = int(i * poll_ms / 1000)
             if i % 30 == 0 and i > 0:
                 logger.info(f"等待上传中… ({elapsed}s/{max_wait_seconds}s)")
             if i > 0 and i % 15 == 0:
                 USER_LOG.info(f"[步骤3 上传] 正在上传中，已等待 {elapsed} 秒…")
 
-            config = metadata.get("anti_risk_config") or {}
-            try:
-                from src.infrastructure.anti_risk.delays import random_delay
-                await random_delay(page, int(2000 * speed_rate), metadata, config)
-            except Exception:
-                await page.wait_for_timeout(int(2000 * speed_rate))
+            await page.wait_for_timeout(poll_ms)
 
         return PublishResult(success=False, error_message=f"等待上传超时 ({max_wait_seconds}秒)")
 
@@ -181,7 +178,7 @@ class UploadMediaStep(BasePublishStep):
 
         thumb_selector = ", ".join(Selectors.PUBLISH["IMAGE_THUMBNAIL"])
 
-        for i in range(max_wait_seconds // 2):
+        for i in range(max_attempts):
             await self._await_pause(metadata)
             try:
                 cnt = await page.locator(thumb_selector).count()
@@ -192,17 +189,12 @@ class UploadMediaStep(BasePublishStep):
             except Exception:
                 pass
 
-            elapsed = i * 2
+            elapsed = int(i * poll_ms / 1000)
             if i % 10 == 0 and i > 0:
                 logger.info(f"等待图片就绪… ({elapsed}s/{max_wait_seconds}s)")
             if i > 0 and i % 15 == 0:
                 USER_LOG.info(f"[步骤3 上传] 正在上传图文，已等待 {elapsed} 秒…")
 
-            config = metadata.get("anti_risk_config") or {}
-            try:
-                from src.infrastructure.anti_risk.delays import random_delay
-                await random_delay(page, int(2000 * speed_rate), metadata, config)
-            except Exception:
-                await page.wait_for_timeout(int(2000 * speed_rate))
+            await page.wait_for_timeout(poll_ms)
 
         return PublishResult(success=False, error_message=f"等待图片上传就绪超时 ({max_wait_seconds}秒)")

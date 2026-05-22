@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 import aiohttp
 
 from src.plugins.core.interfaces.login_plugin import LoginPluginInterface, LoginResult
+from src.plugins.core.wait_helper import PluginWaitHelper
 from .selectors import Selectors
 from .scripts import LOGIN_DETECTION_SCRIPT
 
@@ -204,7 +205,12 @@ class WechatVideoLoginPlugin(LoginPluginInterface):
             # 视频号昵称由 JS 渲染，优先等待核心用户信息 DOM 渲染
             try:
                 await target_page.wait_for_selector(".account-info, .finder-nickname, .account-name", state="attached", timeout=10000)
-                await target_page.wait_for_timeout(1000)
+                await PluginWaitHelper.wait_for_condition(
+                    target_page,
+                    lambda: self._login_script_has_username(target_page),
+                    timeout_ms=3000,
+                    poll_interval_ms=500,
+                )
             except Exception:
                 try:
                     await target_page.wait_for_load_state("networkidle", timeout=3000)
@@ -261,6 +267,14 @@ class WechatVideoLoginPlugin(LoginPluginInterface):
             nickname=nickname,
             error_message=None if success else "未能提取到账号昵称"
         )
+
+    async def _login_script_has_username(self, page) -> bool:
+        try:
+            result_json = await page.evaluate(LOGIN_DETECTION_SCRIPT)
+            result = json.loads(result_json)
+            return bool(result.get("username"))
+        except Exception:
+            return False
 
     def _parse_platform_nickname_from_auth_data(self, inner: dict) -> Optional[str]:
         """

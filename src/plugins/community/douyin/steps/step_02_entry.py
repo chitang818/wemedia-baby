@@ -180,7 +180,6 @@ class EnterPublishEntryStep(BasePublishStep):
                         page, file_type, url_before_click, wait_route_ms
                     )
                     if not ok_route:
-                        await page.wait_for_timeout(int(800 * speed_rate))
                         url_after_click = page.url or ""
                         ok_route = _url_matches_publish_route(url_after_click, file_type)
 
@@ -229,7 +228,9 @@ class EnterPublishEntryStep(BasePublishStep):
                         except Exception:
                             await hd_btn.click()
                         # 高清发布进入后需等待页面跳转（进入任意发布域即可，后续 Tab 切换）
-                        await page.wait_for_timeout(int(1500 * speed_rate))
+                        await self._wait_publish_route(
+                            page, file_type, url_before_hd, wait_route_ms
+                        )
                         cur_after_hd = page.url or ""
                         if cur_after_hd and cur_after_hd != url_before_hd:
                             logger.info("已通过「高清发布」入口进入: %s", cur_after_hd)

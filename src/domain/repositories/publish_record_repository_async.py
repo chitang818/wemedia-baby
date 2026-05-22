@@ -7,6 +7,7 @@ from typing import Optional, List, Dict, Any, Set, Tuple
 import logging
 from datetime import datetime, date, timedelta
 
+from tortoise import Tortoise
 from tortoise.functions import Max
 
 from .base_repository_async import BaseRepositoryAsync
@@ -245,6 +246,7 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
         self,
         user_id: Optional[int] = None,
         limit: int = 5000,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """回收站：status 为 deleted_pending / deleted_success 的记录。"""
         try:
@@ -256,6 +258,7 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
             records = await (
                 PublishRecord.filter(**filters)
                 .order_by("-updated_at")
+                .offset(offset)
                 .limit(limit)
                 .all()
             )
@@ -264,6 +267,23 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
             return out
         except Exception as e:
             self.handle_error(e, "find_deleted_records")
+            return []
+
+    async def find_deleted_record_ids(
+        self,
+        user_id: Optional[int] = None,
+    ) -> List[int]:
+        """Return all recycle-bin record ids for bulk cleanup."""
+        try:
+            filters: Dict[str, Any] = {
+                "status__in": ["deleted_pending", "deleted_success"],
+            }
+            if user_id is not None:
+                filters["user_id"] = user_id
+            rows = await PublishRecord.filter(**filters).values_list("id", flat=True)
+            return [int(x) for x in rows if x is not None]
+        except Exception as e:
+            self.handle_error(e, "find_deleted_record_ids")
             return []
 
     async def find_records(
@@ -336,6 +356,126 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
         except Exception as e:
             self.handle_error(e, "count_records")
             return 0
+
+    def _active_dashboard_queryset(self):
+        """工作台统计用：排除回收站软删除记录。"""
+        return PublishRecord.filter(status__not_in=list(_DELETED_STATUSES))
+
+    @retry_on_locked()
+    async def aggregate_today_publish_counts(self) -> Dict[str, int]:
+        """今日发布各状态计数（SQL count，不拉全表）。"""
+        try:
+            today = date.today()
+            today_start = datetime.combine(today, datetime.min.time())
+            tomorrow_start = today_start + timedelta(days=1)
+            base = self._active_dashboard_queryset().filter(
+                created_at__gte=today_start,
+                created_at__lt=tomorrow_start,
+            )
+            today_count = await base.count()
+            today_success = await base.filter(status="success").count()
+            today_failed = await base.filter(status="failed").count()
+            today_pending = await base.filter(status="pending").count()
+            today_running = await base.filter(status="running").count()
+            return {
+                "today_count": today_count,
+                "today_success": today_success,
+                "today_failed": today_failed,
+                "today_pending": today_pending,
+                "today_running": today_running,
+            }
+        except Exception as e:
+            self.handle_error(e, "aggregate_today_publish_counts")
+            return {
+                "today_count": 0,
+                "today_success": 0,
+                "today_failed": 0,
+                "today_pending": 0,
+                "today_running": 0,
+            }
+
+    @retry_on_locked()
+    async def count_active_publish_by_status(self) -> Dict[str, int]:
+        """有效发布记录按状态计数（排除回收站）。"""
+        try:
+            base = self._active_dashboard_queryset()
+            success = await base.filter(status="success").count()
+            failed = await base.filter(status="failed").count()
+            pending = await base.filter(status__in=["pending", "running"]).count()
+            total = await base.count()
+            return {
+                "total": total,
+                "success": success,
+                "failed": failed,
+                "pending": pending,
+            }
+        except Exception as e:
+            self.handle_error(e, "count_active_publish_by_status")
+            return {"total": 0, "success": 0, "failed": 0, "pending": 0}
+
+    @retry_on_locked()
+    async def count_finished_publish_since(self, since: datetime) -> Dict[str, int]:
+        """自 since 起已完成（success+failed）记录数，用于近 7 天成功率。"""
+        try:
+            base = self._active_dashboard_queryset().filter(
+                created_at__gte=since,
+                status__in=["success", "failed"],
+            )
+            finished_total = await base.count()
+            finished_success = await base.filter(status="success").count()
+            return {
+                "finished_total": finished_total,
+                "finished_success": finished_success,
+            }
+        except Exception as e:
+            self.handle_error(e, "count_finished_publish_since")
+            return {"finished_total": 0, "finished_success": 0}
+
+    @retry_on_locked()
+    async def aggregate_daily_publish_trend(self, days: int = 14) -> List[Dict[str, Any]]:
+        """近 N 天按日+状态聚合（SQL GROUP BY，供趋势图）。"""
+        if days < 1:
+            days = 14
+        try:
+            today = date.today()
+            since_day = today - timedelta(days=days - 1)
+            since_dt = datetime.combine(since_day, datetime.min.time())
+            conn = Tortoise.get_connection("default")
+            result = await conn.execute_query(
+                """
+                SELECT date(created_at) AS day, status, COUNT(*) AS cnt
+                FROM publish_records
+                WHERE status NOT IN ('deleted_pending', 'deleted_success')
+                  AND created_at >= ?
+                GROUP BY date(created_at), status
+                """,
+                [since_dt.isoformat(sep=" ", timespec="seconds")],
+            )
+            rows = result[1] if isinstance(result, tuple) and len(result) > 1 else []
+            buckets: Dict[str, Dict[str, int]] = {}
+            for i in range(days):
+                d = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+                buckets[d] = {"count": 0, "success": 0, "failed": 0}
+            for row in rows or []:
+                if not row or len(row) < 3:
+                    continue
+                day_key = str(row[0])[:10]
+                status = str(row[1])
+                try:
+                    cnt = int(row[2])
+                except (TypeError, ValueError):
+                    cnt = 0
+                if day_key not in buckets:
+                    continue
+                buckets[day_key]["count"] += cnt
+                if status == "success":
+                    buckets[day_key]["success"] += cnt
+                elif status == "failed":
+                    buckets[day_key]["failed"] += cnt
+            return [{"date": d, **buckets[d]} for d in sorted(buckets.keys())]
+        except Exception as e:
+            self.handle_error(e, "aggregate_daily_publish_trend")
+            return []
 
     @retry_on_locked()
     async def list_active_publish_rows_for_duplicate_check(

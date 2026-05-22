@@ -108,9 +108,9 @@ class MetadataFillStep(BasePublishStep):
                         await edit_box.type(desc_text, delay=desc_delay)
                         try:
                             from src.infrastructure.anti_risk.delays import random_delay
-                            await random_delay(page, wait_ms(800), metadata, config)
+                            await random_delay(page, wait_ms(400), metadata, config)
                         except Exception:
-                            await page.wait_for_timeout(wait_ms(800))
+                            await page.wait_for_timeout(wait_ms(400))
 
                         desc_display = (desc_text[:35] + "…") if len(desc_text) > 35 else (desc_text or "（空）")
                         USER_LOG.info(f"[步骤4 作品描述] ✓ 简介已填写：{desc_display}")

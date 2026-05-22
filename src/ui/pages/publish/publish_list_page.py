@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QSizePolicy,
     QAbstractItemView,
+    QDialog,
 )
 from PySide6.QtCore import Qt, QObject, Signal, Slot, QTimer
 
@@ -122,6 +123,13 @@ class PublishListPage(PublishRecordsPage):
         # 媒体库规则自动改写发布后文件处理后，待弹窗展示的说明（进入待发布页或本页刷新后弹出）
         self._pending_publish_policy_modal_hint: Optional[str] = None
 
+    def _get_record_by_id(self, task_id: Any) -> Optional[Dict[str, Any]]:
+        try:
+            tid_int = int(task_id)
+        except (TypeError, ValueError):
+            return None
+        return (getattr(self, "_records_by_id", {}) or {}).get(tid_int)
+
     def _update_task_status_in_memory(self, task_id: int, new_status: str, error_message: str = "") -> None:
         """在内存缓存中更新任务状态。
 
@@ -130,12 +138,17 @@ class PublishListPage(PublishRecordsPage):
         - failed/pending 状态：只更新状态列文本，保留在表格中
         发布循环结束后的整表刷新由 _load_publish_records() 负责。
         """
-        for rec in self.publish_records:
-            if rec.get("id") == task_id:
-                rec["status"] = new_status
-                if error_message:
-                    rec["error_message"] = error_message
-                break
+        rec = self._get_record_by_id(task_id)
+        if rec is not None:
+            rec["status"] = new_status
+            if error_message:
+                rec["error_message"] = error_message
+            try:
+                self._record_filter_meta_by_id[int(task_id)] = self._build_record_filter_meta(rec)
+            except (TypeError, ValueError):
+                pass
+            self._records_version += 1
+            self._last_filter_render_state = None
         # 同步更新 _filtered_records 缓存中的状态
         filtered = getattr(self, "_filtered_records", None) or []
         for rec in filtered:
@@ -173,39 +186,105 @@ class PublishListPage(PublishRecordsPage):
         # 从 publish_records（内存总缓存）中也移除，避免后续计算残留
         if hasattr(self, "publish_records"):
             self.publish_records = [r for r in self.publish_records if r.get("id") != tid_int]
+            self._account_filter_options_cache = None
+            self._records_version += 1
+            self._last_filter_render_state = None
+        try:
+            self._records_by_id.pop(tid_int, None)
+        except Exception:
+            pass
+        try:
+            self._record_filter_meta_by_id.pop(tid_int, None)
+        except Exception:
+            pass
 
-        # 找到并移除表格行
-        found_row = -1
-        cached_row = getattr(self, "_highlighted_task_row", -1)
-        if cached_row >= 0 and cached_row < table.rowCount():
-            it = table.item(cached_row, 0)
-            if it is not None:
-                try:
-                    if int(it.data(Qt.UserRole)) == tid_int:
-                        found_row = cached_row
-                except (TypeError, ValueError):
-                    pass
-
-        if found_row < 0:
-            for r in range(table.rowCount()):
-                it = table.item(r, 0)
-                if it is None:
-                    continue
-                try:
-                    if int(it.data(Qt.UserRole)) == tid_int:
-                        found_row = r
-                        break
-                except (TypeError, ValueError):
-                    continue
+        found_row = self._find_record_row(tid_int)
 
         if found_row >= 0:
             table.blockSignals(True)
             try:
                 table.removeRow(found_row)
-                # 缓存行号失效，重置
+                # 删除一行后仅后续视觉行号左移 1，无需重扫整张表。
                 self._highlighted_task_row = -1
+                self._shift_record_row_index_after_remove(tid_int, found_row)
             finally:
                 table.blockSignals(False)
+
+    def _find_record_row(self, task_id: int) -> int:
+        """按记录 id 查找当前表格行，优先使用 row index，失败再扫描兜底。"""
+        table = getattr(self, "records_table", None)
+        if table is None:
+            return -1
+        try:
+            tid_int = int(task_id)
+        except (TypeError, ValueError):
+            return -1
+
+        for candidate in (
+            getattr(self, "_highlighted_task_row", -1),
+            (getattr(self, "_row_by_record_id", {}) or {}).get(tid_int, -1),
+        ):
+            try:
+                row = int(candidate)
+            except (TypeError, ValueError):
+                continue
+            if row < 0 or row >= table.rowCount():
+                continue
+            it = table.item(row, 0)
+            if it is None:
+                continue
+            try:
+                if int(it.data(Qt.UserRole)) == tid_int:
+                    return row
+            except (TypeError, ValueError):
+                continue
+
+        for row in range(table.rowCount()):
+            it = table.item(row, 0)
+            if it is None:
+                continue
+            try:
+                if int(it.data(Qt.UserRole)) == tid_int:
+                    try:
+                        self._row_by_record_id[tid_int] = row
+                    except Exception:
+                        pass
+                    return row
+            except (TypeError, ValueError):
+                continue
+        return -1
+
+    def _rebuild_record_row_index(self) -> None:
+        table = getattr(self, "records_table", None)
+        if table is None:
+            return
+        row_by_id: Dict[int, int] = {}
+        for row in range(table.rowCount()):
+            it = table.item(row, 0)
+            if it is None:
+                continue
+            try:
+                row_by_id[int(it.data(Qt.UserRole))] = row
+            except (TypeError, ValueError):
+                continue
+        self._row_by_record_id = row_by_id
+
+    def _shift_record_row_index_after_remove(self, removed_id: int, removed_row: int) -> None:
+        """表格删除一行后增量维护 id->row 索引，避免发布循环中每次成功都全表扫描。"""
+        current = getattr(self, "_row_by_record_id", None)
+        if not current:
+            return
+        updated: Dict[int, int] = {}
+        for rid, row in current.items():
+            try:
+                rid_int = int(rid)
+                row_int = int(row)
+            except (TypeError, ValueError):
+                continue
+            if rid_int == removed_id or row_int == removed_row:
+                continue
+            updated[rid_int] = row_int - 1 if row_int > removed_row else row_int
+        self._row_by_record_id = updated
 
     def _update_single_row_status(self, task_id: int, new_status: str, error_message: str = "") -> None:
         """发布循环期间的增量状态列更新：仅改变目标行的状态列文本，不重建整张表。"""
@@ -225,44 +304,18 @@ class PublishListPage(PublishRecordsPage):
         except (TypeError, ValueError):
             return
 
-        # 优先检查缓存行号（_highlight_current_publishing_task 会写入）
-        cached_row = getattr(self, "_highlighted_task_row", -1)
-        if cached_row >= 0 and cached_row < table.rowCount():
-            it = table.item(cached_row, 0)
-            if it is not None:
-                try:
-                    if int(it.data(Qt.UserRole)) == tid_int:
-                        item = QTableWidgetItem(display_text)
-                        item.setTextAlignment(
-                            Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
-                        )
-                        table.blockSignals(True)
-                        try:
-                            table.setItem(cached_row, self.COL_STATUS, item)
-                        finally:
-                            table.blockSignals(False)
-                        return
-                except (TypeError, ValueError):
-                    pass
-        # 缓存命中失败则线性扫描
-        for r in range(table.rowCount()):
-            it = table.item(r, 0)
-            if it is None:
-                continue
-            try:
-                if int(it.data(Qt.UserRole)) == tid_int:
-                    item = QTableWidgetItem(display_text)
-                    item.setTextAlignment(
-                        Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
-                    )
-                    table.blockSignals(True)
-                    try:
-                        table.setItem(r, self.COL_STATUS, item)
-                    finally:
-                        table.blockSignals(False)
-                    return
-            except (TypeError, ValueError):
-                continue
+        row = self._find_record_row(tid_int)
+        if row < 0:
+            return
+        item = QTableWidgetItem(display_text)
+        item.setTextAlignment(
+            Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
+        )
+        table.blockSignals(True)
+        try:
+            table.setItem(row, self.COL_STATUS, item)
+        finally:
+            table.blockSignals(False)
 
     def _schedule_table_refresh(self) -> None:
         """通过防抖定时器延迟刷新表格，将短时间内多次更新合并为一次 DOM 操作。"""
@@ -468,11 +521,12 @@ class PublishListPage(PublishRecordsPage):
             self.task_description_card.set_task(self._record_with_ui_publish_status(rec))
 
     def _on_task_selection_changed(self):
-        rows = []
-        try:
-            rows = [idx.row() for idx in self.records_table.selectionModel().selectedRows()]
-        except Exception:
-            rows = []
+        rows = list(getattr(self, "_selected_rows_cache", None) or [])
+        if not rows:
+            try:
+                rows = [idx.row() for idx in self.records_table.selectionModel().selectedRows()]
+            except Exception:
+                rows = []
         if not rows:
             if hasattr(self, "task_description_card"):
                 self.task_description_card.clear()
@@ -492,9 +546,9 @@ class PublishListPage(PublishRecordsPage):
                     except (TypeError, ValueError):
                         rid_int = None
                     if rid_int is not None:
-                        for r in getattr(self, "_filtered_records", None) or []:
-                            if r.get("id") == rid_int:
-                                return r
+                        rec = (getattr(self, "_records_by_id", {}) or {}).get(rid_int)
+                        if rec is not None:
+                            return rec
         records = getattr(self, "_filtered_records", None) or []
         if 0 <= row < len(records):
             return records[row]
@@ -597,19 +651,22 @@ class PublishListPage(PublishRecordsPage):
         """应用筛选后刷新任务统计卡片，并按记录 id 恢复选中行与任务说明（避免列表重载后说明滞后或错位）。"""
         preserved_ids: List[int] = []
         if hasattr(self, "records_table"):
-            sm = self.records_table.selectionModel()
-            if sm is not None:
-                for idx in sm.selectedRows():
-                    rid_item = self.records_table.item(idx.row(), 0)
-                    if rid_item is None:
-                        continue
-                    rid = rid_item.data(Qt.UserRole)
-                    if rid is None:
-                        continue
-                    try:
-                        preserved_ids.append(int(rid))
-                    except (TypeError, ValueError):
-                        pass
+            rows = list(getattr(self, "_selected_rows_cache", None) or [])
+            if not rows:
+                sm = self.records_table.selectionModel()
+                if sm is not None:
+                    rows = [idx.row() for idx in sm.selectedRows()]
+            for row in rows:
+                rid_item = self.records_table.item(row, 0)
+                if rid_item is None:
+                    continue
+                rid = rid_item.data(Qt.UserRole)
+                if rid is None:
+                    continue
+                try:
+                    preserved_ids.append(int(rid))
+                except (TypeError, ValueError):
+                    pass
 
         super()._apply_filters(skip_account_rebuild=skip_account_rebuild)
         self._sync_post_publish_action_from_material_rules()
@@ -621,23 +678,11 @@ class PublishListPage(PublishRecordsPage):
 
         if preserved_ids:
             target_id = preserved_ids[0]
-            rec = next(
-                (r for r in (getattr(self, "_filtered_records", None) or []) if r.get("id") == target_id),
-                None,
-            )
+            rec = (getattr(self, "_records_by_id", {}) or {}).get(target_id)
             if rec is None:
                 self.task_description_card.clear()
                 return
-            found_row = -1
-            for r in range(self.records_table.rowCount()):
-                it = self.records_table.item(r, 0)
-                if it is not None and it.data(Qt.UserRole) is not None:
-                    try:
-                        if int(it.data(Qt.UserRole)) == target_id:
-                            found_row = r
-                            break
-                    except (TypeError, ValueError):
-                        continue
+            found_row = self._find_record_row(target_id)
             if found_row >= 0:
                 self.records_table.blockSignals(True)
                 try:
@@ -756,32 +801,7 @@ class PublishListPage(PublishRecordsPage):
             except (TypeError, ValueError):
                 return
 
-            # 优先检查上次缓存的行号，避免每次从第 0 行全表扫描
-            found_row = -1
-            cached_row = getattr(self, "_highlighted_task_row", -1)
-            if cached_row >= 0 and cached_row < table.rowCount():
-                it = table.item(cached_row, 0)
-                if it is not None:
-                    try:
-                        if int(it.data(Qt.UserRole)) == tid_int:
-                            found_row = cached_row
-                    except (TypeError, ValueError):
-                        pass
-
-            if found_row < 0:
-                for r in range(table.rowCount()):
-                    it = table.item(r, 0)
-                    if it is None:
-                        continue
-                    rid = it.data(Qt.UserRole)
-                    if rid is None:
-                        continue
-                    try:
-                        if int(rid) == tid_int:
-                            found_row = r
-                            break
-                    except (TypeError, ValueError):
-                        continue
+            found_row = self._find_record_row(tid_int)
 
             if found_row < 0:
                 self._highlighted_task_row = -1
@@ -836,10 +856,12 @@ class PublishListPage(PublishRecordsPage):
         if not self._current_user_svc.is_logged_in():
             try:
                 from src.ui.dialogs.login_dialog import LoginDialog
+                from src.ui.utils.async_helper import await_qdialog_finished
                 parent = self.window() or self
                 dialog = LoginDialog(parent)
                 dialog.login_success.connect(self._refresh_user_id)
-                if not dialog.exec():
+                code = await await_qdialog_finished(dialog)
+                if code != int(QDialog.DialogCode.Accepted):
                     InfoBar.warning(
                         "已取消登录",
                         "批量发布需先登录媒小宝软件账号；各平台发布账号请在账号库中登录维护。",
@@ -1308,7 +1330,7 @@ class PublishListPage(PublishRecordsPage):
                 while _pending_deque:
                     _head = _pending_deque[0]
                     _head_id = _head.get("id")
-                    _live = self._records_by_id.get(_head_id)
+                    _live = self._get_record_by_id(_head_id)
                     if _live and _live.get("status") == "pending":
                         break
                     _pending_deque.popleft()
@@ -1318,9 +1340,12 @@ class PublishListPage(PublishRecordsPage):
                     max_retry = getattr(lsd, 'get_publish_queue_retry_count', lambda: 0)()
                     if _current_retry_count < max_retry:
                         failed_in_scope = [
-                            r for r in self.publish_records
-                            if r.get("id") in self._publish_queue_scoped_ids
-                            and r.get("status") == "failed"
+                            r
+                            for r in (
+                                self._get_record_by_id(rid)
+                                for rid in (self._publish_queue_scoped_ids or ())
+                            )
+                            if r and r.get("status") == "failed"
                         ]
                         if failed_in_scope:
                             _current_retry_count += 1
@@ -1815,13 +1840,15 @@ class PublishListPage(PublishRecordsPage):
         )
         # 已清空「发布中」覆盖，刷新任务说明避免徽章仍停在「发布中」
         if hasattr(self, "task_description_card") and hasattr(self, "records_table"):
-            try:
-                sel_rows = [
-                    idx.row()
-                    for idx in self.records_table.selectionModel().selectedRows()
-                ]
-            except Exception:
-                sel_rows = []
+            sel_rows = list(getattr(self, "_selected_rows_cache", None) or [])
+            if not sel_rows:
+                try:
+                    sel_rows = [
+                        idx.row()
+                        for idx in self.records_table.selectionModel().selectedRows()
+                    ]
+                except Exception:
+                    sel_rows = []
             if sel_rows:
                 rec = self._get_record_by_row(sel_rows[0])
                 self.task_description_card.set_task(
@@ -1990,9 +2017,8 @@ class PublishListPage(PublishRecordsPage):
     def _on_context_menu(self, pos):
         """发布列表页右键菜单：失败任务可「重新发布」改为待发布，支持多选"""
         table = self.records_table
-        # selectedRows() 只返回行索引（每行一个），比 selectedIndexes()（每行×列数）快得多
-        row_indexes = table.selectionModel().selectedRows()
-        if not row_indexes:
+        selected_rows = list(getattr(self, "_selected_rows_cache", None) or [])
+        if not selected_rows:
             item = table.itemAt(pos)
             if not item:
                 return
@@ -2004,7 +2030,7 @@ class PublishListPage(PublishRecordsPage):
                 sm.blockSignals(False)
             selected_rows = [item.row()]
         else:
-            selected_rows = sorted({idx.row() for idx in row_indexes})
+            selected_rows = sorted(set(selected_rows))
 
         failed_records: List[dict] = []
         # 使用 id 索引字典（O(1) 查找），兜底走线性查找
@@ -2015,9 +2041,7 @@ class PublishListPage(PublishRecordsPage):
                 continue
             try:
                 rid = int(rid_item.data(Qt.UserRole))
-                rec = records_by_id.get(rid) or next(
-                    (r for r in self.publish_records if r.get('id') == rid), None
-                )
+                rec = records_by_id.get(rid)
                 if rec and rec.get('status') == 'failed':
                     failed_records.append(rec)
             except (ValueError, TypeError):

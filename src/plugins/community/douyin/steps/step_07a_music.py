@@ -104,7 +104,7 @@ class SelectMusicStep(BasePublishStep):
                 opened = True
                 break
             logger.warning("选择音乐：[步骤1] 第 %d 次抽屉未出现，等待后重试", attempt)
-            await page.wait_for_timeout(1500)
+            await page.wait_for_timeout(500)
 
         if not opened:
             USER_LOG.error("选择音乐 ✗ 无法打开音乐抽屉")
@@ -114,7 +114,7 @@ class SelectMusicStep(BasePublishStep):
         category = (metadata.get("music_category") or "推荐").strip()
         if category != "推荐":
             await self._switch_tab(page, category)
-            await page.wait_for_timeout(800)
+            await self._wait_music_list_loaded(page, 3_000)
 
         # 搜索关键字（可选）。新版图文音乐抽屉默认不展示搜索框；
         # 指定音乐此时会在当前已加载列表里匹配，找不到则明确失败。
@@ -420,7 +420,6 @@ class SelectMusicStep(BasePublishStep):
                 selected = (await tab.get_attribute("aria-selected")) or ""
                 if selected != "true":
                     await tab.click()
-                    await page.wait_for_timeout(800)
                 logger.info("选择音乐：Tab 切换到「%s」", category)
                 return
         except Exception:
@@ -436,7 +435,6 @@ class SelectMusicStep(BasePublishStep):
                     selected = (await tab.get_attribute("aria-selected")) or ""
                     if selected != "true":
                         await tab.click()
-                        await page.wait_for_timeout(800)
                     logger.info("选择音乐：Tab 切换到「%s」（枚举）", category)
                     return
         except Exception:
@@ -456,7 +454,7 @@ class SelectMusicStep(BasePublishStep):
                 await page.wait_for_timeout(200)
                 await inp.fill(keyword)
                 await inp.press("Enter")
-                await page.wait_for_timeout(1500)
+                await self._wait_music_list_loaded(page, 3_000)
                 logger.info("选择音乐：已搜索「%s」", keyword[:20])
                 return True
         except Exception as e:

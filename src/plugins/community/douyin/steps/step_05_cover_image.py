@@ -29,6 +29,7 @@ from typing import Dict, Any, Optional
 
 from playwright.async_api import Page, Locator
 
+from src.plugins.core.wait_helper import PluginWaitHelper
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from ._base import BasePublishStep, StepOutcome
 from ..selectors import Selectors
@@ -74,11 +75,7 @@ class CoverImageStep(BasePublishStep):
                         await human_click(page, btn, metadata, config)
                     except Exception:
                         await btn.click()
-                    try:
-                        from src.infrastructure.anti_risk.delays import random_delay
-                        await random_delay(page, 800, metadata, config)
-                    except Exception:
-                        await page.wait_for_timeout(800)
+                    await self._wait_cover_modal_open(page, timeout_ms=1500)
                     logger.info(f"已点击图文封面按钮: {selector}")
                     USER_LOG.info("图文封面 ▶ 已点击封面入口")
                     break
@@ -124,6 +121,47 @@ class CoverImageStep(BasePublishStep):
             except Exception:
                 continue
         return False
+
+    async def _wait_cover_modal_open(self, page: Page, timeout_ms: int = 1500) -> bool:
+        matched = await PluginWaitHelper.wait_for_any_visible(
+            page,
+            Selectors.PUBLISH.get("COVER_MODAL", []),
+            timeout_ms=timeout_ms,
+            poll_interval_ms=200,
+        )
+        return bool(matched)
+
+    async def _wait_cover_modal_closed(self, page: Page, timeout_ms: int = 1500) -> bool:
+        async def _closed() -> bool:
+            return not await self._is_cover_modal_open(page)
+
+        return bool(
+            await PluginWaitHelper.wait_for_condition(
+                page,
+                _closed,
+                timeout_ms=timeout_ms,
+                poll_interval_ms=200,
+            )
+        )
+
+    async def _wait_confirm_visible(self, page: Page, modal_scope: Locator, timeout_ms: int = 3000) -> Optional[Locator]:
+        async def _find_confirm() -> Optional[Locator]:
+            for confirm_sel in Selectors.PUBLISH.get("COVER_CONFIRM_BTN", []):
+                try:
+                    cbtn = modal_scope.locator(confirm_sel).first
+                    if await cbtn.count() > 0 and await cbtn.is_visible():
+                        return cbtn
+                except Exception:
+                    continue
+            return None
+
+        found = await PluginWaitHelper.wait_for_condition(
+            page,
+            _find_confirm,
+            timeout_ms=timeout_ms,
+            poll_interval_ms=250,
+        )
+        return found if isinstance(found, Locator) else None
 
     async def _handle_cover_modal(
         self, page: Page, metadata: Dict[str, Any], cover_type: str, cover_path: str
@@ -172,7 +210,7 @@ class CoverImageStep(BasePublishStep):
                 btn = cover_modal_scope.locator(selector).first
                 if await btn.count() > 0 and await btn.is_visible():
                     await btn.click()
-                    await page.wait_for_timeout(800)
+                    await self._wait_cover_modal_closed(page, timeout_ms=1500)
                     logger.info(f"已确认图文封面: {selector}")
                     USER_LOG.info("图文封面 ✓ 已确认")
                     return None
@@ -195,7 +233,7 @@ class CoverImageStep(BasePublishStep):
                 btn = modal_scope.locator(sel).first
                 if await btn.count() > 0 and await btn.is_visible():
                     await btn.click()
-                    await page.wait_for_timeout(800)
+                    await self._wait_confirm_visible(page, modal_scope, timeout_ms=1500)
                     break
             except Exception:
                 continue
@@ -204,16 +242,11 @@ class CoverImageStep(BasePublishStep):
                 inp = modal_scope.locator(sel).first
                 if await inp.count() > 0:
                     await inp.set_input_files(cover_path)
-                    await page.wait_for_timeout(2000)
-                    for confirm_sel in Selectors.PUBLISH.get("COVER_CONFIRM_BTN", []):
-                        try:
-                            cbtn = modal_scope.locator(confirm_sel).first
-                            if await cbtn.count() > 0 and await cbtn.is_visible():
-                                await cbtn.click()
-                                await page.wait_for_timeout(1000)
-                                return True
-                        except Exception:
-                            continue
+                    cbtn = await self._wait_confirm_visible(page, modal_scope, timeout_ms=4000)
+                    if cbtn is not None:
+                        await cbtn.click()
+                        await self._wait_cover_modal_closed(page, timeout_ms=2000)
+                        return True
                     return True
             except Exception:
                 continue
@@ -225,20 +258,21 @@ class CoverImageStep(BasePublishStep):
                 loc = modal_scope.locator(sel).first
                 if await loc.count() > 0 and await loc.is_visible():
                     await loc.click()
-                    await page.wait_for_timeout(1500)
+                    await PluginWaitHelper.wait_for_any_visible(
+                        page,
+                        Selectors.PUBLISH.get("COVER_THUMB", []),
+                        timeout_ms=3000,
+                        poll_interval_ms=250,
+                    )
                     thumbs = modal_scope.locator(", ".join(Selectors.PUBLISH.get("COVER_THUMB", [])) or "img")
                     if await thumbs.count() > 0:
                         await thumbs.nth(0).click()
                         await page.wait_for_timeout(300)
-                    for confirm_sel in Selectors.PUBLISH.get("COVER_CONFIRM_BTN", []):
-                        try:
-                            cbtn = modal_scope.locator(confirm_sel).first
-                            if await cbtn.count() > 0 and await cbtn.is_visible():
-                                await cbtn.click()
-                                await page.wait_for_timeout(1000)
-                                return True
-                        except Exception:
-                            continue
+                    cbtn = await self._wait_confirm_visible(page, modal_scope, timeout_ms=3000)
+                    if cbtn is not None:
+                        await cbtn.click()
+                        await self._wait_cover_modal_closed(page, timeout_ms=2000)
+                        return True
                     return True
             except Exception:
                 continue

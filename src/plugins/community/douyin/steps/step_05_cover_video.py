@@ -25,6 +25,7 @@ from typing import Dict, Any, Optional
 
 from playwright.async_api import Page, Locator
 
+from src.plugins.core.wait_helper import PluginWaitHelper
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from ._base import BasePublishStep, StepOutcome
 from ..selectors import Selectors
@@ -143,6 +144,27 @@ class CoverVideoStep(BasePublishStep):
                 continue
         return False
 
+    async def _wait_modal_confirm_visible(
+        self, page: Page, modal_scope: Locator, timeout_ms: int = 3000
+    ) -> Optional[Locator]:
+        async def _find_confirm() -> Optional[Locator]:
+            for sel in (Selectors.PUBLISH.get("COVER_CONFIRM_BTN") or []):
+                try:
+                    loc = modal_scope.locator(sel).first
+                    if await loc.count() > 0 and await loc.is_visible():
+                        return loc
+                except Exception:
+                    continue
+            return None
+
+        found = await PluginWaitHelper.wait_for_condition(
+            page,
+            _find_confirm,
+            timeout_ms=timeout_ms,
+            poll_interval_ms=250,
+        )
+        return found if isinstance(found, Locator) else None
+
     async def _is_cover_modal_open(self, page: Page) -> bool:
         for selector in Selectors.PUBLISH.get("COVER_MODAL", []):
             try:
@@ -152,6 +174,24 @@ class CoverVideoStep(BasePublishStep):
             except Exception:
                 continue
         return False
+
+    async def _wait_locator_hidden(
+        self, page: Page, locator: Locator, timeout_ms: int = 2000
+    ) -> bool:
+        return bool(
+            await PluginWaitHelper.wait_for_condition(
+                page,
+                lambda: self._is_locator_hidden(locator),
+                timeout_ms=timeout_ms,
+                poll_interval_ms=250,
+            )
+        )
+
+    async def _is_locator_hidden(self, locator: Locator) -> bool:
+        try:
+            return await locator.count() == 0 or not await locator.is_visible()
+        except Exception:
+            return True
 
     async def _see_cover_warning_indicator(self, page: Page) -> bool:
         """当前页是否出现「竖/横/封面存在N个问题」类提示（封面已上传但有质量提醒，仍视为成功）。"""
@@ -237,7 +277,7 @@ class CoverVideoStep(BasePublishStep):
                         await human_click(page, loc, metadata, config)
                     except Exception:
                         await loc.click()
-                    await page.wait_for_timeout(1000)
+                    await self._wait_cover_success_indicator(page, metadata, timeout_ms=3000)
                     logger.info("已在「AI智能推荐封面」区域点击第一个推荐缩略图: %s", sel)
                     return True
             except Exception:
@@ -271,7 +311,7 @@ class CoverVideoStep(BasePublishStep):
                                 await close_btn.click()
                                 logger.info("已点击「关闭」处理「设置竖封面获更多流量」弹窗")
                                 USER_LOG.info("[步骤5/9 视频封面] 已关闭「设置竖封面获更多流量」弹窗")
-                                await page.wait_for_timeout(800)
+                                await self._wait_locator_hidden(page, modal)
                                 return True
                         except Exception:
                             pass
@@ -282,7 +322,7 @@ class CoverVideoStep(BasePublishStep):
                                 await x_btn.click()
                                 logger.info("已点击「×」处理「设置竖封面获更多流量」弹窗")
                                 USER_LOG.info("[步骤5/9 视频封面] 已关闭「设置竖封面获更多流量」弹窗")
-                                await page.wait_for_timeout(800)
+                                await self._wait_locator_hidden(page, modal)
                                 return True
                         except Exception:
                             pass
@@ -293,7 +333,7 @@ class CoverVideoStep(BasePublishStep):
                                 await skip_btn.click()
                                 logger.info("已点击「暂不设置」处理「设置竖封面获更多流量」弹窗")
                                 USER_LOG.info("[步骤5/9 视频封面] 已关闭「设置竖封面获更多流量」弹窗（暂不设置）")
-                                await page.wait_for_timeout(800)
+                                await self._wait_locator_hidden(page, modal)
                                 return True
                         except Exception:
                             pass
@@ -305,7 +345,7 @@ class CoverVideoStep(BasePublishStep):
                                 await v_btn.click()
                                 logger.info("已点击「设置竖封面」处理「设置竖封面获更多流量」弹窗")
                                 USER_LOG.info("[步骤5/9 视频封面] 已处理「设置竖封面获更多流量」弹窗（点击设置竖封面）")
-                                await page.wait_for_timeout(800)
+                                await self._wait_locator_hidden(page, modal)
                                 return True
                         except Exception:
                             pass
@@ -324,7 +364,7 @@ class CoverVideoStep(BasePublishStep):
                                     await btn.click()
                                     logger.info("已点击「设置竖封面」关闭推荐弹窗（selector=%s）", btn_sel)
                                     USER_LOG.info("[步骤5/9 视频封面] 已处理「设置竖封面获更多流量」弹窗（点击设置竖封面）")
-                                    await page.wait_for_timeout(800)
+                                    await self._wait_locator_hidden(page, modal)
                                     return True
                             except Exception:
                                 continue
@@ -357,7 +397,7 @@ class CoverVideoStep(BasePublishStep):
                         await close_btn.click()
                         logger.info("已点击「关闭」处理「设置横封面获更多流量」弹窗")
                         USER_LOG.info("[步骤5/9 视频封面] 已关闭「设置横封面获更多流量」弹窗")
-                        await page.wait_for_timeout(800)
+                        await self._wait_locator_hidden(page, modal)
                         return True
                 except Exception:
                     pass
@@ -369,7 +409,7 @@ class CoverVideoStep(BasePublishStep):
                         await x_btn.click()
                         logger.info("已点击「×」处理「设置横封面获更多流量」弹窗")
                         USER_LOG.info("[步骤5/9 视频封面] 已关闭「设置横封面获更多流量」弹窗")
-                        await page.wait_for_timeout(800)
+                        await self._wait_locator_hidden(page, modal)
                         return True
                 except Exception:
                     pass
@@ -382,7 +422,7 @@ class CoverVideoStep(BasePublishStep):
                             await btn.click()
                             logger.info("已点击关闭按钮（selector=%s）处理「设置横封面获更多流量」弹窗", btn_sel)
                             USER_LOG.info("[步骤5/9 视频封面] 已关闭「设置横封面获更多流量」弹窗")
-                            await page.wait_for_timeout(800)
+                            await self._wait_locator_hidden(page, modal)
                             return True
                     except Exception:
                         continue
@@ -395,7 +435,7 @@ class CoverVideoStep(BasePublishStep):
                             await btn.click()
                             logger.info("已点击「设置横封面」处理「设置横封面获更多流量」弹窗")
                             USER_LOG.info("[步骤5/9 视频封面] 已处理「设置横封面获更多流量」弹窗（点击设置横封面）")
-                            await page.wait_for_timeout(800)
+                            await self._wait_locator_hidden(page, modal)
                             return True
                     except Exception:
                         continue
@@ -407,7 +447,7 @@ class CoverVideoStep(BasePublishStep):
                         await skip_btn.click()
                         logger.info("已点击「暂不设置」处理「设置横封面获更多流量」弹窗")
                         USER_LOG.info("[步骤5/9 视频封面] 已关闭「设置横封面获更多流量」弹窗（暂不设置）")
-                        await page.wait_for_timeout(800)
+                        await self._wait_locator_hidden(page, modal)
                         return True
                 except Exception:
                     pass
@@ -532,7 +572,7 @@ class CoverVideoStep(BasePublishStep):
                 btn = modal_scope.locator(sel).first
                 if await btn.count() > 0 and await btn.is_visible():
                     await btn.click()
-                    await page.wait_for_timeout(800)
+                    await self._wait_modal_confirm_visible(page, modal_scope, timeout_ms=3000)
                     break
             except Exception:
                 continue
@@ -541,7 +581,7 @@ class CoverVideoStep(BasePublishStep):
                 inp = modal_scope.locator(sel).first
                 if await inp.count() > 0:
                     await inp.set_input_files(cover_path)
-                    await page.wait_for_timeout(3000)
+                    await self._wait_modal_confirm_visible(page, modal_scope, timeout_ms=4000)
 
                     found_confirm = False
                     # 弹窗内固定顺序（图1→图2→图3）：先点「设置横封面」→ 等待 → 再点「完成」才触发封面检测
@@ -553,7 +593,7 @@ class CoverVideoStep(BasePublishStep):
                             btn_h = modal_scope.locator(hor_sel).first
                             if await btn_h.count() > 0 and await btn_h.is_visible():
                                 await btn_h.click()
-                                await page.wait_for_timeout(1500)
+                                await self._wait_modal_confirm_visible(page, modal_scope, timeout_ms=3000)
                                 break
                         except Exception:
                             continue
@@ -566,7 +606,7 @@ class CoverVideoStep(BasePublishStep):
                             cbtn = modal_scope.locator(confirm_sel).first
                             if await cbtn.count() > 0 and await cbtn.is_visible():
                                 await cbtn.click()
-                                await page.wait_for_timeout(1000)
+                                await self._wait_cover_success_indicator(page, {}, timeout_ms=4000)
                                 found_confirm = True
                                 break
                         except Exception:

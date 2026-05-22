@@ -15,13 +15,13 @@
   - metadata['speed_rate']: 影响等待重试与延时
   - metadata['anti_risk_config']: 风控冷却重试等配置
 """
-import asyncio
 import logging
 import time
 from typing import Any, Dict, Optional, Tuple
 
 from playwright.async_api import Page, Locator
 
+from src.plugins.core.wait_helper import PluginWaitHelper
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from ._base import BasePublishStep, NeedsAction, StepOutcome
 from ..selectors import Selectors
@@ -306,46 +306,71 @@ class SubmitStep(BasePublishStep):
         target_selector = ""
         target_btn: Optional[Locator] = None
 
-        # ── 阶段1：找到发布按钮（最多 5 次，每次间隔 2 秒）──────────────────────
+        # ── 阶段1：找到发布按钮（最多约 10 秒）──────────────────────────────
         # 找不到按钮说明页面结构异常或未进入发布页，快速失败而非盲目等待3分钟
-        MAX_FIND_ATTEMPTS = 5
-        for _find_attempt in range(MAX_FIND_ATTEMPTS):
-            await self._await_pause(metadata)
-            target_btn, target_selector = await _resolve_submit_button(page)
-            if target_btn:
-                break
-            logger.info("发布按钮尚未可见，第 %d/%d 次...", _find_attempt + 1, MAX_FIND_ATTEMPTS)
-            # 每小段等待后让出控制权，防止 UI 无响应
-            await page.wait_for_timeout(wait_ms(2000))
-            await asyncio.sleep(0)
+        async def _find_submit_button():
+            loc, selector = await _resolve_submit_button(page)
+            if loc:
+                return loc, selector
+            return None
+
+        def _log_find_attempt(attempt: int) -> None:
+            logger.info("发布按钮尚未可见，第 %d 次...", attempt + 1)
+
+        found = await PluginWaitHelper.wait_for_condition(
+            page,
+            _find_submit_button,
+            timeout_ms=wait_ms(10_000),
+            poll_interval_ms=wait_ms(1_000),
+            pause_callback=lambda: self._await_pause(metadata),
+            on_poll=_log_find_attempt,
+        )
+        if found:
+            target_btn, target_selector = found
         else:
             return PublishResult(
                 success=False,
-                error_message=f"未找到发布按钮（已尝试 {MAX_FIND_ATTEMPTS} 次），页面结构可能已变更",
+                error_message="未找到发布按钮（已等待约 10 秒），页面结构可能已变更",
             )
 
         # ── 阶段2：等发布按钮可点（最长 90 秒，用于等视频转码完成）────────────
         # 按钮存在但不可点通常是视频仍在转码，给足时间等转码，但有上限避免无限阻塞
         MAX_TRANSCODE_WAIT_SEC = 90
-        transcode_deadline = time.time() + MAX_TRANSCODE_WAIT_SEC
-        while time.time() < transcode_deadline:
-            await self._await_pause(metadata)
+        async def _wait_ready_submit_button():
             # 每轮重新解析按钮，防止 Semi UI 刷新后节点失效
-            target_btn, target_selector = await _resolve_submit_button(page)
-            if target_btn:
+            loc, selector = await _resolve_submit_button(page)
+            if loc:
                 try:
-                    await target_btn.scroll_into_view_if_needed(timeout=3000)
+                    await loc.scroll_into_view_if_needed(timeout=3000)
                 except Exception:
                     pass
-                if await _submit_control_ready(target_btn):
-                    break
-                logger.info("发布按钮已出现但转码中，继续等待...")
-            else:
-                logger.info("发布按钮消失，重新寻找...")
-            # 每 500ms 检查一次，并主动让出事件循环控制权防止 UI 无响应
-            await page.wait_for_timeout(wait_ms(500))
-            await asyncio.sleep(0)
+                if await _submit_control_ready(loc):
+                    return loc, selector
+                return None
+            return None
+
+        def _log_transcode_wait(_attempt: int) -> None:
+            logger.info("发布按钮已出现但转码中，继续等待...")
+
+        ready = await PluginWaitHelper.wait_for_condition(
+            page,
+            _wait_ready_submit_button,
+            timeout_ms=MAX_TRANSCODE_WAIT_SEC * 1000,
+            poll_interval_ms=wait_ms(500),
+            pause_callback=lambda: self._await_pause(metadata),
+            on_poll=_log_transcode_wait,
+        )
+        if ready:
+            target_btn, target_selector = ready
         else:
+            try:
+                target_btn, target_selector = await _resolve_submit_button(page)
+            except Exception:
+                target_btn, target_selector = None, ""
+            if target_btn:
+                logger.info("发布按钮已出现但转码中，等待超时")
+            else:
+                logger.info("发布按钮消失，等待超时")
             return PublishResult(
                 success=False,
                 error_message=f"等待视频转码超时（{MAX_TRANSCODE_WAIT_SEC} 秒），发布按钮始终不可点",

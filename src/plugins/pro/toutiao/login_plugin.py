@@ -3,6 +3,7 @@ import json
 import logging
 
 from src.plugins.core.interfaces.login_plugin import LoginPluginInterface, LoginResult
+from src.plugins.core.wait_helper import PluginWaitHelper
 from .scripts import LOGIN_DETECTION_SCRIPT
 
 logger = logging.getLogger(__name__)
@@ -89,10 +90,12 @@ class ToutiaoLoginPlugin(LoginPluginInterface):
                 except Exception as e:
                     logger.warning(f"[{self.platform_name}] 跳转失败: {e}")
 
-            try:
-                await target_page.wait_for_timeout(3000)
-            except Exception:
-                pass
+            await PluginWaitHelper.wait_for_condition(
+                target_page,
+                lambda: self._login_script_has_username(target_page),
+                timeout_ms=3000,
+                poll_interval_ms=500,
+            )
 
             # 通过脚本提取昵称
             try:
@@ -140,6 +143,14 @@ class ToutiaoLoginPlugin(LoginPluginInterface):
             nickname=nickname,
             error_message=None if success else "未能提取到账号昵称",
         )
+
+    async def _login_script_has_username(self, page) -> bool:
+        try:
+            result_json = await page.evaluate(LOGIN_DETECTION_SCRIPT)
+            result = json.loads(result_json)
+            return bool(result.get("username"))
+        except Exception:
+            return False
 
     async def verify_cookie_http(
         self, session, cookies: Dict[str, str], user_agent: Optional[str] = None

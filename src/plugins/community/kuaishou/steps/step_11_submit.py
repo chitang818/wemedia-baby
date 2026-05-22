@@ -21,11 +21,11 @@ DOM 参考（快手_发布按钮 DOM 分析报告_20260405.md）：
     - 两套页面复用同一套选择器逻辑
 """
 import logging
-import time
 from typing import Any, Dict, Optional, Tuple
 
 from playwright.async_api import Locator, Page
 
+from src.plugins.core.wait_helper import PluginWaitHelper
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from ._base import BasePublishStep, NeedsAction, StepOutcome
 from ..selectors import Selectors
@@ -201,15 +201,27 @@ class SubmitStep(BasePublishStep):
         except Exception as e:
             logger.debug("步骤11 关闭新手引导时异常（已忽略）: %s", e)
 
-        # 定位发布按钮
-        target_btn, submit_sel = await self._resolve_submit_button(page)
-        if target_btn is None:
+        async def _find_submit_button():
+            loc, sel = await self._resolve_submit_button(page)
+            if loc is not None:
+                return loc, sel
+            return None
+
+        found = await PluginWaitHelper.wait_for_condition(
+            page,
+            _find_submit_button,
+            timeout_ms=int(10_000 * speed_rate),
+            poll_interval_ms=max(300, int(1_000 * speed_rate)),
+            pause_callback=lambda: self._await_pause(metadata),
+        )
+        if not found:
             logger.warning("未找到发布按钮，当前页 URL: %s", page.url)
             logger.warning("尝试的选择器列表: %s", _SUBMIT_SELECTORS)
             return PublishResult(
                 success=False,
                 error_message="未找到发布按钮，可能页面结构已变更",
             )
+        target_btn, submit_sel = found
         logger.info("发布按钮命中选择器: %s", submit_sel)
 
         # 等待按钮可见
@@ -275,19 +287,30 @@ class SubmitStep(BasePublishStep):
             return PublishResult(success=True, publish_url=ok_url)
 
         # ── 探测窗口（200ms 轮询，约 4.5 秒）────────────────────────────────
-        probe_ms = int(4500 * speed_rate)
-        steps = max(15, probe_ms // 200)
-        for _ in range(steps):
-            await page.wait_for_timeout(200)
+        async def _detect_success_after_click():
             if await self._toast_success_visible(page):
-                logger.info("探测窗口内检测到「发布成功」Toast")
-                USER_LOG.info("%s ✓ 发布成功！", _p)
-                return PublishResult(success=True, publish_url=page.url)
+                return ("toast", page.url)
             ok_url = await self._find_success_url_in_context(page)
             if ok_url:
-                logger.info("探测窗口内检测到作品列表 URL: %s", ok_url)
-                USER_LOG.info("%s ✓ 发布成功 (%s)", _p, ok_url)
-                return PublishResult(success=True, publish_url=ok_url)
+                return ("url", ok_url)
+            return None
+
+        probe = await PluginWaitHelper.wait_for_condition(
+            page,
+            _detect_success_after_click,
+            timeout_ms=int(4500 * speed_rate),
+            poll_interval_ms=200,
+            pause_callback=lambda: self._await_pause(metadata),
+        )
+        if probe:
+            kind, value = probe
+            if kind == "toast":
+                logger.info("探测窗口内检测到「发布成功」Toast")
+                USER_LOG.info("%s ✓ 发布成功！", _p)
+                return PublishResult(success=True, publish_url=value)
+            logger.info("探测窗口内检测到作品列表 URL: %s", value)
+            USER_LOG.info("%s ✓ 发布成功 (%s)", _p, value)
+            return PublishResult(success=True, publish_url=value)
 
         # ── 补点一次（探测窗口无响应，重新找按钮点击）────────────────────────
         logger.info("探测窗口内未确认响应，执行补充点击…")
@@ -328,21 +351,31 @@ class SubmitStep(BasePublishStep):
         except Exception:
             pass
 
-        # Toast 轮询（150ms 间隔，最长 5 秒）
-        t0 = time.monotonic()
-        while (time.monotonic() - t0) < 5.0:
+        async def _detect_success_final():
             if await self._toast_success_visible(page):
+                return ("toast", page.url)
+            ok_url = await self._find_success_url_in_context(page)
+            if ok_url:
+                return ("url", ok_url)
+            return None
+
+        final_probe = await PluginWaitHelper.wait_for_condition(
+            page,
+            _detect_success_final,
+            timeout_ms=5_000,
+            poll_interval_ms=150,
+        )
+        if final_probe:
+            kind, value = final_probe
+            if kind == "toast":
                 USER_LOG.info("%s ✓ 检测到「内容发布成功」提示", _p)
                 try:
                     await page.wait_for_url(PUBLISH_SUCCESS_URL_PATTERN, timeout=8000)
                 except Exception:
                     pass
                 return PublishResult(success=True, publish_url=page.url)
-            ok_url = await self._find_success_url_in_context(page)
-            if ok_url:
-                USER_LOG.info("%s ✓ 发布成功 (%s)", _p, ok_url)
-                return PublishResult(success=True, publish_url=ok_url)
-            await page.wait_for_timeout(150)
+            USER_LOG.info("%s ✓ 发布成功 (%s)", _p, value)
+            return PublishResult(success=True, publish_url=value)
 
         current_url = page.url or ""
         all_urls = [p.url for p in page.context.pages] if page.context else [current_url]

@@ -297,9 +297,9 @@ class MetadataFillStep(BasePublishStep):
                         )
                     try:
                         from src.infrastructure.anti_risk.delays import random_delay
-                        await random_delay(page, wait_ms(800), metadata, config)
+                        await random_delay(page, wait_ms(400), metadata, config)
                     except Exception:
-                        await page.wait_for_timeout(wait_ms(800))
+                        await page.wait_for_timeout(wait_ms(400))
 
                     # 仅当简介以 #关键词 结尾且无空格时，补按空格以在抖音端确认末尾话题
                     if full_text and re.search(r"#\S+$", full_text.rstrip()):

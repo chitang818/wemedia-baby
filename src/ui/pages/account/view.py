@@ -25,6 +25,7 @@ FLUENT_WIDGETS_AVAILABLE = True # Keep for compatibility if other modules check 
 # Let's remove the flag usage in this file.
 
 from ..base_page import BasePage
+from .account_page_controller import AccountPageController
 from .components import AccountTableWidget
 from .menus import AccountContextMenu
 from .dialogs.set_group_dialog import SetGroupDialog # Import check
@@ -56,11 +57,7 @@ class AccountPage(BasePage):
     """账号管理页面"""
 
     _lazy_content = True
-
-    # 告知 BasePage：首次加载时数据异步到来，由本页面在数据就绪后手动解冻界面更新
-    @property
-    def _defer_unfreeze(self) -> bool:
-        return True
+    _enable_show_fade = False
 
     def __init__(self, parent=None):
         super().__init__("账号管理", parent, enable_scroll=True)  # type: ignore
@@ -75,10 +72,15 @@ class AccountPage(BasePage):
         self._reload_timer.setSingleShot(True)
         self._reload_timer.setInterval(100)
         self._reload_timer.timeout.connect(self._load_accounts)
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(120)
+        self._filter_timer.timeout.connect(self._filter_accounts)
         self._auto_refresh_timer = QTimer(self)
         self._auto_refresh_timer.timeout.connect(self._on_auto_refresh_timer)
         # 发布过程中账号状态会频繁更新，不可见时只标记过期，等下次显示再刷
         self._accounts_data_stale: bool = False
+        self._account_controller = AccountPageController(self)
 
         self._init_services()
     
@@ -199,12 +201,12 @@ class AccountPage(BasePage):
         self.search_box.setPlaceholderText("搜索账号...")
         self.search_box.setMinimumWidth(150)
         self.search_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.search_box.textChanged.connect(self._filter_accounts)
+        self.search_box.textChanged.connect(self._schedule_filter_accounts)
         
         self.platform_filter = ComboBox(self)
         self.platform_filter.addItems(["全部平台"] + self._get_platform_display_names())
         self.platform_filter.setMinimumWidth(120)
-        self.platform_filter.currentIndexChanged.connect(self._filter_accounts)
+        self.platform_filter.currentIndexChanged.connect(self._schedule_filter_accounts)
         
         header_layout.addWidget(self.search_box, 0, Qt.AlignVCenter)
         header_layout.addWidget(self.platform_filter, 0, Qt.AlignVCenter)
@@ -214,12 +216,11 @@ class AccountPage(BasePage):
         # 保存按钮引用以便响应式处理
         self._action_buttons = [self.btn_add, self.btn_refresh, self.btn_auto_refresh, self.btn_delete]
         
-        # 2. 账号表格区域 (使用 StackedWidget 实现骨架屏切换)
+        # 2. 账号表格区域
         from PySide6.QtWidgets import QStackedWidget
-        from ...components.skeleton import SkeletonTable
-        
+
         self.table_stack = QStackedWidget(self)
-        
+
         # 真实表格 (Index 0)
         self.account_table_widget = AccountTableWidget(self)
         self.account_table_widget.context_menu_requested.connect(self._on_context_menu)
@@ -229,11 +230,8 @@ class AccountPage(BasePage):
         # 连接双击信号，实现双击打开浏览器
         self.account_table_widget.account_double_clicked.connect(self._on_switch_account)
         self.table_stack.addWidget(self.account_table_widget)
-        
-        # 骨架屏 (Index 1)
-        self.skeleton_table = SkeletonTable(rows=8, columns=5, parent=self)
-        self.table_stack.addWidget(self.skeleton_table)
-        
+        self.table_stack.setCurrentIndex(0)
+
         self.content_layout.addWidget(self.table_stack, 1)  # stretch=1
         
         # 3. 加载账号数据
@@ -242,6 +240,13 @@ class AccountPage(BasePage):
     def _schedule_reload(self):
         """防抖方式触发 _load_accounts，合并 100ms 内的多次调用"""
         self._reload_timer.start()
+
+    def _schedule_filter_accounts(self) -> None:
+        """防抖筛选，避免输入每个字符都遍历整张账号表。"""
+        try:
+            self._filter_timer.start()
+        except Exception:
+            self._filter_accounts()
 
     def showEvent(self, event: QShowEvent):
         """页面每次显示时刷新 user_id（含登录后）并视情况刷新列表"""
@@ -401,106 +406,49 @@ class AccountPage(BasePage):
             import inspect
             import asyncio
             
-            # 只有表格当前没有任何行时才显示骨架屏（空表格 → 骨架屏过渡体验更好）；
-            # 若表格已有数据（重新进入页面触发的静默刷新），保留旧数据直到新数据就绪，
-            # 用户看不到任何闪烁。
-            table_is_empty = (
-                not hasattr(self, 'account_table_widget')
-                or self.account_table_widget.table is None
-                or self.account_table_widget.table.rowCount() == 0
-            )
-            if table_is_empty and hasattr(self, 'table_stack'):
-                self.table_stack.setCurrentIndex(1)
-            
+            if hasattr(self, 'table_stack'):
+                self.table_stack.setCurrentIndex(0)
+
             # 定义一个内部协程函数来获取数据并直接更新 UI，避免跨线程
             async def _do_fetch_and_update():
                 try:
-                    # 1. 创建任务
-                    # 获取账号任务
+                    # 1. 创建任务。首屏只等待账号主列表，其余附加列后台补齐。
                     if not self.account_manager:
                         return
-                        
+
                     if inspect.iscoroutinefunction(self.account_manager.get_accounts):
-                        accounts_task = self.account_manager.get_accounts()  # type: ignore
+                        accounts_task = asyncio.create_task(self.account_manager.get_accounts())  # type: ignore
                     else:
                         # 如果不是协程，包装成协程
                         async def _sync_wrapper():
                             return self.account_manager.get_accounts()  # type: ignore
-                        accounts_task = _sync_wrapper()
-                    
-                    # 获取分组任务
+                        accounts_task = asyncio.create_task(_sync_wrapper())
+
+                    # 附加信息任务不阻塞首屏表格显示
                     groups_task = None
                     if hasattr(self, 'group_service') and self.group_service:
-                        groups_task = self.group_service.get_groups(self.user_id)
-                    
-                    # 获取标签任务 (新增)
+                        groups_task = asyncio.create_task(self.group_service.get_groups(self.user_id))
+
                     tags_task = None
                     try:
                         from src.services.account.account_tag_service import AccountTagService
-                        tags_task = AccountTagService().get_account_tags_mapping()
+                        tags_task = asyncio.create_task(AccountTagService().get_account_tags_mapping())
                     except Exception as e:
                         logger.error(f"准备标签任务失败: {e}")
 
-                    # 2. 分开等待结果解决类型推断不能迭代的问题
-                    if groups_task:
-                        groups = await groups_task
-                        accounts = await accounts_task
-                    else:
-                        accounts = await accounts_task
-                        groups = []
-                    
-                    tags_map = {}
-                    if tags_task:
-                        try:
-                            tags_map = await tags_task
-                        except Exception as e:
-                            logger.error(f"等待标签数据失败: {e}")
-                    
-                    # 3. 建立 group_id -> group_name 映射
-                    group_map = {g['id']: g['group_name'] for g in groups}
-                    latest_publish_map: Dict[int, str] = {}
-                    try:
-                        from src.domain.repositories.publish_record_repository_async import (
-                            PublishRecordRepositoryAsync,
-                        )
-                        account_ids = [
-                            int(a.get("id")) for a in (accounts or [])
-                            if isinstance(a, dict) and a.get("id") is not None
-                        ]
-                        latest_publish_map = await PublishRecordRepositoryAsync().get_latest_publish_display_time_by_account_ids(account_ids)
-                    except Exception as _lp_e:
-                        logger.debug("加载账号最晚发布时间失败: %s", _lp_e)
-                    
-                    # 4. 合并数据
+                    # 2. 账号主列表就绪后立即显示表格，避免首次切页等待附加查询。
+                    accounts = await accounts_task
                     result = []
                     accounts_list: list = accounts  # type: ignore
                     for account in accounts_list:
-                        # account 已经是 dict
                         acc_dict = account.copy() if hasattr(account, 'copy') else dict(account)
-                        group_id = acc_dict.get('group_id')
-                        if group_id:
-                            acc_dict['group_name'] = group_map.get(group_id)  # type: ignore
-                        acc_id = acc_dict.get("id")
-                        if acc_id is not None:
-                            try:
-                                acc_dict["latest_publish_time"] = latest_publish_map.get(int(acc_id), "-")
-                            except Exception:
-                                acc_dict["latest_publish_time"] = "-"
-                            
-                            try:
-                                acc_dict["tags"] = tags_map.get(int(acc_id), [])
-                            except Exception:
-                                acc_dict["tags"] = []
+                        acc_dict.setdefault("latest_publish_time", "-")
+                        acc_dict.setdefault("tags", [])
                         result.append(acc_dict)
-                        
-                    # 5. 更新UI (因为处于 qasync 主事件循环，完全可以安全操作UI)
+
+                    # 3. 更新UI（处于 qasync 主事件循环，可安全操作 UI）
                     if hasattr(self, 'table_stack'):
-                        if self.table_stack.currentIndex() == 1 and hasattr(self, 'skeleton_table'):
-                            self.skeleton_table.fade_out(
-                                on_finished=lambda: self.table_stack.setCurrentIndex(0)
-                            )
-                        else:
-                            self.table_stack.setCurrentIndex(0)
+                        self.table_stack.setCurrentIndex(0)
                         
                     if result:
                         self.account_table_widget.load_accounts(result)
@@ -527,9 +475,17 @@ class AccountPage(BasePage):
                         self.stats_total.set_value("0")
                         self.stats_online.set_value("0")
                         self.stats_offline.set_value("0")
-                    
-                    # 首次加载完成后解冻界面，确保用户看到的第一帧就是完整数据，而非空表格
+
                     self._unfreeze_updates()
+                    if result:
+                        self._run_bg_task(
+                            self._enrich_account_table_after_first_paint(
+                                result,
+                                groups_task=groups_task,
+                                tags_task=tags_task,
+                            ),
+                            defer=True,
+                        )
                 except Exception as e:
                     logger.error(f"加载账号内部流程失败: {e}", exc_info=True)
                     if hasattr(self, 'table_stack'):
@@ -542,6 +498,55 @@ class AccountPage(BasePage):
                 
         except Exception as e:
             logger.error(f"加载账号触发失败: {e}", exc_info=True)
+
+    async def _enrich_account_table_after_first_paint(self, accounts: List[Dict[str, Any]], *, groups_task=None, tags_task=None) -> None:
+        """首屏账号行显示后，后台补齐分组、标签和已发布最晚时间。"""
+        account_ids: list[int] = []
+        for account in accounts or []:
+            try:
+                account_ids.append(int(account.get("id")))
+            except Exception:
+                continue
+
+        if groups_task is not None:
+            try:
+                groups = await groups_task
+                group_map = {g["id"]: g["group_name"] for g in groups or []}
+                updates_by_id: Dict[Any, Dict[str, Any]] = {}
+                for account in accounts:
+                    acc_id = account.get("id")
+                    group_id = account.get("group_id")
+                    if acc_id is None or not group_id:
+                        continue
+                    group_name = group_map.get(group_id)
+                    if group_name:
+                        updates_by_id[acc_id] = {"group_name": group_name}
+                self.account_table_widget.update_accounts_fields(updates_by_id)
+            except Exception as e:
+                logger.debug("后台补齐账号分组失败: %s", e)
+
+        if tags_task is not None:
+            try:
+                tags_map = await tags_task
+                self.account_table_widget.update_accounts_fields({
+                    aid: {"tags": tags or []}
+                    for aid, tags in (tags_map or {}).items()
+                })
+            except Exception as e:
+                logger.debug("后台补齐账号标签失败: %s", e)
+
+        if account_ids:
+            try:
+                from src.domain.repositories.publish_record_repository_async import (
+                    PublishRecordRepositoryAsync,
+                )
+                latest_publish_map = await PublishRecordRepositoryAsync().get_latest_publish_display_time_by_account_ids(account_ids)
+                self.account_table_widget.update_accounts_fields({
+                    aid: {"latest_publish_time": display_time or "-"}
+                    for aid, display_time in (latest_publish_map or {}).items()
+                })
+            except Exception as e:
+                logger.debug("后台补齐账号最晚发布时间失败: %s", e)
 
     def _remove_worker(self, worker):
         """从活动worker列表移除"""
@@ -979,6 +984,9 @@ class AccountPage(BasePage):
         self.validator_service.start_verify_by_ids([account_id])
 
     def _on_refresh(self, silent: bool = False):
+        return self._account_controller.refresh(silent=silent)
+
+    def _on_refresh_legacy(self, silent: bool = False):
         """刷新账号列表（验证Cookie有效性）"""
         if not self.account_manager:
             return

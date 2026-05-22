@@ -20,6 +20,7 @@ from typing import Dict, Any
 from playwright.async_api import Page
 
 from src.plugins.core.interfaces.publish_plugin import PublishResult
+from src.plugins.core.wait_helper import PluginWaitHelper
 from ._base import BasePublishStep, StepOutcome
 from ..selectors import Selectors
 
@@ -84,10 +85,8 @@ class NavigateHomeStep(BasePublishStep):
 
         # ---- 5. 通过 JS 穿透 Shadow DOM 检测「发表视频」按钮 ----
         # 按钮在 wujie-app 的 shadowRoot 内，必须用 JS 检测
-        btn_found = False
-        max_attempts = 10  # 最多等 10 秒（每次间隔 1 秒）
 
-        for attempt in range(max_attempts):
+        async def _detect_publish_button() -> bool:
             try:
                 result = await page.evaluate("""() => {
                     // 精确路径
@@ -118,17 +117,26 @@ class NavigateHomeStep(BasePublishStep):
                 }""")
 
                 if result and 'found' in result:
-                    btn_found = True
-                    # 将结果存入 metadata，步骤2可直接点击无需重新等待
                     metadata["_publish_btn_ready"] = True
                     logger.info(f"[视频号] Shadow DOM 内检测到「发表视频」按钮 ({result})")
-                    break
-                else:
-                    logger.debug(f"[视频号] 第 {attempt + 1} 次检测：按钮未出现，等待 1 秒...")
-                    await page.wait_for_timeout(1000)
+                    return True
             except Exception as e:
                 logger.debug(f"[视频号] JS 检测异常: {e}")
-                await page.wait_for_timeout(1000)
+            return False
+
+        btn_found = bool(
+            await PluginWaitHelper.wait_for_condition(
+                page,
+                _detect_publish_button,
+                timeout_ms=10_000,
+                poll_interval_ms=1_000,
+                pause_callback=lambda: self._await_pause(metadata),
+                on_poll=lambda attempt: logger.debug(
+                    "[视频号] 第 %s 次检测：按钮未出现，继续等待",
+                    attempt + 1,
+                ),
+            )
+        )
 
         if not btn_found:
             logger.error("[视频号] 未在 Shadow DOM 中找到「发表视频」按钮，终止发布")

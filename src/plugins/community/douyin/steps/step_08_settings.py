@@ -24,6 +24,7 @@ from typing import Dict, Any, Optional, Tuple
 
 from playwright.async_api import Page
 
+from src.plugins.core.wait_helper import PluginWaitHelper
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from src.plugins.community.douyin.selectors import Selectors
 from src.utils.date_utils import format_schedule_time_st_str
@@ -242,14 +243,14 @@ class PublishSettingsStep(BasePublishStep):
                     "input[placeholder*='发布时间']",
                     "input[class*='date-picker']",
                 ]
-                inp = None
-                for inp_sel in schedule_input_selectors:
-                    try:
-                        await page.wait_for_selector(inp_sel, state="visible", timeout=8000)
-                        inp = page.locator(inp_sel).first
-                        break
-                    except Exception:
-                        continue
+                matched_input_selector = await PluginWaitHelper.wait_for_any_visible(
+                    page,
+                    schedule_input_selectors,
+                    timeout_ms=8000,
+                    poll_interval_ms=250,
+                    pause_callback=lambda: self._await_pause(metadata),
+                )
+                inp = page.locator(matched_input_selector).first if matched_input_selector else None
                 if inp is None:
                     logger.warning("选中定时发布后，定时时间输入框未在 8 秒内出现")
                     USER_LOG.warning("[步骤8/9 发布设置] ✗ 时间输入框未出现")

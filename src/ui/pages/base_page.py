@@ -31,6 +31,9 @@ class BasePage(QWidget):
     
     _lazy_content: bool = False
     _content_initialized: bool = False
+    _enable_show_fade: bool = True
+    # 默认首页等工作台：内容在构造期已创建，首显不应冻结/淡入（避免启动空白）
+    _freeze_on_first_show: bool = True
 
     def __init__(self, title: str, parent: Optional[QWidget] = None, enable_scroll: bool = False):
         """初始化页面
@@ -198,7 +201,7 @@ class BasePage(QWidget):
                 0,
                 self._ensure_content_and_unfreeze,
             )
-        elif self._needs_show_transition:
+        elif self._needs_show_transition and self._freeze_on_first_show:
             self._needs_show_transition = False
             self.setUpdatesEnabled(False)
             self._schedule_base_page_timer(
@@ -206,6 +209,8 @@ class BasePage(QWidget):
                 10,
                 self._unfreeze_with_fade,
             )
+        elif self._needs_show_transition:
+            self._needs_show_transition = False
         # 最大化/还原等窗口状态变化：不冻结、不动画
 
     def hideEvent(self, event):
@@ -282,6 +287,9 @@ class BasePage(QWidget):
 
     def _play_fade_in(self):
         """对自身播放 opacity 0→1 淡入动画。使用 QGraphicsOpacityEffect 不触发 StyleSheet。"""
+        if not getattr(self, "_enable_show_fade", True):
+            return
+
         from src.ui.page_animation_prefs import get_page_fade_duration_ms
 
         fade_ms = get_page_fade_duration_ms()

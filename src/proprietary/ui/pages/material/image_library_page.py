@@ -22,10 +22,8 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QHeaderView,
     QFileDialog,
     QButtonGroup,
-    QTableWidgetItem,
     QMenu,
     QDialog,
 )
@@ -47,7 +45,9 @@ from src.ui.pages.base_page import BasePage
 from src.ui.utils.task_tracking import TrackedTaskMixin
 from src.ui.utils.fluent_tooltips import ToolTipPosition, apply_instructional_tooltip
 from src.ui.components.base_dialog import AppMessageBoxBase
-from src.ui.components.rubber_band_row_table import RubberBandRowSelectTable
+from src.ui.pages.material.media_library_page_controller import MediaLibraryPageController
+from src.ui.pages.material.media_library_table_model import MediaLibraryTableModel
+from src.ui.pages.material.media_library_table_view import MediaLibraryTableView
 from src.ui.utils.async_helper import AsyncWorker, await_qdialog_finished
 from src.infrastructure.common.material_library_manager import MaterialLibraryManager
 from src.infrastructure.common.media_library_assign import (
@@ -155,7 +155,8 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__("图片库", parent)
-        self._table: Optional[RubberBandRowSelectTable] = None
+        self._table: Optional[MediaLibraryTableView] = None
+        self._media_controller = MediaLibraryPageController(self)
         self._all_items: List[_ImageFolderItem] = []
         self._image_refresh_gen: int = 0
         self._table_ctx_menu = None
@@ -247,30 +248,16 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(0, 0, 0, 0)
 
-        self._table = RubberBandRowSelectTable(table_card)
-        self._setup_table_style(self._table)
+        self._table = MediaLibraryTableView(
+            table_card,
+            kind=MediaLibraryTableModel.KIND_IMAGE_FOLDER,
+        )
         self._table.setObjectName("ImageLibraryTable")
         self._table.setSelectionBehavior(self._table.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(self._table.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(self._table.EditTrigger.NoEditTriggers)
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._on_table_context_menu)
-
-        self._table.setColumnCount(len(_HEADERS))
-        self._table.setHorizontalHeaderLabels(_HEADERS)
-        self._table.verticalHeader().setVisible(False)
-
-        header = self._table.horizontalHeader()
-        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(_COL_NO, QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(_COL_NAME, QHeaderView.ResizeMode.Stretch)
-        header.setMinimumSectionSize(52)
-        self._table.setColumnWidth(_COL_NO, 52)
-        self._table.setColumnWidth(_COL_IMAGE_COUNT, 90)
-        self._table.setColumnWidth(_COL_SIZE, 100)
-        self._table.setColumnWidth(_COL_OWNER, 120)
-        self._table.setColumnWidth(_COL_USAGE, 80)
 
         table_layout.addWidget(self._table)
 
@@ -319,43 +306,18 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
     # ------------------------------------------------------------------ #
 
     def _populate_table(self, items: List[_ImageFolderItem]) -> None:
+        """Render image folders through the Model/View table."""
+        if not self._table:
+            return
         self._table.setSortingEnabled(False)
         self._table.setUpdatesEnabled(False)
         self._table.blockSignals(True)
-        self._table.setRowCount(0)
-        self._table.setRowCount(len(items))
-
-        for row, item in enumerate(items):
-            no_cell = QTableWidgetItem(str(row + 1))
-            no_cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            no_cell.setData(Qt.ItemDataRole.UserRole, item)
-            self._table.setItem(row, _COL_NO, no_cell)
-
-            name_cell = QTableWidgetItem(item.name)
-            name_cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            self._table.setItem(row, _COL_NAME, name_cell)
-
-            count_cell = QTableWidgetItem(str(item.image_count) if item.image_count > 0 else "-")
-            count_cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            self._table.setItem(row, _COL_IMAGE_COUNT, count_cell)
-
-            size_cell = QTableWidgetItem(
-                f"{item.size_mb:.2f} MB" if item.size_mb > 0 else "-"
-            )
-            size_cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            self._table.setItem(row, _COL_SIZE, size_cell)
-
-            owner_cell = QTableWidgetItem(item.owner)
-            owner_cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            self._table.setItem(row, _COL_OWNER, owner_cell)
-
-            usage_cell = QTableWidgetItem("已占用" if getattr(item, "in_use", False) else "")
-            usage_cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            self._table.setItem(row, _COL_USAGE, usage_cell)
-
-        self._table.blockSignals(False)
-        self._table.setUpdatesEnabled(True)
-        self._table.setSortingEnabled(True)
+        try:
+            self._table.set_items(items)
+        finally:
+            self._table.blockSignals(False)
+            self._table.setUpdatesEnabled(True)
+            self._table.setSortingEnabled(True)
 
     def _schedule_refresh_usage_marks(self, gen: int) -> None:
         """异步查询待发布任务占用情况，并为 _all_items 打上 in_use 标记。"""
@@ -385,27 +347,10 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
             return
 
     def _update_usage_column_in_place(self) -> None:
-        """原地刷新表格中的“使用统计”列，不重建行也不重跑筛选。
-
-        进入页面后会先快速扫描目录，再异步查询占用情况。若占用结果回来时重建表格，
-        用户会感知到一次“自动刷新”（并可能丢失选中行/滚动位置），因此这里改为原地更新。
-        """
+        """Refresh usage column in place without rebuilding rows."""
         if not self._table:
             return
-        try:
-            self._table.setUpdatesEnabled(False)
-            for row in range(self._table.rowCount()):
-                no_cell = self._table.item(row, _COL_NO)
-                if not no_cell:
-                    continue
-                item = no_cell.data(Qt.ItemDataRole.UserRole)
-                if not isinstance(item, _ImageFolderItem):
-                    continue
-                usage_cell = self._table.item(row, _COL_USAGE)
-                if usage_cell:
-                    usage_cell.setText("已占用" if getattr(item, "in_use", False) else "")
-        finally:
-            self._table.setUpdatesEnabled(True)
+        self._table.notify_columns_changed([_COL_USAGE])
 
     def _get_selected_items(self) -> List[_ImageFolderItem]:
         if not self._table:
@@ -463,14 +408,11 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
             else:
                 self.owner_filter.setEnabled(True)
 
-        items = list(self._all_items)
-        if status == "未分配":
-            items = [item for item in items if item.owner == "未分配"]
-        elif status == "已分配":
-            items = [item for item in items if item.owner != "未分配"]
-
-        if owner != "全部账号" and status != "未分配":
-            items = [item for item in items if item.owner == owner]
+        items = self._media_controller.filter_items(
+            self._all_items,
+            owner_status=status,
+            owner=owner,
+        )
 
         self._populate_table(items)
 

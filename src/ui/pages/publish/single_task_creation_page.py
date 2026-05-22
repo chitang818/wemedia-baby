@@ -60,6 +60,7 @@ from src.ui.utils.fluent_tooltips import ToolTipPosition, apply_instructional_to
 from src.ui.utils.task_tracking import TrackedTaskMixin
 
 from ..base_page import BasePage
+from .single_task_creation_controller import SingleTaskCreationController
 from .single_task_creation_actions import add_or_update_publish_record, normalize_publish_record_id
 from src.domain.publish.work_description import (
     normalize_topics_for_paste,
@@ -454,6 +455,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         # 从「待发布 / 已发布 / 回收站」哪一页进入编辑；点「返回」时回到该页；「保存修改」成功后一律去待发布
         self._publish_edit_return_route: Optional[str] = None
         self._init_task_tracking()
+        self._creation_controller = SingleTaskCreationController(self)
 
         self._init_services()
 
@@ -3129,6 +3131,9 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             self.account_manager.user_id = self.user_id
 
     def _on_publish(self):
+        return self._creation_controller.publish()
+
+    def _on_publish_legacy(self):
         """添加到发布列表（操作前需登录）"""
         if not self._current_user_svc.is_logged_in():
             try:

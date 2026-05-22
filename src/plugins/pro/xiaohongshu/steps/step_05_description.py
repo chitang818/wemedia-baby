@@ -113,9 +113,9 @@ class MetadataFillStep(BasePublishStep):
                     await edit_box.type(full_text, delay=desc_delay)
                     try:
                         from src.infrastructure.anti_risk.delays import random_delay
-                        await random_delay(page, wait_ms(800), metadata, config)
+                        await random_delay(page, wait_ms(400), metadata, config)
                     except Exception:
-                        await page.wait_for_timeout(wait_ms(800))
+                        await page.wait_for_timeout(wait_ms(400))
 
                     # 末尾 #话题 补空格确认
                     if full_text and re.search(r"#\S+$", full_text):

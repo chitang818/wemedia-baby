@@ -27,6 +27,7 @@ from typing import Dict, Any, List, Optional
 
 from playwright.async_api import Page
 
+from src.plugins.core.wait_helper import PluginWaitHelper
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from ._base import BasePublishStep, StepOutcome
 from .wizard_utils import dismiss_kuaishou_publish_guides
@@ -98,29 +99,27 @@ class UploadMediaStep(BasePublishStep):
                 error_message="UPLOAD_SUCCESS_MARKER 选择器未配置，请检查 selectors.py",
                 failed_step="上传视频",
             )
-        primary_marker = markers[0]
 
-        for i in range(max_wait_seconds // 2):
-            await self._await_pause(metadata)
-            try:
-                loc = page.locator(primary_marker).first
-                if await loc.count() > 0 and await loc.is_visible():
-                    logger.info("检测到上传完成标志（is_visible）: %s", primary_marker)
-                    USER_LOG.info("%s ✓ 上传成功", self._prefix_video)
-                    await dismiss_kuaishou_publish_guides(page, metadata)
-                    return None
-            except Exception:
-                pass
-            elapsed = i * 2
-            if i % 30 == 0:
-                logger.info(f"等待上传中... ({elapsed}s/{max_wait_seconds}s)")
-            if i > 0 and i % 15 == 0:
+        def _log_wait(attempt: int) -> None:
+            elapsed = int(attempt * max(0.2, speed_rate))
+            if attempt % 60 == 0:
+                logger.info("等待上传中... (%ss/%ss)", elapsed, max_wait_seconds)
+            if attempt > 0 and attempt % 30 == 0:
                 USER_LOG.info("%s 正在上传中，已等待 %d 秒…", self._prefix_video, elapsed)
-            try:
-                from src.infrastructure.anti_risk.delays import random_delay
-                await random_delay(page, int(2000 * speed_rate), metadata, config)
-            except Exception:
-                await page.wait_for_timeout(int(2000 * speed_rate))
+
+        matched = await PluginWaitHelper.wait_for_any_visible(
+            page,
+            markers,
+            timeout_ms=max_wait_seconds * 1000,
+            poll_interval_ms=max(200, int(1000 * speed_rate)),
+            pause_callback=lambda: self._await_pause(metadata),
+            on_poll=_log_wait,
+        )
+        if matched:
+            logger.info("检测到上传完成标志（is_visible）: %s", matched)
+            USER_LOG.info("%s ✓ 上传成功", self._prefix_video)
+            await dismiss_kuaishou_publish_guides(page, metadata)
+            return None
 
         logger.error("视频上传状态检测超时，终止发布流程")
         USER_LOG.error("%s ✖ 上传超时，未检测到完成标志，请检查网络后重试", self._prefix_video)
@@ -287,29 +286,27 @@ class UploadMediaStep(BasePublishStep):
                 error_message="IMAGE_UPLOAD_SUCCESS_MARKER 选择器未配置，请检查 selectors.py",
                 failed_step="上传图片",
             )
-        primary_marker = markers[0]
 
-        for i in range(max_wait_seconds // 2):
-            await self._await_pause(metadata)
-            try:
-                loc = page.locator(primary_marker).first
-                if await loc.count() > 0 and await loc.is_visible():
-                    logger.info("检测到图片上传完成标志（is_visible）: %s", primary_marker)
-                    USER_LOG.info("%s ✓ 上传成功（%d 张）", self._prefix_image, image_count)
-                    await dismiss_kuaishou_publish_guides(page, metadata)
-                    return None
-            except Exception:
-                pass
-            elapsed = i * 2
-            if i % 20 == 0 and i > 0:
+        def _log_wait(attempt: int) -> None:
+            elapsed = int(attempt * max(0.2, speed_rate))
+            if attempt % 40 == 0 and attempt > 0:
                 logger.info("等待图片上传中... (%ds/%ds)", elapsed, max_wait_seconds)
-            if i > 0 and i % 15 == 0:
+            if attempt > 0 and attempt % 30 == 0:
                 USER_LOG.info("%s 正在上传中，已等待 %d 秒…", self._prefix_image, elapsed)
-            try:
-                from src.infrastructure.anti_risk.delays import random_delay
-                await random_delay(page, int(2000 * speed_rate), metadata, config)
-            except Exception:
-                await page.wait_for_timeout(int(2000 * speed_rate))
+
+        matched = await PluginWaitHelper.wait_for_any_visible(
+            page,
+            markers,
+            timeout_ms=max_wait_seconds * 1000,
+            poll_interval_ms=max(200, int(1000 * speed_rate)),
+            pause_callback=lambda: self._await_pause(metadata),
+            on_poll=_log_wait,
+        )
+        if matched:
+            logger.info("检测到图片上传完成标志（is_visible）: %s", matched)
+            USER_LOG.info("%s ✓ 上传成功（%d 张）", self._prefix_image, image_count)
+            await dismiss_kuaishou_publish_guides(page, metadata)
+            return None
 
         logger.error("图片上传状态检测超时，终止发布流程")
         USER_LOG.error("%s ✖ 上传超时，未检测到「编辑图片」，请检查网络后重试", self._prefix_image)

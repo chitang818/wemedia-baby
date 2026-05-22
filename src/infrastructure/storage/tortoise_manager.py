@@ -10,6 +10,7 @@ from typing import Optional
 from tortoise import Tortoise
 
 from src.infrastructure.common.path_manager import PathManager
+from src.infrastructure.storage.schema_migrations import run_pending_migrations
 
 logger = logging.getLogger(__name__)
 
@@ -121,72 +122,7 @@ async def init_tortoise(db_path: Optional[str] = None) -> None:
             )
         except Exception as user_e:
             logger.debug(f"确保默认用户存在时出错（可忽略）: {user_e}")
-        
-        # ===== 自动列迁移：给已有表补充新增字段 =====
-        # generate_schemas(safe=True) 只建表不加列，需要手动补全旧表缺失的列
-        new_columns = {
-            "account_tags": [
-                # 标签类型：account=账号标签，group=账号组标签
-                ("tag_type", "VARCHAR(20) DEFAULT 'account'"),
-            ],
-            "cart_promotion_items": [
-                ("short_title", "TEXT"),
-            ],
-            "publish_records": [
-                ("privacy_settings", "TEXT"),
-                ("cover_path", "TEXT"),
-                ("poi_info", "TEXT"),
-                ("micro_app_info", "TEXT"),
-                ("cart_info", "TEXT"),
-                ("anchor_info", "TEXT"),
-                ("music_info", "TEXT"),
-                ("scheduled_publish_time", "DATETIME"),
-                ("platform_account_id", "INTEGER"),
-                ("wechat_empty_location_open_picker", "INTEGER"),
-                ("task_source", "VARCHAR(20)"),
-                # group_id：任务来源为账号组时直接存储组ID，避免通过账号表多跳查询
-                ("group_id", "INTEGER"),
-            ],
-            "platform_accounts": [
-                # 账号数据目录名（如 profile_xxx），必填才能打开浏览器与 Cookie 路径解析
-                ("profile_folder_name", "VARCHAR(200)"),
-            ],
-        }
-        for table_name, columns in new_columns.items():
-            try:
-                # 获取当前表的列信息
-                existing_cols_result = await conn.execute_query(f"PRAGMA table_info({table_name})")
-                existing_col_names = {row[1] for row in existing_cols_result[1]}
-                for col_name, col_type in columns:
-                    if col_name not in existing_col_names:
-                        await conn.execute_query(
-                            f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
-                        )
-                        logger.info(f"✅ 自动迁移：已向 {table_name} 添加新列 {col_name}")
-            except Exception as migrate_e:
-                logger.warning(f"列迁移 {table_name} 时遇到问题（可忽略）: {migrate_e}")
-        # ===== 自动列迁移结束 =====
-
-        # ===== 性能索引：加速发布记录的状态+时间排序查询 =====
-        _indexes = [
-            (
-                "idx_publish_records_status_created",
-                "CREATE INDEX IF NOT EXISTS idx_publish_records_status_created "
-                "ON publish_records (status, created_at DESC)",
-            ),
-            (
-                "idx_publish_records_platform_status",
-                "CREATE INDEX IF NOT EXISTS idx_publish_records_platform_status "
-                "ON publish_records (platform, status)",
-            ),
-        ]
-        for idx_name, idx_sql in _indexes:
-            try:
-                await conn.execute_query(idx_sql)
-                logger.debug("确保索引存在: %s", idx_name)
-            except Exception as idx_e:
-                logger.debug("创建索引 %s 时跳过: %s", idx_name, idx_e)
-        # ===== 性能索引结束 =====
+        await run_pending_migrations(conn)
 
     except Exception as e:
          logger.warning(f"Tortoise ORM 生成表结构失败或报错（可能因表已存在且有变动而安全跳过）: {e}")

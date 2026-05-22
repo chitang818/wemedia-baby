@@ -15,6 +15,7 @@ from typing import Dict, Any, Optional, Tuple
 
 from playwright.async_api import Page
 
+from src.plugins.core.wait_helper import PluginWaitHelper
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from src.utils.date_utils import format_schedule_time_st_str
 from ._base import BasePublishStep, StepOutcome
@@ -117,20 +118,19 @@ class PublishSettingsStep(BasePublishStep):
                     continue
             return False
 
+        async def _pause_poll() -> None:
+            await self._await_pause(metadata)
+
         async def _wait_first_visible(selectors, timeout_ms: int) -> Optional[Any]:
             """等待任一 selector 可见，返回 locator；超时返回 None。"""
-            import time
-            start = time.time()
-            while (time.time() - start) * 1000 < timeout_ms:
-                for sel in selectors:
-                    try:
-                        loc = page.locator(sel).first
-                        if await loc.count() > 0 and await loc.is_visible():
-                            return loc
-                    except Exception:
-                        continue
-                await page.wait_for_timeout(int(200 * speed_rate))
-            return None
+            matched_selector = await PluginWaitHelper.wait_for_any_visible(
+                page,
+                selectors,
+                timeout_ms=timeout_ms,
+                poll_interval_ms=int(200 * speed_rate),
+                pause_callback=_pause_poll,
+            )
+            return page.locator(matched_selector).first if matched_selector else None
 
         async def _locate_visible_picker_ok_button() -> Optional[Any]:
             """在**当前可见**的日期时间弹层内查找「确定」按钮，避免旧节点或其它浮层误命中（DOM 文档 §10.3.4）。"""

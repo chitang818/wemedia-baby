@@ -22,6 +22,7 @@ from typing import Dict, Any, List
 from playwright.async_api import Page
 
 from src.plugins.core.interfaces.publish_plugin import PublishResult
+from src.plugins.core.wait_helper import PluginWaitHelper
 from ._base import BasePublishStep, StepOutcome
 from .page_diagnostics import log_page_diagnostics
 from ..selectors import Selectors
@@ -121,7 +122,12 @@ class UploadMediaStep(BasePublishStep):
                 wait_until="domcontentloaded",
                 timeout=20000,
             )
-            await page.wait_for_timeout(2000)
+            await PluginWaitHelper.wait_for_any_attached(
+                page,
+                Selectors.PUBLISH.get("FILE_INPUT", []),
+                timeout_ms=5000,
+                poll_interval_ms=500,
+            )
             if target_path in page.url:
                 logger.info("[视频号] 已重新导航回发布页")
                 return True

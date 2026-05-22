@@ -21,6 +21,7 @@ from typing import Dict, Any, Optional
 from playwright.async_api import Page
 
 from src.plugins.core.interfaces.publish_plugin import PublishResult
+from src.plugins.core.wait_helper import PluginWaitHelper
 from ._base import BasePublishStep, StepOutcome
 from ..selectors import Selectors
 
@@ -65,11 +66,13 @@ class CoverSettingStep(BasePublishStep):
                         except Exception:
                             await btn.click()
 
-                        try:
-                            from src.infrastructure.anti_risk.delays import random_delay
-                            await random_delay(page, 1000, metadata, config)
-                        except Exception:
-                            await page.wait_for_timeout(1000)
+                        await PluginWaitHelper.wait_for_any_visible(
+                            page,
+                            Selectors.PUBLISH.get("COVER_MODAL", []),
+                            timeout_ms=2_000,
+                            poll_interval_ms=250,
+                            pause_callback=lambda: self._await_pause(metadata),
+                        )
 
                         logger.info(f"已点击封面设置按钮: {selector}")
                         break
@@ -93,7 +96,7 @@ class CoverSettingStep(BasePublishStep):
                     inp = page.locator(selector).first
                     if await inp.count() > 0:
                         await inp.set_input_files(cover_path)
-                        await page.wait_for_timeout(2000)
+                        await PluginWaitHelper.wait_for_any_visible(page, Selectors.PUBLISH.get("COVER_CONFIRM_BTN", []), timeout_ms=3_000, poll_interval_ms=300, pause_callback=lambda: self._await_pause(metadata))
                         logger.info("通过 file input 直接上传封面")
                         USER_LOG.info("[步骤5 封面设置] ✓ 封面已上传")
                         return None
@@ -120,7 +123,7 @@ class CoverSettingStep(BasePublishStep):
                 btn = page.locator(sel).first
                 if await btn.count() > 0 and await btn.is_visible():
                     await btn.click()
-                    await page.wait_for_timeout(800)
+                    await PluginWaitHelper.wait_for_any_attached(page, Selectors.PUBLISH.get("COVER_FILE_INPUT", []), timeout_ms=2_000, poll_interval_ms=250, pause_callback=lambda: self._await_pause(metadata))
                     break
             except Exception:
                 continue
@@ -130,7 +133,7 @@ class CoverSettingStep(BasePublishStep):
                 inp = page.locator(sel).first
                 if await inp.count() > 0:
                     await inp.set_input_files(cover_path)
-                    await page.wait_for_timeout(2000)
+                    await PluginWaitHelper.wait_for_any_visible(page, Selectors.PUBLISH.get("COVER_CONFIRM_BTN", []), timeout_ms=3_000, poll_interval_ms=300, pause_callback=lambda: self._await_pause(metadata))
 
                     for confirm_sel in Selectors.PUBLISH.get("COVER_CONFIRM_BTN", []):
                         try:
@@ -141,7 +144,7 @@ class CoverSettingStep(BasePublishStep):
                                     await human_click(page, cbtn, metadata, config)
                                 except Exception:
                                     await cbtn.click()
-                                await page.wait_for_timeout(1000)
+                                await PluginWaitHelper.wait_for_all_hidden(page, Selectors.PUBLISH.get("COVER_MODAL", []), timeout_ms=2_000, poll_interval_ms=250, pause_callback=lambda: self._await_pause(metadata))
                                 logger.info("已确认封面设置")
                                 USER_LOG.info("[步骤5 封面设置] ✓ 封面已上传并确认")
                                 return None

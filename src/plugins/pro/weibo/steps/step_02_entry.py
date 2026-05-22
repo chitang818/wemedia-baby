@@ -18,6 +18,7 @@ from typing import Dict, Any
 from playwright.async_api import Page
 
 from src.plugins.core.interfaces.publish_plugin import PublishResult
+from src.plugins.core.wait_helper import PluginWaitHelper
 from ._base import BasePublishStep, StepOutcome
 from ..selectors import Selectors
 
@@ -41,11 +42,13 @@ class EnterPublishEntryStep(BasePublishStep):
         try:
             logger.info(f"尝试直接导航到发布页: {PUBLISH_URL}")
             await page.goto(PUBLISH_URL, timeout=30000, wait_until="domcontentloaded")
-            try:
-                from src.infrastructure.anti_risk.delays import random_delay
-                await random_delay(page, int(3000 * speed_rate), metadata, config)
-            except Exception:
-                await page.wait_for_timeout(int(3000 * speed_rate))
+            await PluginWaitHelper.wait_for_condition(
+                page,
+                lambda: self._check_publish_page_loaded(page),
+                timeout_ms=int(3000 * speed_rate),
+                poll_interval_ms=300,
+                pause_callback=lambda: self._await_pause(metadata),
+            )
 
             current_url = page.url
             logger.info(f"导航后 URL: {current_url}")
@@ -75,11 +78,19 @@ class EnterPublishEntryStep(BasePublishStep):
                         await btn.click()
 
                     logger.info(f"已点击发布入口: {selector}")
-                    try:
-                        from src.infrastructure.anti_risk.delays import random_delay
-                        await random_delay(page, int(3000 * speed_rate), metadata, config)
-                    except Exception:
-                        await page.wait_for_timeout(int(3000 * speed_rate))
+                    await PluginWaitHelper.wait_for_condition(
+
+                        page,
+
+                        lambda: self._check_publish_page_loaded(page),
+
+                        timeout_ms=int(3000 * speed_rate),
+
+                        poll_interval_ms=300,
+
+                        pause_callback=lambda: self._await_pause(metadata),
+
+                    )
 
                     if await self._check_publish_page_loaded(page):
                         logger.info("已确认进入发布页面")
@@ -94,11 +105,19 @@ class EnterPublishEntryStep(BasePublishStep):
                 link = page.locator(selector).first
                 if await link.count() > 0:
                     await link.click()
-                    try:
-                        from src.infrastructure.anti_risk.delays import random_delay
-                        await random_delay(page, int(3000 * speed_rate), metadata, config)
-                    except Exception:
-                        await page.wait_for_timeout(int(3000 * speed_rate))
+                    await PluginWaitHelper.wait_for_condition(
+
+                        page,
+
+                        lambda: self._check_publish_page_loaded(page),
+
+                        timeout_ms=int(3000 * speed_rate),
+
+                        poll_interval_ms=300,
+
+                        pause_callback=lambda: self._await_pause(metadata),
+
+                    )
 
                     if await self._check_publish_page_loaded(page):
                         logger.info("已确认进入发布页面")

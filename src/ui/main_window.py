@@ -71,6 +71,24 @@ def _startup_preload_mode() -> str:
     )
 
 
+def _startup_preload_timing() -> tuple[int, int]:
+    def _env_int(name: str, default: int) -> int:
+        raw = os.environ.get(name)
+        if raw is None:
+            return default
+        try:
+            return max(0, int(raw.strip()))
+        except (TypeError, ValueError):
+            return default
+
+    # Keep first paint responsive: preloading heavy table pages competes with
+    # startup checks and first user navigation if it starts too early.
+    return (
+        _env_int("WEMEDIABABY_STARTUP_PRELOAD_BASE_MS", 5000),
+        _env_int("WEMEDIABABY_STARTUP_PRELOAD_STEP_MS", 500),
+    )
+
+
 def get_startup_preload_page_names(
     *,
     mode: str | None = None,
@@ -234,8 +252,7 @@ class MainWindow(FluentWindow):
         self._schedule_single_shot(f"preload:{page_name}", delay_ms, _preload)
 
     def _schedule_startup_preloads(self) -> None:
-        base_ms = 800
-        step_ms = 260
+        base_ms, step_ms = _startup_preload_timing()
         missing_pages = [
             page_name
             for page_name in self._startup_preload_page_names()

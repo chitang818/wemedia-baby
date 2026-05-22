@@ -23,6 +23,7 @@ from typing import Dict, Any
 from playwright.async_api import Page
 
 from src.plugins.core.interfaces.publish_plugin import PublishResult
+from src.plugins.core.wait_helper import PluginWaitHelper
 from ._base import BasePublishStep, NeedsAction, StepOutcome
 from ..selectors import Selectors
 
@@ -39,50 +40,26 @@ class SubmitStep(BasePublishStep):
         wait_ms = lambda ms: int(ms * speed_rate)
         config = metadata.get("anti_risk_config") or {}
 
-        # 先滚动到底部确保按钮可见
-        try:
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await page.wait_for_timeout(300)
-        except Exception:
-            pass
-
-        # 查找发布按钮
-        target_btn = None
-        target_selector = ""
-        for selector in Selectors.PUBLISH["SUBMIT_BTN"]:
-            try:
-                btn = page.locator(selector).first
-                if await btn.count() > 0:
-                    await btn.wait_for(state="visible", timeout=5000)
-                    target_btn = btn
-                    target_selector = selector
-                    break
-            except Exception:
-                continue
-
-        if not target_btn:
-            return PublishResult(
-                success=False,
-                error_message="未找到发布按钮，可能页面结构已变更",
-            )
-
-        logger.info(f"找到发布按钮: {target_selector}，检查是否就绪…")
-
-        # 等待按钮可用（disabled 消失）
-        max_wait_seconds = 120
-        is_ready = False
-        for i in range(max_wait_seconds // 3):
+        async def _submit_button_ready() -> bool:
             await self._await_pause(metadata)
-            is_disabled = await target_btn.get_attribute("disabled")
-            if is_disabled is None or is_disabled == "false":
-                is_ready = True
-                break
-            logger.info("发布按钮当前不可用（可能仍在处理中），继续等待…")
             try:
-                from src.infrastructure.anti_risk.delays import random_delay
-                await random_delay(page, wait_ms(3000), metadata, config)
+                is_disabled = await target_btn.get_attribute("disabled")
+                return is_disabled is None or is_disabled == "false"
             except Exception:
-                await page.wait_for_timeout(wait_ms(3000))
+                return False
+
+        is_ready = bool(
+            await PluginWaitHelper.wait_for_condition(
+                page,
+                _submit_button_ready,
+                timeout_ms=120_000,
+                poll_interval_ms=700,
+                pause_callback=lambda: self._await_pause(metadata),
+                on_poll=lambda _attempt: logger.info(
+                    "????????????????????????"
+                ),
+            )
+        )
 
         if not is_ready:
             return PublishResult(
@@ -228,7 +205,13 @@ class SubmitStep(BasePublishStep):
 
         # 2. 兜底：等待 URL 变化
         try:
-            await page.wait_for_timeout(int(5000 * speed_rate))
+            await PluginWaitHelper.wait_for_url_or_selectors(
+                page,
+                initial_url=page.url,
+                timeout_ms=int(5000 * speed_rate),
+                poll_interval_ms=300,
+                pause_callback=lambda: self._await_pause(metadata),
+            )
             current_url = page.url
             if "/publish/publish" not in current_url and "xiaohongshu.com" in current_url:
                 logger.info(f"页面已离开发布页: {current_url}，视为发布成功")

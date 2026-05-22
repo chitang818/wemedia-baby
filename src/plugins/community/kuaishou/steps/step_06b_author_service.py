@@ -99,7 +99,6 @@ class AuthorServiceStep(BasePublishStep):
                 return PublishResult(success=False, error_message="未找到「关联商品」选项", failed_step="步骤6/作者服务")
             await option.click()
             logger.debug("步骤6: 已选择「关联商品」")
-            await page.wait_for_timeout(800)
 
         # ── 等待并定位商品搜索输入框（变为 enabled 状态） ──────────────
         goods_input = await self._wait_for_goods_input_enabled(page)

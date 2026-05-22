@@ -20,7 +20,6 @@ from PySide6.QtCore import (
     QEasingCurve,
     QTimer,
     QSize,
-    QEventLoop,
     QUrl,
 )
 from PySide6.QtGui import QDesktopServices, QFontMetrics, QShortcut, QKeySequence
@@ -75,6 +74,7 @@ from src.pro_features.batch.publish_description_mapping import (
     combo_index_from_flags,
     flags_from_combo_index,
 )
+from src.pro_features.batch.pages.batch_task_creation_controller import BatchTaskCreationController
 from src.infrastructure.common.media_assign_strategy import (
     AssignStrategy,
     load_assign_strategy,
@@ -132,6 +132,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
     """批量视频任务创建页面"""
 
     _lazy_content = True
+    _enable_show_fade = False
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(title="批量视频任务", parent=parent)  # type: ignore
@@ -145,6 +146,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         self.selected_accounts: List[dict] = []
         self.video_list: List[dict] = []
         self.time_slots: List[Optional[str]] = []
+        self._batch_controller = BatchTaskCreationController(self)
 
         self._lazy_video_auto_matcher: Optional["_MaterialAutoMatcherType"] = None
         self._cached_groups: List[dict] = []
@@ -205,6 +207,8 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         self._preview_exclusion = PreviewExclusionSet()
         self._preview_delete_row_specs: List[dict] = []
         self._preview_row_video_path_hint: List[Optional[str]] = []
+        self._preview_refresh_timer: Optional[QTimer] = None
+        self._preview_refresh_skip_material_stats_reminder: bool = False
         self._init_task_tracking()
         self._material_stats_token: int = 0
         self._material_account_row_counter: int = 0
@@ -524,7 +528,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                     await self._sync_unpublished_videos_for_plain_accounts()
                 else:
                     await self._try_auto_match_videos()
-                self._refresh_preview(skip_material_stats_reminder=True)
+                self._schedule_preview_refresh(skip_material_stats_reminder=True)
                 await self._refresh_task_status_reminder_async()
         except Exception as e:
             logger.error("显示账号选择弹窗失败: %s", e, exc_info=True)
@@ -573,7 +577,9 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             acc["_source"] = source  # type: ignore
 
         self.selected_accounts = new_accounts
-        self._refresh_preview(skip_material_stats_reminder=defer_material_db_refresh)
+        self._schedule_preview_refresh(
+            skip_material_stats_reminder=defer_material_db_refresh
+        )
 
     # ------------------------------------------------------------------
     # 素材自动匹配
@@ -618,7 +624,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             try:
                 await self._try_auto_match_videos(skip_pref_check=force_run)
             finally:
-                self._refresh_preview()
+                self._schedule_preview_refresh()
 
         def _start_match_task() -> None:
             self._track_task(asyncio.create_task(_run()))
@@ -874,7 +880,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
 
     async def _after_publish_time_dialog_accepted(self) -> None:
         await self._try_auto_match_videos()
-        self._refresh_preview()
+        self._schedule_preview_refresh()
 
     def _open_publish_description_dialog(self) -> None:
         """打开配置描述弹窗（「配置描述」按钮与描述配置选「手动」时共用）。
@@ -935,7 +941,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
 
     async def _after_publish_description_dialog_accepted(self) -> None:
         await self._reapply_description_to_all_videos()
-        self._refresh_preview()
+        self._schedule_preview_refresh()
 
     def _description_settings_state_key(self) -> tuple:
         """用于判定「配置描述」确认后是否发生了实际改动。"""
@@ -994,71 +1000,19 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                     v["description"] = ""
                     v["tags"] = ""
 
-    def _fetch_copywriting_by_work_id_sync(self, work_id: str):
-        """根据作品编号同步拉取文案库一条记录。必须在主线程调用，在主事件循环上执行查询（Tortoise 仅在主循环初始化）。"""
-        if not (work_id or "").strip():
-            return None
-        from src.infrastructure.storage.repositories.copywriting_repository import CopywritingRepository
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.get_event_loop()
-        future = self._track_task(asyncio.ensure_future(
-            CopywritingRepository.get_by_work_id(work_id.strip()), loop=loop
-        ))
-        ev = QEventLoop(self)
-        future.add_done_callback(lambda f: ev.quit())
-        ev.exec()
-        try:
-            return future.result()
-        except Exception:
-            return None
-
-    def _resolve_title_desc_for_video_path(
-        self, file_path: str, name_for_work_id: Optional[str] = None
-    ) -> tuple[str, str]:
-        """导入单条视频时解析标题、简介。"""
-        from src.services.copywriting.copywriting_match_service import CopywritingMatchService
-        
-        # 批量页目前在导入时通常使用同步查询，或者后续异步刷。
-        # 为了保持响应速度，这里我们使用同步等待。
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-        coro = CopywritingMatchService.match(
-            mode=self.match_mode if getattr(self, "auto_match_enabled", False) else "none",
-            file_path=file_path,
-            category_id=getattr(self, "random_category_id", None),
-            assign_strategy=getattr(self, "copywriting_assign_strategy", "round_robin"),
-            apply_all=self.apply_description_to_all_tasks,
-            same_title=self.same_title_text,
-            same_desc=self.same_desc_text,
-            use_lib_title=self.use_library_title,
-            use_lib_desc=self.use_library_desc,
-        )
-        
-        # QEventLoop 同步等待协程
-        ev = QEventLoop()
-        task = self._track_task(asyncio.ensure_future(coro))
-        task.add_done_callback(lambda _: ev.quit())
-        ev.exec()
-        
-        res = task.result()
-        if res:
-            return res.get("title", ""), res.get("description", "")
-        return "", ""
-
     def _on_import_files(self):
+        return self._batch_controller.import_files()
+
+    def _on_import_files_legacy(self):
         from src.ui.dialogs.file_select_dialog import FileSelectDialog
         files = FileSelectDialog.select_files(self)
         if files:
-            self._add_video_files(files, apply_assign_strategy=True)
+            self._schedule_add_video_files(files, apply_assign_strategy=True)
 
     def _on_import_folder(self):
+        return self._batch_controller.import_folder()
+
+    def _on_import_folder_legacy(self):
         from src.ui.dialogs.file_select_dialog import FileSelectDialog
         folder = FileSelectDialog.select_folder(self)
         if folder:
@@ -1069,7 +1023,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                     if ext in SUPPORTED_VIDEO_EXTENSIONS:
                         video_files.append(os.path.join(root, fn))
             if video_files:
-                self._add_video_files(video_files, apply_assign_strategy=True)
+                self._schedule_add_video_files(video_files, apply_assign_strategy=True)
             else:
                 InfoBar.info("提示", "所选文件夹中没有支持的视频文件",
                              parent=self, position=InfoBarPosition.TOP, duration=3000)
@@ -1085,22 +1039,32 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         pairs = distribute_items_to_targets(file_paths, plain_accounts, self._library_assign_strategy)
         return [(str(item), account) for item, account in pairs]
 
-    def _load_publish_list_exclude_paths_sync(self) -> set:
-        """同步获取待发布占用路径（用于手动添加即时过滤）。"""
-        try:
-            task = self._track_task(asyncio.ensure_future(self._load_publish_list_exclude_paths()))
-            ev = QEventLoop(self)
-            task.add_done_callback(lambda _: ev.quit())
-            ev.exec()
-            from src.infrastructure.common.path_utils import normalize_media_path
-            return {normalize_media_path(p) for p in (task.result() or set()) if p}
-        except Exception:
-            return set()
+    def _schedule_add_video_files(
+        self, file_paths: List[str], *, apply_assign_strategy: bool = False
+    ) -> None:
+        if not file_paths:
+            return
 
-    def _add_video_files(self, file_paths: List[str], *, apply_assign_strategy: bool = False):
+        def _start() -> None:
+            self._track_task(asyncio.create_task(
+                self._add_video_files_async(
+                    file_paths,
+                    apply_assign_strategy=apply_assign_strategy,
+                )
+            ))
+
+        self._schedule_base_page_timer("batch.add_video_files", 0, _start)
+
+    async def _add_video_files_async(
+        self, file_paths: List[str], *, apply_assign_strategy: bool = False
+    ) -> None:
         from src.infrastructure.common.path_utils import normalize_media_path
         existing_paths = {v["file_path"] for v in self.video_list}
-        occupied_paths = self._load_publish_list_exclude_paths_sync()
+        occupied_paths = {
+            normalize_media_path(p)
+            for p in (await self._load_publish_list_exclude_paths())
+            if p
+        }
         added = 0
         blocked_paths: List[str] = []
         pairs = (
@@ -1121,7 +1085,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                 size = os.path.getsize(fp)
             except OSError:
                 size = 0
-            title, desc = self._resolve_title_desc_for_video_path(fp)
+            title, desc = await self._resolve_title_desc_async(fp)
             self.video_list.append({
                 "file_path": fp,
                 "file_name": os.path.basename(fp),
@@ -1135,7 +1099,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             added += 1  # type: ignore
 
         if added:
-            self._refresh_preview()
+            self._schedule_preview_refresh()
         if blocked_paths:
             show_lines = "\n".join(os.path.basename(p) for p in blocked_paths[:8])
             extra = ""
@@ -1154,6 +1118,9 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
     # ------------------------------------------------------------------
 
     def _on_choose_from_library(self):
+        return self._batch_controller.choose_from_library()
+
+    def _on_choose_from_library_legacy(self):
         """从媒体库弹窗选择视频，并按当前策略将视频与已选账号配对后加入发布列表。"""
         from src.infrastructure.common.material_library_manager import MaterialLibraryManager
 
@@ -1218,58 +1185,61 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             acc = plain_accounts[0] if plain_accounts else None
             pairs = [(f, acc) for f in selected]
 
+        self._schedule_add_from_library(pairs)
+
+    def _schedule_add_from_library(
+        self, pairs: List[tuple[dict, Optional[dict]]]
+    ) -> None:
+        if not pairs:
+            return
+
+        def _start() -> None:
+            self._track_task(asyncio.create_task(self._add_from_library_async(pairs)))
+
+        self._schedule_base_page_timer("batch.add_from_library", 0, _start)
+
+    async def _add_from_library_async(
+        self, pairs: List[tuple[dict, Optional[dict]]]
+    ) -> None:
+        """从媒体库批量添加视频，异步解析文案并合并一次预览刷新。"""
         existing_paths = {v["file_path"] for v in self.video_list}
         added = 0
-        for file_info, account in pairs:
-            before = len(self.video_list)
-            self._add_from_library(file_info, assigned_account=account, existing_paths=existing_paths)
-            if len(self.video_list) > before:
-                added += 1
-                existing_paths.add(file_info.get("file_path", ""))
+        for file_info, assigned_account in pairs:
+            fp = file_info.get("file_path", "")
+            if not fp or fp in existing_paths:
+                continue
+            try:
+                size = file_info.get("file_size", 0) or os.path.getsize(fp)
+            except OSError:
+                size = 0
+            name = file_info.get("file_name") or file_info.get("original_name") or os.path.basename(fp)
+            title, desc = await self._resolve_title_desc_async(fp, name_for_work_id=name)
+            entry: dict = {
+                "file_path": fp,
+                "file_name": os.path.basename(fp),
+                "file_size": size,
+                "title": title,
+                "description": desc,
+                "tags": ",".join(parse_topic_list(desc)) if desc else "",
+            }
+            if assigned_account is not None:
+                entry["_assigned_account_id"] = assigned_account.get("id")
+            self.video_list.append(entry)
+            existing_paths.add(fp)
+            added += 1
 
-        if added:
-            strategy_name = self._library_assign_strategy.display_name()
-            InfoBar.success(
-                "已添加",
-                f"按{strategy_name}策略从媒体库添加 {added} 个视频",
-                parent=self,
-                position=InfoBarPosition.TOP,
-                duration=2000,
-            )
+        if not added:
+            return
 
-    def _add_from_library(
-        self,
-        file_info: dict,
-        *,
-        assigned_account: Optional[dict] = None,
-        existing_paths: Optional[set] = None,
-    ):
-        """从媒体库添加单个视频到发布列表，可携带已按策略配对的账号信息。"""
-        fp = file_info.get("file_path", "")
-        if not fp:
-            return
-        if existing_paths is None:
-            existing_paths = {v["file_path"] for v in self.video_list}
-        if fp in existing_paths:
-            return
-        try:
-            size = file_info.get("file_size", 0) or os.path.getsize(fp)
-        except OSError:
-            size = 0
-        name = file_info.get("file_name") or file_info.get("original_name") or os.path.basename(fp)
-        title, desc = self._resolve_title_desc_for_video_path(fp, name_for_work_id=name)
-        entry: dict = {
-            "file_path": fp,
-            "file_name": os.path.basename(fp),
-            "file_size": size,
-            "title": title,
-            "description": desc,
-            "tags": ",".join(parse_topic_list(desc)) if desc else "",
-        }
-        if assigned_account is not None:
-            entry["_assigned_account_id"] = assigned_account.get("id")
-        self.video_list.append(entry)
-        self._refresh_preview()
+        self._schedule_preview_refresh()
+        strategy_name = self._library_assign_strategy.display_name()
+        InfoBar.success(
+            "已添加",
+            f"按{strategy_name}策略从媒体库添加 {added} 个视频",
+            parent=self,
+            position=InfoBarPosition.TOP,
+            duration=2000,
+        )
 
     # ==================================================================
     # 3. 素材库数量提醒卡片（各目标「视频 → 未发布」目录 + 发布列表占用）
@@ -1792,7 +1762,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             self.cover_type = "first_frame"
             self.cover_path = ""
             self._sync_batch_cover_combo_from_state()
-            self._refresh_preview()
+            self._schedule_preview_refresh()
             return
 
         from src.pro_features.batch.dialogs.publish_cover_dialog import PublishCoverDialog
@@ -1805,7 +1775,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         if dialog.exec() == int(QDialog.DialogCode.Accepted):
             self.cover_type, self.cover_path = dialog.get_cover_settings()
             self._sync_batch_cover_combo_from_state()
-            self._refresh_preview()
+            self._schedule_preview_refresh()
         else:
             self._combo_batch_cover.blockSignals(True)
             self._sync_batch_cover_combo_from_state()
@@ -1850,7 +1820,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             KEY_XHS_CONTENT_ATTR_AUTO: xhs_attr_auto,
         })
         save_persisted_declare_original(wx_orig)
-        self._refresh_preview()
+        self._schedule_preview_refresh()
 
     def _on_batch_location_check_changed(self, _state: int = 0) -> None:
         """未勾选：清空位置与视频号空位策略；勾选：弹出位置设置弹窗。"""
@@ -1861,7 +1831,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             self.location_text = ""
             self._batch_wechat_empty_location_open_picker = False
             save_batch_location_prefs("", False)
-            self._refresh_preview()
+            self._schedule_preview_refresh()
             return
 
         from src.ui.publish.location import BatchLocationDialog
@@ -1895,7 +1865,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             chk.blockSignals(True)
             chk.setChecked(False)
             chk.blockSignals(False)
-        self._refresh_preview()
+        self._schedule_preview_refresh()
 
     def _yellow_cart_short_name_from_goods_text(self) -> str:
         """从 cart_info 存储串解析购物车商品简称（与单条页 JSON 标记一致）。"""
@@ -1918,7 +1888,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         if not chk.isChecked():
             self.goods_text = ""
             self._update_batch_promotion_summary_labels()
-            self._refresh_preview()
+            self._schedule_preview_refresh()
             return
 
         from src.ui.publish.promotion.batch_cart_dialog import BatchCartDialog
@@ -1941,13 +1911,13 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             chk.setChecked(False)
             chk.blockSignals(False)
             self._update_batch_promotion_summary_labels()
-            self._refresh_preview()
+            self._schedule_preview_refresh()
             return
 
         if (self.goods_text or "").strip():
             self.anchor_text = ""
         self._update_batch_promotion_summary_labels()
-        self._refresh_preview()
+        self._schedule_preview_refresh()
 
     def _on_batch_group_buy_check_changed(self, _state: int = 0) -> None:
         """未勾选：清空团购；勾选：弹出设置弹窗（取消或主内容为空则恢复未勾选）。"""
@@ -1957,7 +1927,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         if not chk.isChecked():
             self.anchor_text = ""
             self._update_batch_promotion_summary_labels()
-            self._refresh_preview()
+            self._schedule_preview_refresh()
             return
 
         from src.ui.publish.promotion.batch_group_buy_dialog import BatchGroupBuyDialog
@@ -1978,13 +1948,13 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             chk.setChecked(False)
             chk.blockSignals(False)
             self._update_batch_promotion_summary_labels()
-            self._refresh_preview()
+            self._schedule_preview_refresh()
             return
 
         if (self.anchor_text or "").strip():
             self.goods_text = ""
         self._update_batch_promotion_summary_labels()
-        self._refresh_preview()
+        self._schedule_preview_refresh()
 
     def _update_batch_promotion_summary_labels(self) -> None:
         if getattr(self, "_lbl_batch_yellow_cart_summary", None):
@@ -2847,6 +2817,33 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         if hasattr(self, "_material_stats_rows_layout") and not skip_material_stats_reminder:
             self._refresh_task_status_reminder()
 
+    def _schedule_preview_refresh(
+        self, *, skip_material_stats_reminder: bool = False, delay_ms: int = 120
+    ) -> None:
+        """合并短时间内的多次预览刷新，降低表格重建和素材统计重复触发。"""
+        if self._preview_refresh_timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._run_scheduled_preview_refresh)
+            self._preview_refresh_timer = timer
+
+        if not self._preview_refresh_timer.isActive():
+            self._preview_refresh_skip_material_stats_reminder = skip_material_stats_reminder
+        else:
+            self._preview_refresh_skip_material_stats_reminder = (
+                self._preview_refresh_skip_material_stats_reminder
+                and skip_material_stats_reminder
+            )
+
+        self._preview_refresh_timer.start(max(0, int(delay_ms)))
+
+    def _run_scheduled_preview_refresh(self) -> None:
+        skip_material_stats_reminder = self._preview_refresh_skip_material_stats_reminder
+        self._preview_refresh_skip_material_stats_reminder = False
+        self._refresh_preview(
+            skip_material_stats_reminder=skip_material_stats_reminder
+        )
+
     def _fill_preview_row(self, row: int, values: list) -> None:
         """将字符串列表写入预览表指定行，统一对齐方式。"""
         for col, text in enumerate(values):
@@ -3150,9 +3147,11 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         if not self._current_user_svc.is_logged_in():
             try:
                 from src.ui.dialogs.login_dialog import LoginDialog
+                from src.ui.utils.async_helper import await_qdialog_finished
                 dialog = LoginDialog(self)
                 dialog.login_success.connect(self._refresh_user_id)
-                if not dialog.exec():
+                code = await await_qdialog_finished(dialog)
+                if code != int(QDialog.DialogCode.Accepted):
                     InfoBar.warning("请先登录", "发布前需要登录",
                                     parent=self, position=InfoBarPosition.TOP)
                     return

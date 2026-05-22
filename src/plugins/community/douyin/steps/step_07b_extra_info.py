@@ -31,6 +31,7 @@ from src.domain.publish.location_settings import (
     LOCATION_MODE_CHOICES,
     parse_poi_info_storage,
 )
+from src.plugins.core.wait_helper import PluginWaitHelper
 
 from ._base import BasePublishStep, StepOutcome
 from ..selectors import Selectors
@@ -647,6 +648,22 @@ class ExtraInfoCommonStep(BasePublishStep):
                 continue
         return False
 
+    async def _wait_cart_goods_added(self, page: Page, timeout_ms: int = 3000) -> bool:
+        return bool(
+            await PluginWaitHelper.wait_for_condition(
+                page,
+                lambda: self._verify_cart_goods_added(page),
+                timeout_ms=timeout_ms,
+                poll_interval_ms=300,
+            )
+        )
+
+    async def _supplement_modal_closed(self, dialog: Locator) -> bool:
+        try:
+            return await dialog.count() == 0 or not await dialog.is_visible()
+        except Exception:
+            return True
+
     async def _fill_cart_link_and_confirm(
         self,
         page: Page,
@@ -772,8 +789,7 @@ class ExtraInfoCommonStep(BasePublishStep):
             await _asyncio.sleep(0)  # 让出控制权防止 Qt UI 无响应
         logger.info("购物车：已点击「完成编辑」，等待弹窗关闭")
 
-        await page.wait_for_timeout(800)
-        if await self._verify_cart_goods_added(page):
+        if await self._wait_cart_goods_added(page, timeout_ms=3_000):
             logger.info("购物车：已确认「已添加商品」区域出现，商品添加成功")
             return True
         else:
@@ -807,12 +823,13 @@ class ExtraInfoCommonStep(BasePublishStep):
                             await human_click(page, btn, metadata, config)
                         except Exception:
                             await btn.click()
-                        try:
-                            from src.infrastructure.anti_risk.delays import random_delay
-
-                            await random_delay(page, 800, metadata, config)
-                        except Exception:
-                            await page.wait_for_timeout(800)
+                        await PluginWaitHelper.wait_for_condition(
+                            page,
+                            lambda: self._supplement_modal_closed(dialog),
+                            timeout_ms=2_000,
+                            poll_interval_ms=250,
+                            pause_callback=lambda: self._await_pause(metadata),
+                        )
                         logger.info(f"已点击补充信息弹窗按钮: {btn_sel}")
                         USER_LOG.info("[步骤7/9 扩展信息] ✓ 已处理补充信息弹窗")
                         break

@@ -4,16 +4,57 @@
 功能：封装PySide6.QtCharts，提供平台分布环形图和发布趋势面积图，自动适配深色/浅色主题
 """
 
-from typing import Dict, List, Optional, Any
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGraphicsSimpleTextItem
+from __future__ import annotations
+
+import logging
+from enum import Enum
+from typing import Callable, Dict, List, Optional, Any
+
+logger = logging.getLogger(__name__)
+
+try:
+    import shiboken6 as _shiboken6
+except ImportError:
+    _shiboken6 = None  # type: ignore[misc, assignment]
+
+
+def _qobject_alive(obj: Optional[QWidget]) -> bool:
+    if obj is None:
+        return False
+    if _shiboken6 is None:
+        return True
+    try:
+        return bool(_shiboken6.isValid(obj))
+    except Exception:
+        return True
+
+from PySide6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QGraphicsSimpleTextItem,
+    QSizePolicy,
+)
 from PySide6.QtGui import QPainter, QColor, QFont, QPen, QBrush, QLinearGradient
 from PySide6.QtCharts import (
-    QChart, QChartView, QPieSeries, QPieSlice,
-    QLineSeries, QAreaSeries, QDateTimeAxis, QValueAxis
+    QChart,
+    QChartView,
+    QPieSeries,
+    QPieSlice,
+    QLineSeries,
+    QAreaSeries,
+    QDateTimeAxis,
+    QValueAxis,
 )
-from PySide6.QtCore import Qt, QDateTime, QPointF
+from PySide6.QtCore import Qt, QDateTime, QPointF, QTimer
 
 from qfluentwidgets import CardWidget, SubtitleLabel, CaptionLabel, isDarkTheme
+
+from src.ui.components.loading_spinner import LoadingOverlay
+from src.ui.workspace_chart_animation_prefs import (
+    CHART_ENTRY_ANIMATION_MS,
+    CHART_OVERLAY_FADE_MS,
+)
 
 
 PLATFORM_BRAND_COLORS = {
@@ -35,6 +76,20 @@ FALLBACK_COLORS = [
 ]
 
 
+class ChartLoadState(Enum):
+    LOADING = "loading"
+    READY = "ready"
+
+
+def _apply_chart_animation(chart: QChart, *, animate: bool) -> None:
+    """loading 阶段 NoAnimation；reveal 入场时短时 SeriesAnimations。"""
+    if animate:
+        chart.setAnimationDuration(CHART_ENTRY_ANIMATION_MS)
+        chart.setAnimationOptions(QChart.AnimationOption.SeriesAnimations)
+    else:
+        chart.setAnimationOptions(QChart.AnimationOption.NoAnimation)
+
+
 def _theme_colors():
     dark = isDarkTheme()
     return {
@@ -54,19 +109,35 @@ def _theme_colors():
 
 
 class ChartBase(CardWidget):
-    """图表基类"""
+    """图表基类：图表区 LoadingOverlay + reveal 入场动画。"""
 
     def __init__(self, title: str, parent: Optional[QWidget] = None):
         super().__init__(parent)
+        self._load_state = ChartLoadState.READY
+        self._loading_shown_at: float = 0.0
+
         self.chart = QChart()
         self.chart.setBackgroundVisible(False)
         self.chart.layout().setContentsMargins(0, 0, 0, 0)
         self.chart.legend().setVisible(False)
         self.chart.setMargins(self.chart.margins())
 
+        self._chart_body = QWidget(self)
+        self._chart_body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        body_layout = QVBoxLayout(self._chart_body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+
         self.chart_view = QChartView(self.chart)
-        self.chart_view.setRenderHint(QPainter.Antialiasing)
+        self.chart_view.setRenderHint(QPainter.Antialiasing, False)
         self.chart_view.setStyleSheet("background: transparent;")
+        body_layout.addWidget(self.chart_view)
+
+        self._loading_overlay = LoadingOverlay("", ring_size=36, parent=self._chart_body)
+        self._loading_overlay.hide_immediate()
+
+        self._skeleton_host: Optional[QWidget] = None
+        self._reveal_timer: Optional[QTimer] = None
 
         self.v_layout = QVBoxLayout(self)
         self.v_layout.setContentsMargins(16, 12, 16, 8)
@@ -77,7 +148,98 @@ class ChartBase(CardWidget):
         self.title_label = SubtitleLabel(title, self)
         self.title_label.setStyleSheet(f"color: {title_color};")
         self.v_layout.addWidget(self.title_label)
-        self.v_layout.addWidget(self.chart_view)
+        self.v_layout.addWidget(self._chart_body, 1)
+
+    @property
+    def is_loading(self) -> bool:
+        return self._load_state == ChartLoadState.LOADING
+
+    def _cancel_reveal_timer(self) -> None:
+        if self._reveal_timer is None:
+            return
+        try:
+            self._reveal_timer.stop()
+            self._reveal_timer.deleteLater()
+        except Exception:
+            pass
+        self._reveal_timer = None
+
+    def cancel_pending_reveal(self) -> None:
+        """页面切换或刷新前取消未完成的 reveal，避免定时器在已销毁控件上改 chart。"""
+        self._cancel_reveal_timer()
+        try:
+            self._loading_overlay.hide_immediate()
+        except Exception:
+            pass
+
+    def show_loading(self, text: str = "") -> None:
+        """等待数据：遮罩 + 转圈（不更新 series）。"""
+        import time
+
+        self._cancel_reveal_timer()
+        self._load_state = ChartLoadState.LOADING
+        self._loading_shown_at = time.monotonic()
+        self._loading_overlay.set_text(text)
+        self._show_chart_skeleton()
+        self._loading_overlay.show_animated()
+
+    def reveal_with_data(
+        self,
+        apply_fn: Callable[..., None],
+        *,
+        animate_entry: bool = True,
+    ) -> None:
+        """数据就绪：遮罩淡出后单次写入 series（避免双次动画触发 Qt 原生崩溃）。"""
+        self._cancel_reveal_timer()
+        self._load_state = ChartLoadState.READY
+        self._hide_chart_skeleton()
+
+        if not _qobject_alive(self):
+            return
+
+        if not self._loading_overlay.isVisible():
+            try:
+                apply_fn(animate=animate_entry)
+            except Exception:
+                logger.exception("图表 reveal 写入失败")
+            _apply_chart_animation(self.chart, animate=False)
+            return
+
+        def _after_overlay_hidden() -> None:
+            if not _qobject_alive(self):
+                return
+            try:
+                apply_fn(animate=animate_entry)
+            except Exception:
+                logger.exception("图表 reveal 写入失败")
+            _apply_chart_animation(self.chart, animate=False)
+
+        self._loading_overlay.hide_animated()
+        self._reveal_timer = QTimer(self)
+        self._reveal_timer.setSingleShot(True)
+        self._reveal_timer.timeout.connect(_after_overlay_hidden)
+        self._reveal_timer.start(CHART_OVERLAY_FADE_MS + 30)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._loading_overlay.isVisible():
+            self._loading_overlay._sync_geometry()
+
+    def _show_chart_skeleton(self) -> None:
+        """子类可覆盖：在图表区显示形状 skeleton。"""
+        pass
+
+    def _hide_chart_skeleton(self) -> None:
+        if self._skeleton_host is not None:
+            self._skeleton_host.hide()
+            self._skeleton_host.setParent(None)
+            self._skeleton_host.deleteLater()
+            self._skeleton_host = None
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._loading_overlay.isVisible():
+            self._loading_overlay._sync_geometry()
 
 
 def _get_platform_color(name: str, index: int) -> QColor:
@@ -95,10 +257,11 @@ class PlatformDistributionChart(ChartBase):
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__("平台分布", parent)
+        self._skeleton_items: list = []
         self.series = QPieSeries()
         self.series.setHoleSize(0.55)
         self.chart.addSeries(self.series)
-        self.chart.setAnimationOptions(QChart.SeriesAnimations)
+        _apply_chart_animation(self.chart, animate=False)
 
         self._center_text: Optional[QGraphicsSimpleTextItem] = None
         self._center_sub: Optional[QGraphicsSimpleTextItem] = None
@@ -147,11 +310,49 @@ class PlatformDistributionChart(ChartBase):
             br = self._center_sub.boundingRect()
             self._center_sub.setPos(cx - br.width() / 2, cy + 10)
 
+    def _show_chart_skeleton(self) -> None:
+        from src.ui.components.skeleton import SkeletonItem
+
+        self._hide_chart_skeleton()
+        host = QWidget(self._chart_body)
+        host.setAttribute(Qt.WA_TransparentForMouseEvents)
+        layout = QVBoxLayout(host)
+        layout.setAlignment(Qt.AlignCenter)
+        ring = SkeletonItem(host, radius=80)
+        ring.setFixedSize(140, 140)
+        layout.addWidget(ring, alignment=Qt.AlignCenter)
+        self._skeleton_items = [ring]
+        ring.start_breathing()
+        host.setGeometry(self._chart_body.rect())
+        host.show()
+        host.raise_()
+        self._skeleton_host = host
+
+    def _hide_chart_skeleton(self) -> None:
+        for item in self._skeleton_items:
+            try:
+                item.stop_breathing()
+            except Exception:
+                pass
+        self._skeleton_items = []
+        super()._hide_chart_skeleton()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if self._skeleton_host is not None:
+            self._skeleton_host.setGeometry(self._chart_body.rect())
         self._reposition_center_text()
 
-    def set_data(self, data: Dict[str, int]):
+    def reveal_platform_data(self, data: Dict[str, int], *, animate_entry: bool = True) -> None:
+        self.reveal_with_data(
+            lambda *, animate=False: self.set_data(data, animate=animate),
+            animate_entry=animate_entry,
+        )
+
+    def set_data(self, data: Dict[str, int], *, animate: bool = False):
+        _apply_chart_animation(self.chart, animate=animate)
+        if animate:
+            self.chart_view.setRenderHint(QPainter.Antialiasing, True)
         tc = _theme_colors()
         self.series.clear()
         if self._center_sub:
@@ -199,6 +400,7 @@ class PublishTrendChart(ChartBase):
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__("发布趋势", parent)
+        self._skeleton_items: list = []
         tc = _theme_colors()
 
         # 副标题（汇总数字）
@@ -239,7 +441,7 @@ class PublishTrendChart(ChartBase):
         self.failed_series.setPen(pen_f)
         self.chart.addSeries(self.failed_series)
 
-        self.chart.setAnimationOptions(QChart.SeriesAnimations)
+        _apply_chart_animation(self.chart, animate=False)
 
         axis_font = QFont()
         axis_font.setPixelSize(11)
@@ -316,12 +518,59 @@ class PublishTrendChart(ChartBase):
             plot_area.center().y() - br.height() / 2,
         )
 
+    def _show_chart_skeleton(self) -> None:
+        from src.ui.components.skeleton import SkeletonItem
+
+        self._hide_chart_skeleton()
+        host = QWidget(self._chart_body)
+        host.setAttribute(Qt.WA_TransparentForMouseEvents)
+        layout = QVBoxLayout(host)
+        layout.setContentsMargins(24, 16, 24, 16)
+        layout.setSpacing(10)
+        self._skeleton_items = []
+        for _ in range(4):
+            bar = SkeletonItem(host, radius=4)
+            bar.setFixedHeight(14)
+            layout.addWidget(bar)
+            bar.start_breathing()
+            self._skeleton_items.append(bar)
+        layout.addStretch()
+        host.setGeometry(self._chart_body.rect())
+        host.show()
+        host.raise_()
+        self._skeleton_host = host
+
+    def _hide_chart_skeleton(self) -> None:
+        for item in self._skeleton_items:
+            try:
+                item.stop_breathing()
+            except Exception:
+                pass
+        self._skeleton_items = []
+        super()._hide_chart_skeleton()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if self._skeleton_host is not None:
+            self._skeleton_host.setGeometry(self._chart_body.rect())
         self._apply_gradient()
         self._reposition_empty()
 
-    def set_data(self, history: List[Dict[str, Any]]):
+    def reveal_trend_data(
+        self,
+        history: List[Dict[str, Any]],
+        *,
+        animate_entry: bool = True,
+    ) -> None:
+        self.reveal_with_data(
+            lambda *, animate=False: self.set_data(history, animate=animate),
+            animate_entry=animate_entry,
+        )
+
+    def set_data(self, history: List[Dict[str, Any]], *, animate: bool = False):
+        _apply_chart_animation(self.chart, animate=animate)
+        if animate:
+            self.chart_view.setRenderHint(QPainter.Antialiasing, True)
         self.success_upper.clear()
         self.success_lower.clear()
         self.failed_series.clear()

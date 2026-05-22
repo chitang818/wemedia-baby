@@ -24,6 +24,7 @@ from typing import Dict, Any
 from playwright.async_api import Page
 
 from src.plugins.core.interfaces.publish_plugin import PublishResult
+from src.plugins.core.wait_helper import PluginWaitHelper
 from ._base import BasePublishStep, StepOutcome
 from ..selectors import Selectors
 from ..wujie_shadow import WUJIE_SHADOW_ROOT_JS
@@ -44,6 +45,103 @@ class CoverSettingStep(BasePublishStep):
 
     注意：所有元素位于 wujie-app 的 Shadow DOM 内，需使用 JS 穿透操作。
     """
+
+    async def _wait_shadow_dialog_visible(
+        self, page: Page, js_dialog: str, metadata: Dict[str, Any], timeout_ms: int = 5000
+    ) -> bool:
+        async def _is_visible() -> bool:
+            try:
+                result = await page.evaluate(
+                    f"""() => {{
+                    const shadow = {WUJIE_SHADOW_ROOT_JS};
+                    if (!shadow) return false;
+                    const dialog = shadow.querySelector({js_dialog});
+                    return !!dialog;
+                }}"""
+                )
+                return bool(result)
+            except Exception:
+                return False
+
+        return bool(
+            await PluginWaitHelper.wait_for_condition(
+                page,
+                _is_visible,
+                timeout_ms=timeout_ms,
+                poll_interval_ms=500,
+                pause_callback=lambda: self._await_pause(metadata),
+            )
+        )
+
+    async def _wait_shadow_confirm_ready(
+        self,
+        page: Page,
+        js_dialog: str,
+        js_confirm: str,
+        metadata: Dict[str, Any],
+        timeout_ms: int = 5000,
+    ) -> bool:
+        async def _is_ready() -> bool:
+            try:
+                return bool(
+                    await page.evaluate(
+                        f"""() => {{
+                        const shadow = {WUJIE_SHADOW_ROOT_JS};
+                        if (!shadow) return false;
+                        const dialog = shadow.querySelector({js_dialog});
+                        if (!dialog) return false;
+                        let btn = dialog.querySelector({js_confirm});
+                        if (!btn) {{
+                            const allBtns = dialog.querySelectorAll('button.weui-desktop-btn_primary');
+                            btn = Array.from(allBtns).find((b) => (b.textContent || '').includes('确认'));
+                        }}
+                        if (!btn) return false;
+                        const style = window.getComputedStyle(btn);
+                        return !btn.disabled && style.display !== 'none' && style.visibility !== 'hidden';
+                    }}"""
+                    )
+                )
+            except Exception:
+                return False
+
+        return bool(
+            await PluginWaitHelper.wait_for_condition(
+                page,
+                _is_ready,
+                timeout_ms=timeout_ms,
+                poll_interval_ms=500,
+                pause_callback=lambda: self._await_pause(metadata),
+            )
+        )
+
+    async def _wait_shadow_dialog_closed(
+        self, page: Page, js_dialog: str, metadata: Dict[str, Any], timeout_ms: int = 10000
+    ) -> bool:
+        async def _is_closed() -> bool:
+            try:
+                result = await page.evaluate(
+                    f"""() => {{
+                    const shadow = {WUJIE_SHADOW_ROOT_JS};
+                    if (!shadow) return true;
+                    const dialog = shadow.querySelector({js_dialog});
+                    if (!dialog) return true;
+                    const style = window.getComputedStyle(dialog);
+                    return style.display === 'none' || style.visibility === 'hidden';
+                }}"""
+                )
+                return bool(result)
+            except Exception:
+                return False
+
+        return bool(
+            await PluginWaitHelper.wait_for_condition(
+                page,
+                _is_closed,
+                timeout_ms=timeout_ms,
+                poll_interval_ms=500,
+                pause_callback=lambda: self._await_pause(metadata),
+            )
+        )
 
     async def execute(self, page: Page, file_path: str, metadata: Dict[str, Any]) -> StepOutcome:
         await self._await_pause(metadata)
@@ -101,34 +199,13 @@ class CoverSettingStep(BasePublishStep):
             )
 
         # ---- 2. 等待编辑封面弹窗出现 ----
-        dialog_visible = False
-        for _ in range(10):
-            try:
-                result = await page.evaluate(
-                    f"""() => {{
-                    const shadow = {WUJIE_SHADOW_ROOT_JS};
-                    if (!shadow) return 'no_shadow';
-                    const dialog = shadow.querySelector({js_dialog});
-                    if (dialog) return 'visible';
-                    return 'not_found';
-                }}"""
-                )
-                if result == "visible":
-                    dialog_visible = True
-                    logger.info("[视频号] 编辑封面弹窗已出现")
-                    break
-            except Exception:
-                pass
-            await page.wait_for_timeout(500)
-
-        if not dialog_visible:
+        if not await self._wait_shadow_dialog_visible(page, js_dialog, metadata):
             return PublishResult(
                 success=False,
                 error_message="编辑封面弹窗未出现",
                 failed_step="CoverSettingStep",
             )
-
-        await page.wait_for_timeout(500)
+        logger.info("[视频号] 编辑封面弹窗已出现")
 
         # ---- 3. 仅在弹窗子树内上传封面 ----
         try:
@@ -206,7 +283,9 @@ class CoverSettingStep(BasePublishStep):
                 failed_step="CoverSettingStep",
             )
 
-        await page.wait_for_timeout(2000)
+        await self._wait_shadow_confirm_ready(
+            page, js_dialog, js_confirm, metadata, timeout_ms=5000
+        )
 
         # ---- 4. 仅在弹窗子树内点击「确认」----
         try:
@@ -250,27 +329,11 @@ class CoverSettingStep(BasePublishStep):
             )
 
         # ---- 5. 等待弹窗关闭 ----
-        dialog_closed = False
-        for _ in range(20):
-            try:
-                result = await page.evaluate(
-                    f"""() => {{
-                    const shadow = {WUJIE_SHADOW_ROOT_JS};
-                    if (!shadow) return 'no_shadow';
-                    const dialog = shadow.querySelector({js_dialog});
-                    if (!dialog) return 'closed';
-                    const style = window.getComputedStyle(dialog);
-                    if (style.display === 'none' || style.visibility === 'hidden') return 'closed';
-                    return 'still_open';
-                }}"""
-                )
-                if result in ("closed", "no_shadow"):
-                    dialog_closed = True
-                    logger.info("[视频号] 编辑封面弹窗已关闭")
-                    break
-            except Exception:
-                pass
-            await page.wait_for_timeout(500)
+        dialog_closed = await self._wait_shadow_dialog_closed(
+            page, js_dialog, metadata
+        )
+        if dialog_closed:
+            logger.info("[视频号] 编辑封面弹窗已关闭")
 
         if not dialog_closed:
             logger.warning("[视频号] 编辑封面弹窗未检测到关闭，但确认按钮已点击，继续执行")
