@@ -98,13 +98,21 @@ class Selectors:
         # ✅ 已确认：发布图文笔记入口
         # 真实 DOM: <div class="publish-card"> 含 "发布图文笔记 支持图片格式 png、jpg、jpeg"
         "PUBLISH_IMAGE_CARD": [
+            "xpath=//*[normalize-space()='发布图文笔记']/ancestor::*[contains(@class,'publish-card')][1]",
             "div.publish-card:has-text('发布图文笔记')",
+            "div[class*='publish-card']:has-text('发布图文笔记')",
+            "[class*='publish']:has-text('发布图文笔记')",
+            "text=发布图文笔记",
             "div.title:has-text('发布图文笔记')",
         ],
         # ✅ 已确认：发布视频笔记入口
         # 真实 DOM: <div class="publish-card"> 含 "发布视频笔记 支持视频格式 mp4、mov"
         "PUBLISH_VIDEO_CARD": [
+            "xpath=//*[normalize-space()='发布视频笔记']/ancestor::*[contains(@class,'publish-card')][1]",
             "div.publish-card:has-text('发布视频笔记')",
+            "div[class*='publish-card']:has-text('发布视频笔记')",
+            "[class*='publish']:has-text('发布视频笔记')",
+            "text=发布视频笔记",
             "div.title:has-text('发布视频笔记')",
         ],
         # 发布页面跳转入口（直接链接）
@@ -162,7 +170,7 @@ class Selectors:
             "div[class*='image-item'] img",
         ],
 
-        # 步骤4：标题与描述
+        # 步骤5：标题与描述
         # ⏳ 标题输入框（小红书标题限 20 字，需在发布页采集精确选择器）
         "TITLE_INPUT": [
             "input[placeholder*='标题']",
@@ -189,7 +197,7 @@ class Selectors:
         ],
         "AT_INPUT": ["input[placeholder*='@']"],
 
-        # 步骤5：封面设置
+        # 步骤4：封面设置
         "COVER_BTN": [
             "div:has-text('设置封面')",
             "button:has-text('设置封面')",
@@ -218,7 +226,7 @@ class Selectors:
             "div[class*='cover-dialog'] img",
         ],
 
-        # 步骤7：发布按钮
+        # 步骤8：发布按钮
         "SUBMIT_BTN": [
             "button:has-text('发布')",
             "button[class*='submit']",
@@ -289,6 +297,17 @@ class Selectors:
             "input[placeholder*='时间']",
             "input[type='datetime-local']",
         ],
+        # 步骤7：图文专属开关
+        "ALLOW_CO_CREATE_LABEL": [
+            "text=允许合拍",
+            "*:has-text('允许合拍')",
+        ],
+        "ALLOW_COPY_CONTENT_LABEL": [
+            "text=允许正文复制",
+            "*:has-text('允许正文复制')",
+            "*:has-text('正文复制')",
+        ],
+        # 步骤6C：添加地点
         "LOCATION_INPUT": [
             "input[placeholder*='位置']",
             "input[placeholder*='地点']",

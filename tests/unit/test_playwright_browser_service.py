@@ -1,7 +1,9 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
+import src.services.browser.playwright_service as playwright_service
 from src.services.browser.playwright_service import PlaywrightBrowserService
 
 
@@ -52,3 +54,46 @@ async def test_open_browser_for_account_uses_launch_semaphore(monkeypatch):
     )
 
     assert max_running == 1
+
+
+@pytest.mark.asyncio
+async def test_extract_nickname_falls_back_to_http_verification(monkeypatch):
+    service = PlaywrightBrowserService(None)
+    calls = {}
+
+    class FakePlugin:
+        async def extract_user_info(self, context):
+            return SimpleNamespace(nickname=None)
+
+    async def fake_verify_login_status(**kwargs):
+        calls.update(kwargs)
+        return {
+            "is_valid": True,
+            "is_logged_in": True,
+            "username": "real_nickname",
+        }
+
+    monkeypatch.setattr(playwright_service, "USE_PLUGIN_SYSTEM", True)
+    monkeypatch.setattr(
+        playwright_service.PluginManager,
+        "get_login_plugin",
+        lambda platform: FakePlugin(),
+    )
+    monkeypatch.setattr(
+        playwright_service,
+        "verify_login_status",
+        fake_verify_login_status,
+    )
+
+    nickname = await service._extract_nickname(
+        context=object(),
+        platform="xiaohongshu",
+        cookies={"access-token-creator.xiaohongshu.com": "token"},
+        account_id=21,
+        account_name="profile_ab9612ae9785",
+    )
+
+    assert nickname == "real_nickname"
+    assert calls["platform"] == "xiaohongshu"
+    assert calls["account_id"] == 21
+    assert calls["timeout"] == 12

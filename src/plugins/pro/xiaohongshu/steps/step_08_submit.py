@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-步骤7：点击发布
-文件路径: src/plugins/pro/xiaohongshu/steps/step_07_submit.py
+步骤8：点击发布
+文件路径: src/plugins/pro/xiaohongshu/steps/step_08_submit.py
 
 流程：
   1. 定位发布按钮（SUBMIT_BTN），等待其可用
@@ -111,7 +111,7 @@ class SubmitStep(BasePublishStep):
             # 第一次点击
             await target_btn.click(force=True)
             logger.info("已执行第一次点击")
-            USER_LOG.info("[步骤7 点击发布] ▶ 已点击发布按钮")
+            USER_LOG.info("[步骤8 点击发布] ▶ 已点击发布按钮")
 
             # 短暂等待后检测反馈
             success_selectors = ", ".join(Selectors.VERIFY["SUCCESS_TOAST"])
@@ -193,7 +193,7 @@ class SubmitStep(BasePublishStep):
             for kw in Selectors.VERIFY["SUCCESS_URL_KEYWORDS"]:
                 if kw in current_url and "/publish/publish" not in current_url:
                     logger.info(f"页面已跳转: {current_url}，视为发布成功")
-                    USER_LOG.info(f"[步骤7 点击发布] ✓ 发布成功 ({current_url})")
+                    USER_LOG.info(f"[步骤8 点击发布] ✓ 发布成功 ({current_url})")
                     return PublishResult(success=True, publish_url=current_url)
         except Exception:
             pass
@@ -209,7 +209,7 @@ class SubmitStep(BasePublishStep):
                 loc = page.locator(success_selectors).first
                 if await loc.count() > 0 and await loc.is_visible():
                     logger.info("✓ 检测到「发布成功」Toast")
-                    USER_LOG.info("[步骤7 点击发布] ✓ 发布成功！")
+                    USER_LOG.info("[步骤8 点击发布] ✓ 发布成功！")
                     return PublishResult(success=True, publish_url=page.url)
             except Exception:
                 pass
@@ -219,7 +219,7 @@ class SubmitStep(BasePublishStep):
                 for kw in Selectors.VERIFY["SUCCESS_URL_KEYWORDS"]:
                     if kw in current_url and "/publish/publish" not in current_url:
                         logger.info(f"轮询中检测到跳转: {current_url}")
-                        USER_LOG.info(f"[步骤7 点击发布] ✓ 发布成功 ({current_url})")
+                        USER_LOG.info(f"[步骤8 点击发布] ✓ 发布成功 ({current_url})")
                         return PublishResult(success=True, publish_url=current_url)
             except Exception:
                 pass
@@ -232,7 +232,7 @@ class SubmitStep(BasePublishStep):
             current_url = page.url
             if "/publish/publish" not in current_url and "xiaohongshu.com" in current_url:
                 logger.info(f"页面已离开发布页: {current_url}，视为发布成功")
-                USER_LOG.info(f"[步骤7 点击发布] ✓ 发布成功 ({current_url})")
+                USER_LOG.info(f"[步骤8 点击发布] ✓ 发布成功 ({current_url})")
                 return PublishResult(success=True, publish_url=current_url)
         except Exception:
             pass

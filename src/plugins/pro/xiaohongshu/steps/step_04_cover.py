@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-步骤5：封面设置
-文件路径: src/plugins/pro/xiaohongshu/steps/step_05_cover.py
+步骤4：封面设置
+文件路径: src/plugins/pro/xiaohongshu/steps/step_04_cover.py
 
 流程：
   - 默认（first_frame）：不做额外操作，小红书默认使用第一帧/第一张作为封面
@@ -47,23 +47,23 @@ class CoverSettingStep(BasePublishStep):
         # 图文类型默认使用第一张图作为封面，无需额外操作
         if file_type == "image" and cover_type == "first_frame":
             logger.info("图文模式，默认使用第一张图作为封面，跳过")
-            USER_LOG.info("[步骤5 封面设置] ✓ 跳过（图文默认封面）")
+            USER_LOG.info("[步骤4 封面设置] ✓ 跳过（图文默认封面）")
             return None
 
         if cover_type == "first_frame":
             logger.info("使用默认封面（第一帧），跳过封面设置")
-            USER_LOG.info("[步骤5 封面设置] ✓ 跳过（使用默认封面）")
+            USER_LOG.info("[步骤4 封面设置] ✓ 跳过（使用默认封面）")
             return None
 
         # 自定义封面上传
         if cover_type == "custom" and cover_path:
             if not Path(cover_path).exists():
                 logger.warning(f"封面文件不存在: {cover_path}，跳过封面设置")
-                USER_LOG.info("[步骤5 封面设置] ✓ 跳过（封面文件不存在）")
+                USER_LOG.info("[步骤4 封面设置] ✓ 跳过（封面文件不存在）")
                 return None
 
             config = metadata.get("anti_risk_config") or {}
-            USER_LOG.info("[步骤5 封面设置] ▶ 尝试上传自定义封面")
+            USER_LOG.info("[步骤4 封面设置] ▶ 尝试上传自定义封面")
 
             # 点击封面设置入口
             for selector in Selectors.PUBLISH["COVER_BTN"]:
@@ -108,17 +108,17 @@ class CoverSettingStep(BasePublishStep):
                         await inp.set_input_files(cover_path)
                         await page.wait_for_timeout(2000)
                         logger.info("通过 file input 直接上传封面")
-                        USER_LOG.info("[步骤5 封面设置] ✓ 封面已上传")
+                        USER_LOG.info("[步骤4 封面设置] ✓ 封面已上传")
                         return None
                 except Exception:
                     continue
 
             logger.warning("未能找到封面设置入口，跳过封面设置")
-            USER_LOG.info("[步骤5 封面设置] ✓ 跳过（未找到入口）")
+            USER_LOG.info("[步骤4 封面设置] ✓ 跳过（未找到入口）")
             return None
 
         logger.info("无需设置封面，跳过")
-        USER_LOG.info("[步骤5 封面设置] ✓ 跳过")
+        USER_LOG.info("[步骤4 封面设置] ✓ 跳过")
         return None
 
     async def _handle_cover_upload(
@@ -159,17 +159,17 @@ class CoverSettingStep(BasePublishStep):
                                     await cbtn.click()
                                 await page.wait_for_timeout(1000)
                                 logger.info("已确认封面设置")
-                                USER_LOG.info("[步骤5 封面设置] ✓ 封面已上传并确认")
+                                USER_LOG.info("[步骤4 封面设置] ✓ 封面已上传并确认")
                                 return None
                         except Exception:
                             continue
 
                     logger.info("封面已上传但未找到确认按钮")
-                    USER_LOG.info("[步骤5 封面设置] ✓ 封面已上传")
+                    USER_LOG.info("[步骤4 封面设置] ✓ 封面已上传")
                     return None
             except Exception:
                 continue
 
         logger.warning("封面弹窗内上传失败")
-        USER_LOG.info("[步骤5 封面设置] ✓ 跳过（弹窗内操作失败）")
+        USER_LOG.info("[步骤4 封面设置] ✓ 跳过（弹窗内操作失败）")
         return None

@@ -1208,7 +1208,15 @@ class PlaywrightBrowserService(QObject):
                 raise Exception("未提取到 Cookie")
 
             cookie_dict = {c['name']: c['value'] for c in cookies}
-            nickname = await self._extract_nickname(context, platform, cookie_dict)
+            existing_id = getattr(self, "_current_existing_account_id", None)
+            login_callback = getattr(self, "_current_on_login_detected_callback", None)
+            nickname = await self._extract_nickname(
+                context,
+                platform,
+                cookie_dict,
+                account_id=existing_id,
+                account_name=temp_id,
+            )
 
             if not nickname:
                 nickname = f"新账号_{platform}"
@@ -1219,8 +1227,6 @@ class PlaywrightBrowserService(QObject):
             profile_name = self._current_temp_name or ""
 
             # 「先占位、后更新」模式
-            existing_id = getattr(self, "_current_existing_account_id", None)
-            login_callback = getattr(self, "_current_on_login_detected_callback", None)
             if existing_id is not None and login_callback is not None:
                 logger.info("更新占位账号: account_id=%s, nickname=%s, platform=%s, profile=%s",
                             existing_id, nickname, platform, profile_name)
@@ -1844,7 +1850,15 @@ class PlaywrightBrowserService(QObject):
             logger.warning("检查登录状态异常: %s", e)
             return False
 
-    async def _extract_nickname(self, context, platform, cookies) -> Optional[str]:
+    async def _extract_nickname(
+        self,
+        context,
+        platform,
+        cookies,
+        *,
+        account_id: Optional[Union[int, str]] = None,
+        account_name: str = "",
+    ) -> Optional[str]:
         if USE_PLUGIN_SYSTEM:
             plugin = PluginManager.get_login_plugin(platform)
             if plugin:
@@ -1853,6 +1867,35 @@ class PlaywrightBrowserService(QObject):
                     if res.nickname: return res.nickname
                 except Exception as e:
                     logger.debug("提取用户信息异常: %s", e)
+        if cookies:
+            try:
+                verify_account_id = int(account_id) if account_id is not None else 0
+            except (TypeError, ValueError):
+                verify_account_id = 0
+            try:
+                http_result = await verify_login_status(
+                    platform=platform,
+                    cookies=cookies,
+                    account_id=verify_account_id,
+                    account_name=account_name or str(account_id or ""),
+                    timeout=12,
+                )
+                if (
+                    http_result.get("is_valid", True)
+                    and http_result.get("is_logged_in")
+                ):
+                    http_nick = http_result.get("username")
+                    if isinstance(http_nick, str):
+                        http_nick = http_nick.strip()
+                    if http_nick:
+                        logger.info(
+                            "Nickname extracted from HTTP verification: account_id=%s, platform=%s",
+                            account_id,
+                            platform,
+                        )
+                        return http_nick
+            except Exception as e:
+                logger.debug("HTTP nickname fallback failed: %s", e)
         return None
 
     def _normalize_cookies_for_playwright(self, raw_cookies, platform, target_url: Optional[str] = None):

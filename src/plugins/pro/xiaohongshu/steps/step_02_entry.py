@@ -24,7 +24,12 @@ from ..selectors import Selectors
 logger = logging.getLogger(__name__)
 USER_LOG = logging.getLogger("publish.user_log")
 
+HOME_URL = "https://creator.xiaohongshu.com/new/home"
 PUBLISH_URL = "https://creator.xiaohongshu.com/publish/publish"
+PUBLISH_TARGET_URLS = {
+    "image": f"{PUBLISH_URL}?from=homepage&target=image",
+    "video": f"{PUBLISH_URL}?from=homepage&target=video",
+}
 
 
 class EnterPublishEntryStep(BasePublishStep):
@@ -36,11 +41,15 @@ class EnterPublishEntryStep(BasePublishStep):
 
         speed_rate = max(0.5, float(metadata.get("speed_rate", 1.0)))
         config = metadata.get("anti_risk_config") or {}
+        file_type = (metadata.get("file_type") or "video").lower()
 
-        # 策略1：直接导航到发布页 URL
+        # 策略1：直接进入对应类型发布页。首页卡片点击后的真实 URL 会带
+        # openFilePicker=true 并弹出系统文件选择器；自动化入口这里去掉该参数，
+        # 让后续上传步骤统一接管 input[type=file]。
         try:
-            logger.info(f"尝试直接导航到发布页: {PUBLISH_URL}")
-            await page.goto(PUBLISH_URL, timeout=30000, wait_until="domcontentloaded")
+            target_url = PUBLISH_TARGET_URLS.get(file_type, PUBLISH_TARGET_URLS["video"])
+            logger.info("尝试直接导航到小红书%s发布页: %s", file_type, target_url)
+            await page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
             try:
                 from src.infrastructure.anti_risk.delays import random_delay
                 await random_delay(page, int(3000 * speed_rate), metadata, config)
@@ -58,14 +67,16 @@ class EnterPublishEntryStep(BasePublishStep):
                 )
 
             # 检测发布页特征元素
-            if await self._check_publish_page_loaded(page):
-                logger.info("已确认进入发布页面")
+            if await self._check_publish_page_loaded(page, file_type):
+                logger.info("已确认进入小红书%s发布页面", file_type)
                 return None
         except Exception as e:
             logger.warning(f"直接导航发布页异常: {e}")
 
         # 策略2：从首页查找对应类型的发布入口卡片（来自 X-Ray 实际 DOM）
-        file_type = (metadata.get("file_type") or "video").lower()
+        if await self._enter_from_home_card(page, file_type, metadata, config, speed_rate):
+            return None
+
         logger.info(f"直接导航失败，尝试从首页查找发布入口 (file_type={file_type})…")
 
         # 优先点击具体类型卡片（X-Ray 确认: div.publish-card）
@@ -94,7 +105,7 @@ class EnterPublishEntryStep(BasePublishStep):
                     except Exception:
                         await page.wait_for_timeout(int(3000 * speed_rate))
 
-                    if await self._check_publish_page_loaded(page):
+                    if await self._check_publish_page_loaded(page, file_type):
                         logger.info("已确认进入发布页面")
                         return None
                     break
@@ -113,7 +124,7 @@ class EnterPublishEntryStep(BasePublishStep):
                     except Exception:
                         await page.wait_for_timeout(int(3000 * speed_rate))
 
-                    if await self._check_publish_page_loaded(page):
+                    if await self._check_publish_page_loaded(page, file_type):
                         logger.info("已确认进入发布页面")
                         return None
             except Exception:
@@ -125,20 +136,152 @@ class EnterPublishEntryStep(BasePublishStep):
             error_message=f"未能确认进入发布页：未检测到发布页特征元素（url={current_url}）",
         )
 
-    async def _check_publish_page_loaded(self, page: Page) -> bool:
-        """检测发布页面是否已加载（有上传区域或 file input）。"""
+    async def _enter_from_home_card(
+        self,
+        page: Page,
+        file_type: str,
+        metadata: Dict[str, Any],
+        config: Dict[str, Any],
+        speed_rate: float,
+    ) -> bool:
+        try:
+            if "/new/home" not in page.url:
+                logger.info("导航到小红书创作者首页，准备点击发布入口卡片: %s", HOME_URL)
+                await page.goto(HOME_URL, timeout=30000, wait_until="domcontentloaded")
+                await self._delay(page, metadata, config, 2000, speed_rate)
+        except Exception as e:
+            logger.warning("导航小红书首页失败: %s", e)
+
+        target_name = "图文" if file_type == "image" else "视频"
+        logger.info("尝试从首页点击发布%s笔记卡片", target_name)
+        clicked = await self._click_first_visible(
+            page, self._entry_card_selectors(file_type), metadata, config
+        )
+        if not clicked:
+            logger.info("未找到发布%s笔记卡片", target_name)
+            return False
+
+        await self._delay(page, metadata, config, 3000, speed_rate)
+        if await self._check_publish_page_loaded(page, file_type):
+            logger.info("已通过首页发布%s笔记卡片进入发布页", target_name)
+            return True
+
+        logger.info("点击发布%s笔记卡片后未确认发布页: url=%s", target_name, page.url)
+        return False
+
+    def _entry_card_selectors(self, file_type: str) -> list[str]:
+        return (
+            Selectors.HOME.get("PUBLISH_IMAGE_CARD", [])
+            if file_type == "image"
+            else Selectors.HOME.get("PUBLISH_VIDEO_CARD", [])
+        )
+
+    async def _click_first_visible(
+        self,
+        page: Page,
+        selectors: list[str],
+        metadata: Dict[str, Any],
+        config: Dict[str, Any],
+    ) -> bool:
+        for selector in selectors:
+            try:
+                loc = page.locator(selector).first
+                if await loc.count() > 0 and await loc.is_visible():
+                    try:
+                        from src.infrastructure.anti_risk.human_like import human_click
+                        await human_click(page, loc, metadata, config)
+                    except Exception:
+                        await loc.click()
+                    logger.info("已点击小红书发布入口: %s", selector)
+                    return True
+            except Exception as e:
+                logger.debug("小红书发布入口选择器不可用: %s (%s)", selector, e)
+        return False
+
+    async def _delay(
+        self,
+        page: Page,
+        metadata: Dict[str, Any],
+        config: Dict[str, Any],
+        base_ms: int,
+        speed_rate: float,
+    ) -> None:
+        try:
+            from src.infrastructure.anti_risk.delays import random_delay
+            await random_delay(page, int(base_ms * speed_rate), metadata, config)
+        except Exception:
+            await page.wait_for_timeout(int(base_ms * speed_rate))
+
+    async def _check_publish_page_loaded(self, page: Page, file_type: str = "video") -> bool:
+        """检测发布页面是否已加载，并确认进入了对应的图文/视频发布态。"""
         for selector in Selectors.HOME["PUBLISH_PAGE_MARKER"]:
             try:
                 if await page.locator(selector).count() > 0:
-                    return True
+                    return await self._check_publish_type_ready(page, file_type)
             except Exception:
                 continue
 
-        # 兜底：检查 URL 是否包含 publish 关键字
+        # 兜底：检查 URL 是否包含 publish 关键字，同时仍要求类型匹配。
         try:
             if "publish" in page.url:
+                return await self._check_publish_type_ready(page, file_type)
+        except Exception:
+            pass
+
+        return False
+
+    async def _check_publish_type_ready(self, page: Page, file_type: str) -> bool:
+        """根据真实 DOM 确认当前发布页类型。
+
+        2026-05 实测：
+        - 图文卡片跳转 target=image，active tab 为「上传图文」，
+          input accept=".jpg,.jpeg,.png,.webp"，multiple=true。
+        - 视频卡片跳转 target=video，active tab 为「上传视频」，
+          input accept 含 .mp4/.mov，multiple=false。
+        """
+        expected = "image" if file_type == "image" else "video"
+        url_matches = False
+        try:
+            url = page.url
+            if expected == "image" and "target=image" in url:
+                url_matches = True
+            if expected == "video" and "target=video" in url:
+                url_matches = True
+        except Exception:
+            pass
+
+        try:
+            active_text = await page.locator(".creator-tab.active").first.inner_text(timeout=1500)
+            active_text = (active_text or "").strip()
+            if expected == "image" and "上传图文" in active_text:
+                return True
+            if expected == "video" and "上传视频" in active_text:
                 return True
         except Exception:
             pass
 
+        try:
+            inputs = page.locator("input[type='file']")
+            count = await inputs.count()
+            for i in range(count):
+                accept = (await inputs.nth(i).get_attribute("accept") or "").lower()
+                if expected == "image" and any(k in accept for k in (".jpg", ".jpeg", ".png", ".webp", "image")):
+                    return True
+                if expected == "video" and any(k in accept for k in (".mp4", ".mov", "video")):
+                    return True
+        except Exception:
+            pass
+
+        try:
+            body_text = await page.locator("body").inner_text(timeout=1500)
+            if expected == "image" and all(k in body_text for k in ("上传图片", "图片格式")):
+                return True
+            if expected == "video" and all(k in body_text for k in ("上传视频", "视频格式")):
+                return True
+            if url_matches:
+                logger.debug("小红书发布页 URL 类型匹配，但 DOM 类型标记尚未出现: expected=%s", expected)
+        except Exception:
+            pass
+
+        logger.warning("小红书发布页已加载但类型未匹配: expected=%s url=%s", expected, getattr(page, "url", ""))
         return False

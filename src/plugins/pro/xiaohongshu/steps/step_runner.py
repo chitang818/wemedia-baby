@@ -10,6 +10,9 @@ STEP_DISPLAY_NAMES = {
     "UploadMediaStep": "上传素材",
     "MetadataFillStep": "作品描述",
     "CoverSettingStep": "封面设置",
+    "OriginalDeclarationStep": "原创申明",
+    "WorkDeclarationStep": "作品申明",
+    "LocationStep": "添加地点",
     "PublishSettingsStep": "发布设置",
     "SubmitStep": "点击发布",
 }
@@ -18,8 +21,9 @@ MAIN_PHASES: List[Tuple[str, ...]] = [
     ("NavigateHomeStep",),
     ("EnterPublishEntryStep",),
     ("UploadMediaStep",),
-    ("MetadataFillStep",),
     ("CoverSettingStep",),
+    ("MetadataFillStep",),
+    ("OriginalDeclarationStep", "WorkDeclarationStep", "LocationStep"),
     ("PublishSettingsStep",),
     ("SubmitStep",),
 ]

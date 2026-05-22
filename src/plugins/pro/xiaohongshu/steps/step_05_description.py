@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-步骤4：作品描述（标题与正文）
-文件路径: src/plugins/pro/xiaohongshu/steps/step_04_description.py
+步骤5：作品描述（标题与正文）
+文件路径: src/plugins/pro/xiaohongshu/steps/step_05_description.py
 
 流程：
   1. 标题填写：定位标题输入框（TITLE_INPUT），清空后逐字输入（小红书标题限 20 字）
@@ -72,7 +72,7 @@ class MetadataFillStep(BasePublishStep):
                             await title_input.type(title_text, delay=max(10, int(30 * speed_rate)))
                         logger.info(f"已填写标题: {selector}")
                         t_display = title_text[:15] + "…" if len(title_text) > 15 else title_text or "（空）"
-                        USER_LOG.info(f"[步骤4 作品描述] ▶ 标题已填写：{t_display}")
+                        USER_LOG.info(f"[步骤5 作品描述] ▶ 标题已填写：{t_display}")
                         break
                 except Exception:
                     continue
@@ -125,7 +125,7 @@ class MetadataFillStep(BasePublishStep):
                     desc_display = (full_text[:35] + "…") if len(full_text) > 35 else (full_text or "（空）")
                     tag_count = len(tags) if isinstance(tags, list) and tags else 0
                     USER_LOG.info(
-                        f"[步骤4 作品描述] ✓ 正文已填写：{desc_display}，话题数={tag_count}"
+                        f"[步骤5 作品描述] ✓ 正文已填写：{desc_display}，话题数={tag_count}"
                     )
                     logger.info("元数据填写完成")
                     return None

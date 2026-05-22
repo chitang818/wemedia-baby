@@ -7,10 +7,13 @@
     步骤1: 导航首页
     步骤2: 进入发布页
     步骤3: 上传素材（视频/图文）
-    步骤4: 填写描述（标题、正文、话题）
-    步骤5: 封面设置
-    步骤6: 发布设置（可见性、定时）
-    步骤7: 点击发布
+    步骤4: 封面设置
+    步骤5: 填写描述（标题、正文、话题）
+    步骤6A: 原创申明（占位）
+    步骤6B: 作品申明（占位）
+    步骤6C: 添加地点（占位）
+    步骤7: 发布设置（视频：可见性+定时；图文：合拍+正文复制+可见性+定时）
+    步骤8: 点击发布
 """
 
 import json
@@ -62,7 +65,7 @@ def _load_limits() -> Dict[str, int]:
 
 
 class XiaohongshuPublishPlugin(PublishPluginInterface):
-    """小红书发布插件 — 步骤链模式（7步）"""
+    """小红书发布插件 — 步骤链模式（8步）"""
 
     UPLOAD_URL = "https://creator.xiaohongshu.com/publish/publish"
     LOGIN_URL_KEYWORDS = ["login"]
@@ -108,7 +111,7 @@ class XiaohongshuPublishPlugin(PublishPluginInterface):
         file_path: str,
         metadata: Dict[str, Any],
     ) -> PublishResult:
-        """执行小红书自动发布流程（7步步骤链）
+        """执行小红书自动发布流程（8步步骤链）
 
         Args:
             context: Playwright Page 对象（已注入账号凭证）
@@ -127,18 +130,24 @@ class XiaohongshuPublishPlugin(PublishPluginInterface):
             from .steps.step_01_home import NavigateHomeStep
             from .steps.step_02_entry import EnterPublishEntryStep
             from .steps.step_03_upload import UploadMediaStep
-            from .steps.step_04_description import MetadataFillStep
-            from .steps.step_05_cover import CoverSettingStep
-            from .steps.step_06_settings import PublishSettingsStep
-            from .steps.step_07_submit import SubmitStep
+            from .steps.step_04_cover import CoverSettingStep
+            from .steps.step_05_description import MetadataFillStep
+            from .steps.step_06A_original_declaration import OriginalDeclarationStep
+            from .steps.step_06B_work_declaration import WorkDeclarationStep
+            from .steps.step_06C_location import LocationStep
+            from .steps.step_07_settings import PublishSettingsStep
+            from .steps.step_08_submit import SubmitStep
             from .steps.step_runner import StepRunner, RunnerConfig
 
             steps = [
                 NavigateHomeStep(),
                 EnterPublishEntryStep(),
                 UploadMediaStep(),
-                MetadataFillStep(),
                 CoverSettingStep(),
+                MetadataFillStep(),
+                OriginalDeclarationStep(),
+                WorkDeclarationStep(),
+                LocationStep(),
                 PublishSettingsStep(),
                 SubmitStep(),
             ]
