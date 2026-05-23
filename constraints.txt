@@ -2,7 +2,7 @@
 # Regenerate deliberately after validating the full test suite.
 APScheduler==3.11.2
 PySide6==6.10.1
-PySide6-Fluent-Widgets==1.11.0
+PySide6-Fluent-Widgets==1.11.2
 PyYAML==6.0.2
 Send2Trash==2.1.0
 aiofiles==24.1.0

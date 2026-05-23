@@ -46,6 +46,8 @@ class WorkspacePage(BasePage):
 
     _freeze_on_first_show = False
     _enable_show_fade = False
+    _quick_action_card_min_width = 150
+    _quick_action_card_max_width = 170
 
     refreshRequested = Signal()
 
@@ -297,9 +299,10 @@ class WorkspacePage(BasePage):
         mid_row.setSpacing(12)
 
         cards_container = QWidget(self)
-        cards_grid = QGridLayout(cards_container)
-        cards_grid.setContentsMargins(0, 0, 0, 0)
-        cards_grid.setSpacing(12)
+        cards_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._quick_actions_container = cards_container
+        quick_action_layout = self._create_quick_action_layout(cards_container)
+        self._quick_action_layout = quick_action_layout
 
         self.action_add_account = QuickActionCard(FluentIcon.ADD, "添加账号", "", self)
         self.action_single_video = QuickActionCard(FluentIcon.MOVIE, "创建单视频任务", "", self)
@@ -307,9 +310,6 @@ class WorkspacePage(BasePage):
         self.action_add_account.clicked.connect(self._on_add_account_clicked)
         self.action_single_video.clicked.connect(self._on_quick_publish_clicked)
         self.action_batch_video.clicked.connect(self._on_batch_video_clicked)
-        cards_grid.addWidget(self.action_add_account, 0, 0)
-        cards_grid.addWidget(self.action_single_video, 0, 1)
-        cards_grid.addWidget(self.action_batch_video, 0, 2)
 
         self.action_publish_list = QuickActionCard(FluentIcon.SEND, "发布任务", "", self)
         self.action_single_image = QuickActionCard(FluentIcon.EDIT, "创建单图文任务", "", self)
@@ -317,12 +317,16 @@ class WorkspacePage(BasePage):
         self.action_publish_list.clicked.connect(self._on_publish_list_clicked)
         self.action_single_image.clicked.connect(self._on_single_image_clicked)
         self.action_batch_image.clicked.connect(self._on_batch_image_clicked)
-        cards_grid.addWidget(self.action_publish_list, 1, 0)
-        cards_grid.addWidget(self.action_single_image, 1, 1)
-        cards_grid.addWidget(self.action_batch_image, 1, 2)
-        cards_grid.setColumnStretch(0, 1)
-        cards_grid.setColumnStretch(1, 1)
-        cards_grid.setColumnStretch(2, 1)
+        quick_action_cards = (
+            self.action_add_account,
+            self.action_single_video,
+            self.action_batch_video,
+            self.action_publish_list,
+            self.action_single_image,
+            self.action_batch_image,
+        )
+        for index, card in enumerate(quick_action_cards):
+            self._add_quick_action_card(quick_action_layout, card, index)
         mid_row.addWidget(cards_container, 3)
 
         right_row = QHBoxLayout()
@@ -351,6 +355,64 @@ class WorkspacePage(BasePage):
 
         scroll_area.setWidget(scroll_content)
         self.content_layout.addWidget(scroll_area)
+
+    @classmethod
+    def _create_quick_action_layout(cls, container: QWidget):
+        layout_cls = None
+        layout_kind = "grid"
+
+        for module_name, class_name in (
+            ("qfluentwidgets", "AdaptiveFlowLayout"),
+            ("qfluentwidgets.components.layout.flow_layout", "AdaptiveFlowLayout"),
+            ("qfluentwidgets", "FlowLayout"),
+            ("qfluentwidgets.components.layout.flow_layout", "FlowLayout"),
+        ):
+            try:
+                module = __import__(module_name, fromlist=[class_name])
+                layout_cls = getattr(module, class_name)
+                layout_kind = "adaptive" if class_name == "AdaptiveFlowLayout" else "flow"
+                break
+            except (ImportError, AttributeError):
+                continue
+
+        if layout_cls is None:
+            layout = QGridLayout(container)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(12)
+            for column in range(3):
+                layout.setColumnStretch(column, 1)
+        else:
+            try:
+                layout = layout_cls(container, needAni=False, isTight=True)
+            except TypeError:
+                layout = layout_cls(container)
+                if hasattr(layout, "needAni"):
+                    layout.needAni = False
+                if hasattr(layout, "isTight"):
+                    layout.isTight = True
+            layout.setContentsMargins(0, 0, 0, 0)
+            if hasattr(layout, "setHorizontalSpacing"):
+                layout.setHorizontalSpacing(12)
+            if hasattr(layout, "setVerticalSpacing"):
+                layout.setVerticalSpacing(12)
+            if layout_kind == "adaptive":
+                if hasattr(layout, "setWidgetMinimumWidth"):
+                    layout.setWidgetMinimumWidth(cls._quick_action_card_min_width)
+                if hasattr(layout, "setWidgetMaximumWidth"):
+                    layout.setWidgetMaximumWidth(cls._quick_action_card_max_width)
+
+        layout.setProperty("workspaceQuickActionLayoutKind", layout_kind)
+        return layout
+
+    @classmethod
+    def _add_quick_action_card(cls, layout, card: QWidget, index: int) -> None:
+        card.setMinimumWidth(cls._quick_action_card_min_width)
+        card.setMaximumWidth(cls._quick_action_card_max_width)
+
+        if isinstance(layout, QGridLayout):
+            layout.addWidget(card, index // 3, index % 3)
+        else:
+            layout.addWidget(card)
 
     def _make_chart_placeholder(self, title: str) -> CardWidget:
         card = CardWidget(self)

@@ -28,14 +28,15 @@ class QuickActionCard(CardWidget):
     ):
         super().__init__(parent)
         self.setCursor(QCursor(Qt.PointingHandCursor))
-        self.setFixedHeight(100)
+        self.setFixedHeight(84)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
         layout.setAlignment(Qt.AlignCenter)
-        layout.setSpacing(12 if not desc else 8)
+        layout.setSpacing(8 if not desc else 6)
 
         self.icon_widget = IconWidget(icon, self)
-        self.icon_widget.setFixedSize(32, 32)
+        self.icon_widget.setFixedSize(28, 28)
         layout.addWidget(self.icon_widget, 0, Qt.AlignCenter)
 
         self.title_label = BodyLabel(title, self)
