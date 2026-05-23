@@ -15,10 +15,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QSizePolicy,
-    QGraphicsOpacityEffect,
 )
 from PySide6.QtGui import QColor
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, QTimer, QVariantAnimation, QEasingCurve
 
 from qfluentwidgets import (
     CardWidget,
@@ -69,7 +68,7 @@ class StatisticsCard(CardWidget):
         self._loading_shown_at = 0.0
         self._reveal_timer: Optional[QTimer] = None
         self._value_skeleton: Optional[SkeletonItem] = None
-        self._value_fade_ani: Optional[QPropertyAnimation] = None
+        self._value_fade_ani: Optional[QVariantAnimation] = None
 
         self.setMinimumHeight(90)
         self.setMinimumWidth(160)
@@ -110,22 +109,18 @@ class StatisticsCard(CardWidget):
 
         text_layout.addWidget(self.title_label)
         text_layout.addWidget(self.desc_label)
-        layout.addWidget(text_container)
-
-        layout.addStretch(1)
+        layout.addWidget(text_container, 1)
 
         self._value_host = QWidget(self)
+        self._value_host.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
         value_host_layout = QVBoxLayout(self._value_host)
         value_host_layout.setContentsMargins(0, 0, 0, 0)
         value_host_layout.setSpacing(0)
 
         self.value_label = TitleLabel(value, self._value_host)
         self.value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.value_label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
         value_host_layout.addWidget(self.value_label)
-
-        self._value_opacity = QGraphicsOpacityEffect(self.value_label)
-        self._value_opacity.setOpacity(1.0)
-        self.value_label.setGraphicsEffect(self._value_opacity)
 
         layout.addWidget(self._value_host, 0, Qt.AlignVCenter)
 
@@ -166,16 +161,29 @@ class StatisticsCard(CardWidget):
         except Exception:
             return
 
-    def _apply_value_style(self) -> None:
+    def _apply_value_style(self, color: Optional[str] = None) -> None:
         try:
             txt = str(self.value_label.text() or "")
         except Exception:
             txt = ""
         font_px = self._value_font_px_percent if ("%" in txt and len(txt) >= 4) else self._value_font_px_default
+        value_color = color or self._value_color
         self.value_label.setStyleSheet(
-            f"font-size: {font_px}px; font-weight: bold; color: {self._value_color}; "
+            f"font-size: {font_px}px; font-weight: bold; color: {value_color}; "
             f"font-family: 'Segoe UI', 'Microsoft YaHei UI';"
         )
+        self._sync_value_width()
+
+    def _sync_value_width(self) -> None:
+        try:
+            text_width = self.value_label.fontMetrics().horizontalAdvance(str(self.value_label.text() or "0"))
+            min_width = max(44, text_width + 8)
+            self.value_label.setMinimumWidth(min_width)
+            self._value_host.setMinimumWidth(min_width)
+            self.value_label.updateGeometry()
+            self._value_host.updateGeometry()
+        except Exception:
+            pass
 
     def show_value_loading(self) -> None:
         """数值区进入加载态：骨架条 + 占位符。"""
@@ -226,8 +234,6 @@ class StatisticsCard(CardWidget):
         self.set_description(desc)
         if fade_in:
             self._fade_in_value_label()
-        else:
-            self._value_opacity.setOpacity(1.0)
 
     def _fade_in_value_label(self) -> None:
         if self._value_fade_ani is not None:
@@ -235,12 +241,27 @@ class StatisticsCard(CardWidget):
                 self._value_fade_ani.stop()
             except Exception:
                 pass
-        self._value_opacity.setOpacity(0.0)
-        ani = QPropertyAnimation(self._value_opacity, b"opacity", self)
+
+        # Avoid a child QGraphicsOpacityEffect here. Workspace pages can already
+        # be animated by a parent effect, and nested effects may disappear after
+        # a maximized-window repaint on Windows/PySide.
+        self.value_label.show()
+        self.value_label.raise_()
+        base = QColor(self._value_color)
+        if not base.isValid():
+            base = QColor("#0078D4")
+
+        ani = QVariantAnimation(self)
         ani.setDuration(STATS_VALUE_FADE_MS)
-        ani.setStartValue(0.0)
-        ani.setEndValue(1.0)
+        ani.setStartValue(0)
+        ani.setEndValue(255)
         ani.setEasingCurve(QEasingCurve.OutCubic)
+
+        def _apply_alpha(alpha: int) -> None:
+            self._apply_value_style(f"rgba({base.red()}, {base.green()}, {base.blue()}, {alpha})")
+
+        ani.valueChanged.connect(lambda value: _apply_alpha(int(value)))
+        ani.finished.connect(lambda: self._apply_value_style(self._value_color))
         self._value_fade_ani = ani
         ani.start()
 
@@ -273,6 +294,8 @@ class StatisticsCard(CardWidget):
     def set_value(self, value: str):
         self.value_label.setText(str(value))
         self._apply_value_style()
+        if self._load_state == StatCardLoadState.READY:
+            self.value_label.show()
 
     def set_description(self, desc: str):
         self.desc_label.setText(desc)
@@ -284,3 +307,14 @@ class StatisticsCard(CardWidget):
     def hideEvent(self, event) -> None:
         self.cancel_pending_reveal()
         super().hideEvent(event)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self._load_state == StatCardLoadState.READY:
+            self.value_label.show()
+            self._sync_value_width()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self._load_state == StatCardLoadState.READY:
+            self._sync_value_width()

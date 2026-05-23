@@ -51,3 +51,14 @@ def test_cancel_pending_reveal_stops_timer(qapp):
     card.reveal("1", "d", animate=True)
     card.cancel_pending_reveal()
     assert card._reveal_timer is None
+
+
+def test_value_label_stays_visible_after_resize(qapp):
+    card = StatisticsCard("账号总数", "18", "12 在线 | 6 离线")
+    card.resize(420, 90)
+    card.resize(760, 90)
+    qapp.processEvents()
+
+    assert not card.value_label.isHidden()
+    assert card.value_label.minimumWidth() > 0
+    assert card.value_label.text() == "18"
