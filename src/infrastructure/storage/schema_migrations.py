@@ -165,6 +165,18 @@ async def _migrate_publish_record_indexes(conn: MigrationConn) -> None:
         "CREATE INDEX IF NOT EXISTS idx_publish_records_platform_status "
         "ON publish_records (platform, status)",
     )
+    await _create_index_if_missing(
+        conn,
+        "idx_publish_records_account_status_updated",
+        "CREATE INDEX IF NOT EXISTS idx_publish_records_account_status_updated "
+        "ON publish_records (platform_account_id, status, updated_at DESC)",
+    )
+    await _create_index_if_missing(
+        conn,
+        "idx_publish_records_account_status_scheduled",
+        "CREATE INDEX IF NOT EXISTS idx_publish_records_account_status_scheduled "
+        "ON publish_records (platform_account_id, status, scheduled_publish_time DESC)",
+    )
 
 
 MIGRATION_STEPS: tuple[MigrationStep, ...] = (

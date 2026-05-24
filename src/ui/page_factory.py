@@ -20,7 +20,10 @@ _REGISTRY: Dict[str, Tuple[str, str]] = {
         "src.ui.pages.publish.publish_recycle_bin_page",
         "PublishRecycleBinPage",
     ),
-    "single_task_creation_page": ("src.ui.pages.publish", "SingleTaskCreationPage"),
+    "single_task_creation_page": (
+        "src.ui.pages.publish.single_task_creation_page",
+        "SingleTaskCreationPage",
+    ),
     "image_single_task_creation_page": (
         "src.ui.pages.publish.image_single_task_creation_page",
         "ImageSingleTaskCreationPage",
@@ -67,8 +70,19 @@ class PageFactory:
             return None
         mod_path, class_name = self._registry[page_name]
         try:
+            import time
+            from src.utils.startup_profiler import is_page_load_profiler_enabled
+
+            t0 = time.perf_counter() if is_page_load_profiler_enabled() else 0.0
             mod = __import__(mod_path, fromlist=[class_name])
-            return getattr(mod, class_name)
+            page_class = getattr(mod, class_name)
+            if is_page_load_profiler_enabled():
+                logging.getLogger("ui.perf").info(
+                    "[页面耗时] import_page_class %s: %.0f ms",
+                    page_name,
+                    (time.perf_counter() - t0) * 1000,
+                )
+            return page_class
         except (ImportError, AttributeError) as e:
             logger.error("PageFactory: 导入页面失败 [%s] %s.%s: %s", page_name, mod_path, class_name, e)
             # 打包环境下弹窗提示用户，避免"点击无反应"的困惑
@@ -95,8 +109,18 @@ class PageFactory:
         if not page_class:
             return None
         try:
+            import time
+            from src.utils.startup_profiler import is_page_load_profiler_enabled
+
+            t0 = time.perf_counter() if is_page_load_profiler_enabled() else 0.0
             page_instance = page_class(parent)
             page_instance.setObjectName(page_name)
+            if is_page_load_profiler_enabled():
+                logging.getLogger("ui.perf").info(
+                    "[页面耗时] instantiate_page %s: %.0f ms",
+                    page_name,
+                    (time.perf_counter() - t0) * 1000,
+                )
             return page_instance
         except Exception as e:
             logger.error("PageFactory: 实例化页面失败 [%s]: %s", page_name, e, exc_info=True)

@@ -5,6 +5,7 @@ def test_startup_preloads_default_to_minimal_pages():
     assert get_startup_preload_page_names(mode="minimal") == [
         "publish_list_page",
         "account_page",
+        "single_task_creation_page",
     ]
 
 
@@ -19,8 +20,8 @@ def test_startup_preloads_full_mode_matches_legacy_page_set():
     ) == [
         "publish_list_page",
         "account_page",
-        "publish_records_page",
         "single_task_creation_page",
+        "publish_records_page",
         "settings_page",
         "batch_task_creation_page",
     ]

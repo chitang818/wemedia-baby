@@ -3,9 +3,11 @@ from __future__ import annotations
 import os
 import shutil
 import sqlite3
+import tempfile
 from pathlib import Path
 
 from src.services.material.media_library_stats_service import build_media_library_stats
+from src.services.material.media_library_stats_cache import MediaLibraryStatsCache
 from src.services.material.media_library_stats_service import (
     MediaLibraryStatsService,
     build_account_video_stats,
@@ -19,6 +21,7 @@ from src.services.material.media_library_stats_service import (
     _load_scan_cache_sync,
     _save_scan_cache_sync,
 )
+from src.services.material.media_library_stats_types import MediaCounts, MediaKindStats, MediaLibraryStats
 from src.infrastructure.common.media_library_assign import (
     ImageLibraryScanEntry,
     VideoLibraryScanEntry,
@@ -82,6 +85,47 @@ def test_build_media_library_stats_counts_global_and_by_owner() -> None:
     assert stats.image.by_owner["账号组-组1"].total == 1
     assert stats.image.by_owner["账号组-组1"].used == 0
     assert stats.image.by_owner["账号组-组1"].unused == 1
+
+
+def test_media_library_stats_cache_persistent_round_trip(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        monkeypatch.setattr(PathManager, "get_cache_dir", classmethod(lambda cls: Path(tmp)))
+        cache = MediaLibraryStatsCache()
+        stats = MediaLibraryStats(
+            video=MediaKindStats(counts=MediaCounts(total=5, used=2, unused=3)),
+            image=MediaKindStats(
+                counts=MediaCounts(total=7, used=1, unused=6),
+                by_account_id={18: MediaCounts(total=1, used=1, unused=0)},
+            ),
+            all_media=MediaCounts(total=12, used=3, unused=9),
+        )
+
+        cache.set_stats(stats)
+        restored = MediaLibraryStatsCache().get_persistent()
+
+        assert restored is not None
+        assert restored.video.counts.total == 5
+        assert restored.image.counts.unused == 6
+        assert restored.image.by_account_id[18].used == 1
+
+
+def test_media_library_stats_cache_memory_and_persistent_invalidation(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        monkeypatch.setattr(PathManager, "get_cache_dir", classmethod(lambda cls: Path(tmp)))
+        cache = MediaLibraryStatsCache()
+        stats = MediaLibraryStats(video=MediaKindStats(counts=MediaCounts(total=5)))
+
+        cache.set_complete_snapshot(stats)
+        assert cache.get_memory() is stats
+        assert cache.get_persistent() is not None
+
+        cache.invalidate_memory_only()
+        assert cache.get_memory() is None
+        assert cache.get_persistent() is not None
+
+        cache.invalidate_persistent()
+        cache.invalidate_memory_only()
+        assert cache.get_persistent() is None
 
 
 def test_build_account_video_stats_and_image_stats() -> None:

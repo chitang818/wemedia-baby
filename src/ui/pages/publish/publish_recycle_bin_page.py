@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import QEvent, Qt
@@ -85,6 +86,18 @@ class PublishRecycleBinPage(BasePage):
                 self._refresh_table()
             elif self._data_stale:
                 self._load_deleted_records()
+
+    def refresh_after_navigation(self) -> None:
+        """Lightweight navigation hook: avoid reloading already-fresh recycle data."""
+        if not getattr(self, "_content_initialized", False):
+            return
+        if not hasattr(self, "records_table"):
+            return
+        if getattr(self, "_data_stale", True):
+            self._load_deleted_records()
+            return
+        if not getattr(self, "deleted_records", None) and getattr(self, "_total_deleted_count", 0) > 0:
+            self._load_deleted_records()
 
     def _setup_content(self) -> None:
         layout = QVBoxLayout()
@@ -169,6 +182,7 @@ class PublishRecycleBinPage(BasePage):
         repo = sl.get(PublishRecordRepositoryAsync)
         self._load_generation += 1
         gen = self._load_generation
+        load_start = time.perf_counter()
 
         async def load_async():
             # 先自动清理超过 30 天的回收站记录
@@ -190,6 +204,23 @@ class PublishRecycleBinPage(BasePage):
                 return
             try:
                 records, purged, total = task.result()
+                elapsed_ms = (time.perf_counter() - load_start) * 1000
+                if elapsed_ms >= 300:
+                    logger.warning(
+                        "Loaded recycle records rows=%s total=%s purged=%s in %.1f ms",
+                        len(records or []),
+                        total,
+                        purged,
+                        elapsed_ms,
+                    )
+                else:
+                    logger.debug(
+                        "Loaded recycle records rows=%s total=%s purged=%s in %.1f ms",
+                        len(records or []),
+                        total,
+                        purged,
+                        elapsed_ms,
+                    )
                 self._on_deleted_loaded(records, total=total)
                 if purged > 0:
                     InfoBar.info(
@@ -314,9 +345,11 @@ class PublishRecycleBinPage(BasePage):
         table.setSortingEnabled(False)
         table.blockSignals(True)
         try:
-            table.set_recycle_page(True)
-            table.set_action_text("查看")
-            table.set_records(self.deleted_records)
+            table.set_records(
+                self.deleted_records,
+                recycle_page=True,
+                action_text="查看",
+            )
         finally:
             table.blockSignals(False)
             table.setSortingEnabled(True)

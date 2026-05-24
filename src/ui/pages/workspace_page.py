@@ -35,6 +35,7 @@ from qfluentwidgets import (
 from .base_page import BasePage
 from .workspace.workspace_load_orchestrator import WorkspaceLoadOrchestrator
 from src.services.material.media_library_stats_cache import get_media_library_stats_cache
+from src.services.material.media_library_stats_types import MediaLibraryStats
 from src.services.workspace.dashboard_snapshot import DashboardSnapshot
 from src.utils.platform_names import PLATFORM_ID_TO_NAME as PLATFORM_NAME_MAP
 
@@ -64,24 +65,29 @@ class WorkspacePage(BasePage):
         self._charts_created = False
         self._chart_first_reveal_done = False
         self._stats_first_reveal_done = False
+        self._secondary_widgets_created = False
+        self._announcement_created = False
+        self._recent_activity_created = False
+        self._cached_reminders = []
+        self._hold_media_stats_updates = False
+        self._held_media_stats = None
 
         self.refreshRequested.connect(self._on_refresh_requested)
         self._init_services()
         self._setup_content()
         self._setup_refresh_timer()
         self._orchestrator = WorkspaceLoadOrchestrator(self)
-        cached_applied = self._orchestrator.apply_cached_snapshot_if_any()
-        self._schedule_base_page_timer("workspace_charts_prewarm", 0, self._prewarm_chart_widgets)
-        if cached_applied:
-            self._chart_first_reveal_done = True
-            self._stats_first_reveal_done = True
 
         self._stats_cache = get_media_library_stats_cache()
         try:
             self._stats_cache.statsUpdated.connect(self._on_media_stats_updated)
         except Exception:
             pass
-        self._orchestrator._apply_media_cache_first()
+        cached_applied = self._orchestrator.apply_cached_first_paint()
+        if cached_applied:
+            self._stats_first_reveal_done = True
+        else:
+            self.begin_stats_loading(top=True, media=True)
 
     def _init_services(self) -> None:
         try:
@@ -153,6 +159,11 @@ class WorkspacePage(BasePage):
         self._cancel_stats_pending_reveals()
         if self._orchestrator:
             self._orchestrator.cancel_pending()
+        self._cancel_base_page_timer("workspace_secondary_widgets")
+        self._cancel_base_page_timer("workspace_announcement_create")
+        self._cancel_base_page_timer("workspace_recent_activity_create")
+        self._cancel_base_page_timer("workspace_platform_chart_prewarm")
+        self._cancel_base_page_timer("workspace_trend_chart_prewarm")
         super().hideEvent(event)
 
     def _cancel_chart_pending_reveals(self) -> None:
@@ -210,8 +221,6 @@ class WorkspacePage(BasePage):
     def _setup_content(self) -> None:
         from ..components.statistics_card import StatisticsCard
         from ..components.quick_action_card import QuickActionCard
-        from ..components.announcement_widget import AnnouncementWidget
-        from ..components.recent_activity_widget import RecentActivityWidget
 
         scroll_area = QScrollArea(self)
         scroll_area.setWidgetResizable(True)
@@ -331,12 +340,11 @@ class WorkspacePage(BasePage):
 
         right_row = QHBoxLayout()
         right_row.setSpacing(12)
-        self.announcement = AnnouncementWidget(self)
-        self.announcement.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        right_row.addWidget(self.announcement, 1)
-        self.recent_activity = RecentActivityWidget(self)
-        self.recent_activity.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        right_row.addWidget(self.recent_activity, 1)
+        self._secondary_widgets_layout = right_row
+        self._announcement_placeholder = self._make_panel_placeholder("公告栏")
+        self._recent_activity_placeholder = self._make_panel_placeholder("最近发布")
+        right_row.addWidget(self._announcement_placeholder, 1)
+        right_row.addWidget(self._recent_activity_placeholder, 1)
         mid_row.addLayout(right_row, 3)
         scroll_layout.addLayout(mid_row)
 
@@ -355,6 +363,110 @@ class WorkspacePage(BasePage):
 
         scroll_area.setWidget(scroll_content)
         self.content_layout.addWidget(scroll_area)
+
+    def _make_panel_placeholder(self, title: str) -> CardWidget:
+        card = CardWidget(self)
+        card.setMinimumHeight(120)
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 10, 12, 10)
+        title_lbl = SubtitleLabel(title, card)
+        title_lbl.setStyleSheet(
+            f"font-weight: 600; font-size: 16px; color: {'#FFFFFF' if isDarkTheme() else '#1A1A1A'};"
+        )
+        layout.addWidget(title_lbl)
+        layout.addStretch(1)
+        hint = CaptionLabel("加载中…", card)
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setStyleSheet(f"color: {'#888888' if isDarkTheme() else '#999999'};")
+        layout.addWidget(hint)
+        layout.addStretch(1)
+        return card
+
+    def ensure_secondary_widgets_created(self) -> None:
+        self.ensure_announcement_created()
+        self.ensure_recent_activity_created()
+
+    def ensure_announcement_created(self) -> None:
+        if self._announcement_created:
+            return
+        try:
+            from ..components.announcement_widget import AnnouncementWidget
+
+            placeholder = getattr(self, "_announcement_placeholder", None)
+            if placeholder is not None:
+                self._secondary_widgets_layout.removeWidget(placeholder)
+                placeholder.hide()
+                placeholder.setParent(None)
+                placeholder.deleteLater()
+                self._announcement_placeholder = None
+
+            self.announcement = AnnouncementWidget(self)
+            self.announcement.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self._secondary_widgets_layout.insertWidget(0, self.announcement, 1)
+            self._announcement_created = True
+            self._secondary_widgets_created = (
+                self._announcement_created and self._recent_activity_created
+            )
+        except Exception as e:
+            logger.debug("工作台公告栏创建失败（可忽略）: %s", e)
+
+    def ensure_recent_activity_created(self, reminders=None) -> None:
+        if self._recent_activity_created:
+            if reminders is not None:
+                self.set_cached_reminders(reminders)
+            return
+        try:
+            from ..components.recent_activity_widget import RecentActivityWidget
+
+            placeholder = getattr(self, "_recent_activity_placeholder", None)
+            if placeholder is not None:
+                self._secondary_widgets_layout.removeWidget(placeholder)
+                placeholder.hide()
+                placeholder.setParent(None)
+                placeholder.deleteLater()
+                self._recent_activity_placeholder = None
+
+            self.recent_activity = RecentActivityWidget(self)
+            self.recent_activity.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self._secondary_widgets_layout.insertWidget(1, self.recent_activity, 1)
+            self._recent_activity_created = True
+            self._secondary_widgets_created = (
+                self._announcement_created and self._recent_activity_created
+            )
+
+            rows = self._cached_reminders if reminders is None else reminders
+            self.set_cached_reminders(rows or [])
+            self._sync_recent_activity_layout()
+        except Exception as e:
+            logger.debug("工作台最近发布创建失败（可忽略）: %s", e)
+
+    def set_cached_reminders(self, reminders) -> None:
+        self._cached_reminders = list(reminders or [])
+        if hasattr(self, "recent_activity") and self.recent_activity is not None:
+            self.recent_activity.set_account_reminders(self._cached_reminders)
+
+    def schedule_noncritical_first_paint(self) -> None:
+        self._schedule_base_page_timer(
+            "workspace_announcement_create",
+            0,
+            self.ensure_announcement_created,
+        )
+        self._schedule_base_page_timer(
+            "workspace_recent_activity_create",
+            80,
+            self.ensure_recent_activity_created,
+        )
+        self._schedule_base_page_timer(
+            "workspace_platform_chart_prewarm",
+            180,
+            lambda: self.apply_chart_cache_if_available(kind="platform"),
+        )
+        self._schedule_base_page_timer(
+            "workspace_trend_chart_prewarm",
+            320,
+            lambda: self.apply_chart_cache_if_available(kind="trend"),
+        )
 
     @classmethod
     def _create_quick_action_layout(cls, container: QWidget):
@@ -416,22 +528,60 @@ class WorkspacePage(BasePage):
 
     def _make_chart_placeholder(self, title: str) -> CardWidget:
         card = CardWidget(self)
+        card.setProperty("workspaceChartPlaceholderKind", title)
         card.setFixedHeight(260)
         card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(10)
         dark = isDarkTheme()
         title_color = "#FFFFFF" if dark else "#1A1A1A"
         title_lbl = SubtitleLabel(title, card)
         title_lbl.setStyleSheet(f"color: {title_color};")
         layout.addWidget(title_lbl)
-        layout.addStretch(1)
-        hint = CaptionLabel("加载中…", card)
-        muted = "#888888" if dark else "#999999"
-        hint.setStyleSheet(f"color: {muted};")
-        hint.setAlignment(Qt.AlignCenter)
-        layout.addWidget(hint)
-        layout.addStretch(1)
+
+        from src.ui.components.skeleton import SkeletonItem
+
+        host = QWidget(card)
+        host_layout = QVBoxLayout(host)
+        host_layout.setContentsMargins(0, 8, 0, 4)
+        host_layout.setSpacing(10)
+        if "平台" in title:
+            host_layout.addStretch(1)
+            ring_row = QHBoxLayout()
+            ring_row.addStretch(1)
+            ring = SkeletonItem(host, radius=70)
+            ring.setFixedSize(128, 128)
+            ring.setProperty("workspaceChartSkeleton", "platform-ring")
+            ring_row.addWidget(ring)
+            ring_row.addStretch(1)
+            host_layout.addLayout(ring_row)
+            legend_row = QHBoxLayout()
+            legend_row.setSpacing(8)
+            for i in range(3):
+                item = SkeletonItem(host, radius=5)
+                item.setFixedHeight(10)
+                item.setProperty("workspaceChartSkeleton", f"platform-legend-{i}")
+                legend_row.addWidget(item)
+            host_layout.addLayout(legend_row)
+            host_layout.addStretch(1)
+        else:
+            for width in (0.92, 0.78, 0.86, 0.62):
+                row = QHBoxLayout()
+                row.setSpacing(8)
+                line = SkeletonItem(host, radius=4)
+                line.setFixedHeight(12)
+                line.setProperty("workspaceChartSkeleton", "trend-grid")
+                row.addWidget(line, int(width * 100))
+                row.addStretch(max(1, int((1 - width) * 100)))
+                host_layout.addLayout(row)
+            host_layout.addSpacing(8)
+            trend = SkeletonItem(host, radius=6)
+            trend.setFixedHeight(44)
+            trend.setProperty("workspaceChartSkeleton", "trend-line")
+            host_layout.addWidget(trend)
+            host_layout.addStretch(1)
+        layout.addWidget(host, 1)
         return card
 
     def _relayout_stats_cards(self) -> None:
@@ -460,10 +610,25 @@ class WorkspacePage(BasePage):
             self._stats_grid.setColumnStretch(c, 1)
 
     def _on_refresh_requested(self) -> None:
-        if self.dashboard_service:
-            self.dashboard_service.invalidate_cache()
         if self._orchestrator:
             self._orchestrator.request_refresh()
+
+    def apply_stats_batch(
+        self,
+        dashboard_snapshot: DashboardSnapshot,
+        media_stats: MediaLibraryStats,
+        *,
+        animate_entry: bool = False,
+        reminders: bool = False,
+    ) -> None:
+        """统一提交首页 6 张统计卡，避免第一行和媒体库卡片错峰出现。"""
+        self._apply_snapshot(
+            dashboard_snapshot,
+            charts=False,
+            animate_entry=animate_entry,
+            reminders=reminders,
+        )
+        self._on_media_stats_updated(media_stats, animate_entry=animate_entry)
 
     def _apply_snapshot(
         self,
@@ -471,6 +636,7 @@ class WorkspacePage(BasePage):
         *,
         charts: bool = True,
         animate_entry: bool = False,
+        reminders: bool = True,
     ) -> None:
         try:
             data = snapshot.to_legacy_dict()
@@ -486,9 +652,9 @@ class WorkspacePage(BasePage):
             if publish_stats:
                 self._apply_publish_stats(publish_stats, animate_entry=animate_entry)
 
-            reminders = data.get("account_publish_reminders", [])
-            if reminders and hasattr(self, "recent_activity"):
-                self.recent_activity.set_account_reminders(reminders)
+            reminder_rows = data.get("account_publish_reminders", []) if reminders else []
+            if reminders:
+                self.set_cached_reminders(reminder_rows)
 
             if charts and account_stats:
                 self.reveal_platform_chart(account_stats, animate_entry=True)
@@ -499,7 +665,6 @@ class WorkspacePage(BasePage):
 
     def begin_charts_loading(self) -> None:
         """数据管道开始：两图同时显示 loading 遮罩。"""
-        self._ensure_chart_widgets_created()
         if self.platform_chart is not None:
             self.platform_chart.show_loading()
         if self.trend_chart is not None:
@@ -511,7 +676,7 @@ class WorkspacePage(BasePage):
         *,
         animate_entry: bool = True,
     ) -> None:
-        self._ensure_chart_widgets_created()
+        self._ensure_platform_chart_created()
         if self.platform_chart is None:
             return
         data = self._platform_stats_cn(account_stats)
@@ -526,7 +691,7 @@ class WorkspacePage(BasePage):
         *,
         animate_entry: bool = True,
     ) -> None:
-        self._ensure_chart_widgets_created()
+        self._ensure_trend_chart_created()
         if self.trend_chart is None:
             return
         trend_data = publish_stats.get("daily_stats", [])
@@ -548,29 +713,91 @@ class WorkspacePage(BasePage):
         except Exception as e:
             logger.debug("工作台图表预创建失败（可忽略）: %s", e)
 
+    def apply_chart_cache_if_available(self, *, kind: str | None = None) -> bool:
+        snapshot = None
+        if self._orchestrator is not None:
+            try:
+                snapshot = self._orchestrator.get_latest_snapshot()
+            except Exception:
+                snapshot = None
+        if snapshot is None:
+            return False
+
+        applied = False
+        if kind in (None, "platform") and snapshot.account:
+            self.reveal_platform_chart(snapshot.account, animate_entry=False)
+            applied = True
+        if kind in (None, "trend") and snapshot.publish:
+            self.reveal_trend_chart(snapshot.publish, animate_entry=False)
+            applied = True
+        return applied
+
     def _ensure_chart_widgets_created(self) -> None:
-        if self._charts_created:
+        self._ensure_platform_chart_created()
+        self._ensure_trend_chart_created()
+        self._charts_created = self.platform_chart is not None and self.trend_chart is not None
+
+    def _profile_chart_creation(self, label: str, create_fn) -> None:
+        try:
+            import time
+            from src.utils.startup_profiler import (
+                is_page_load_profiler_enabled,
+                log_page_create_timing,
+            )
+
+            t0 = time.perf_counter() if is_page_load_profiler_enabled() else 0.0
+        except Exception:
+            t0 = 0.0
+            is_page_load_profiler_enabled = lambda: False  # type: ignore[assignment]
+            log_page_create_timing = lambda *_args, **_kwargs: None  # type: ignore[assignment]
+        create_fn()
+        try:
+            if is_page_load_profiler_enabled():
+                log_page_create_timing(label, time.perf_counter() - t0)
+        except Exception:
+            pass
+
+    def _remove_chart_placeholder(self, attr_name: str) -> None:
+        placeholder = getattr(self, attr_name, None)
+        if placeholder is None:
             return
-        from ..components.charts import PlatformDistributionChart, PublishTrendChart
+        self._charts_layout.removeWidget(placeholder)
+        placeholder.hide()
+        placeholder.setParent(None)
+        placeholder.deleteLater()
+        setattr(self, attr_name, None)
 
-        self._charts_layout.removeWidget(self._platform_chart_placeholder)
-        self._platform_chart_placeholder.hide()
-        self._platform_chart_placeholder.setParent(None)
+    def _ensure_platform_chart_created(self) -> None:
+        if self.platform_chart is not None:
+            return
 
-        self._charts_layout.removeWidget(self._trend_chart_placeholder)
-        self._trend_chart_placeholder.hide()
-        self._trend_chart_placeholder.setParent(None)
+        def _create() -> None:
+            from ..components.charts import PlatformDistributionChart
 
-        self.platform_chart = PlatformDistributionChart(self)
-        self.platform_chart.setFixedHeight(260)
-        self.platform_chart.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self._charts_layout.addWidget(self.platform_chart, 1)
+            self._remove_chart_placeholder("_platform_chart_placeholder")
+            self.platform_chart = PlatformDistributionChart(self)
+            self.platform_chart.setFixedHeight(260)
+            self.platform_chart.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            self._charts_layout.insertWidget(0, self.platform_chart, 1)
+            self._charts_created = self.platform_chart is not None and self.trend_chart is not None
 
-        self.trend_chart = PublishTrendChart(self)
-        self.trend_chart.setFixedHeight(260)
-        self.trend_chart.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self._charts_layout.addWidget(self.trend_chart, 1)
-        self._charts_created = True
+        self._profile_chart_creation("workspace_platform_chart", _create)
+
+    def _ensure_trend_chart_created(self) -> None:
+        if self.trend_chart is not None:
+            return
+
+        def _create() -> None:
+            from ..components.charts import PublishTrendChart
+
+            self._remove_chart_placeholder("_trend_chart_placeholder")
+            self.trend_chart = PublishTrendChart(self)
+            self.trend_chart.setFixedHeight(260)
+            self.trend_chart.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            self._charts_layout.insertWidget(1, self.trend_chart, 1)
+            self._charts_created = self.platform_chart is not None and self.trend_chart is not None
+
+        self._profile_chart_creation("workspace_trend_chart", _create)
 
     def _apply_account_stats(self, account_stats: Dict[str, Any], *, animate_entry: bool = False) -> None:
         if not hasattr(self, "account_card"):
@@ -610,6 +837,9 @@ class WorkspacePage(BasePage):
             self.success_rate_card.reveal(value, desc, animate=animate_entry)
 
     def _on_media_stats_updated(self, stats, *, animate_entry: Optional[bool] = None) -> None:
+        if getattr(self, "_hold_media_stats_updates", False):
+            self._held_media_stats = stats
+            return
         v_card = getattr(self, "_video_library_card", None)
         i_card = getattr(self, "_image_library_card", None)
         if v_card is None or i_card is None:
@@ -638,6 +868,16 @@ class WorkspacePage(BasePage):
                 i_card.reveal(str(it), f"总 {it} | 已占用 {iu} | 未占用 {inn}", animate=animate_entry)
         except Exception:
             return
+
+    def set_media_stats_update_hold(self, hold: bool) -> None:
+        self._hold_media_stats_updates = bool(hold)
+        if hold:
+            self._held_media_stats = None
+
+    def take_held_media_stats(self):
+        stats = self._held_media_stats
+        self._held_media_stats = None
+        return stats
 
     def _apply_welcome_title_style(self) -> None:
         dark = isDarkTheme()
@@ -678,6 +918,7 @@ class WorkspacePage(BasePage):
         self._apply_welcome_title_style()
         self._apply_welcome_desc_style()
         self._sync_recent_activity_layout()
+        self.schedule_noncritical_first_paint()
         if self._orchestrator:
             self._orchestrator.schedule_startup_refresh()
 

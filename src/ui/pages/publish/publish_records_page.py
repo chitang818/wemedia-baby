@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt, QTimer, QSize, QEvent, QUrl
 from PySide6.QtGui import QKeyEvent, QResizeEvent, QDesktopServices
 import logging
 import os
+import time
 
 from qfluentwidgets import (
     CardWidget, SubtitleLabel, BodyLabel, PushButton,
@@ -288,6 +289,7 @@ class PublishRecordsPage(BasePage):
         self._has_more_records: bool = False  # 是否还有更多记录可加载
         self._loading_more_records: bool = False
         self._filter_bar_compact = None
+        self._filter_bar_compact_state: Optional[str] = None
         self._filter_single_line_built = False  # 筛选控件已铺到单行（不再按宽度拆成两行）
         self._enable_task_type_filter = True
         # 切换「平台」筛选时重置「账号」为全部，避免组合条件无结果
@@ -322,6 +324,10 @@ class PublishRecordsPage(BasePage):
         self._filter_timer.setSingleShot(True)
         self._filter_timer.setInterval(120)
         self._filter_timer.timeout.connect(self._apply_filters)
+        self._resize_filter_sync_timer = QTimer(self)
+        self._resize_filter_sync_timer.setSingleShot(True)
+        self._resize_filter_sync_timer.setInterval(35)
+        self._resize_filter_sync_timer.timeout.connect(self._sync_filter_bar_layout)
 
     def closeEvent(self, event):
         self._cancel_render_batch_timers()
@@ -580,6 +586,7 @@ class PublishRecordsPage(BasePage):
 
         self._load_publish_generation += 1
         load_gen = self._load_publish_generation
+        load_start = time.perf_counter()
 
         if hasattr(self, '_table_loading_bar'):
             self._table_loading_bar.setVisible(True)
@@ -608,6 +615,23 @@ class PublishRecordsPage(BasePage):
                 return
             try:
                 records, total = task.result()
+                elapsed_ms = (time.perf_counter() - load_start) * 1000
+                if elapsed_ms >= 150:
+                    logger.warning(
+                        "Loaded publish records page statuses=%s rows=%s total=%s in %.1f ms",
+                        target_statuses,
+                        len(records or []),
+                        total,
+                        elapsed_ms,
+                    )
+                else:
+                    logger.debug(
+                        "Loaded publish records page statuses=%s rows=%s total=%s in %.1f ms",
+                        target_statuses,
+                        len(records or []),
+                        total,
+                        elapsed_ms,
+                    )
                 self._has_more_records = len(records) < total
                 self._total_record_count = total
                 self._on_records_loaded(records)
@@ -799,6 +823,18 @@ class PublishRecordsPage(BasePage):
         elif self._data_stale:
             self._load_publish_records()
 
+    def refresh_after_navigation(self) -> None:
+        """Lightweight navigation hook: avoid reloading already-fresh tables."""
+        if not getattr(self, "_content_initialized", False):
+            return
+        if not hasattr(self, "records_table"):
+            return
+        if getattr(self, "_data_stale", True):
+            self._load_publish_records()
+            return
+        if getattr(self, "_last_filter_render_state", None) is None:
+            self._apply_filters()
+
     def _rebuild_account_filter_options(self, prev_key: Any) -> None:
         """根据当前页数据重建账号下拉；prev_key 为恢复选中项的 userData（None 表示「全部」）。"""
         combo = getattr(self, "account_filter", None)
@@ -879,6 +915,7 @@ class PublishRecordsPage(BasePage):
         """Apply filters and render records through the Model/View table path."""
         if not hasattr(self, "records_table"):
             return
+        apply_start = time.perf_counter()
 
         platform_filter = self.platform_filter.currentText()
         account_prev_key: Any = None
@@ -958,9 +995,11 @@ class PublishRecordsPage(BasePage):
         table.setSortingEnabled(False)
         table.blockSignals(True)
         try:
-            table.set_success_page(self.target_statuses == ["success"])
-            table.set_action_text(self._record_table_action_button_text())
-            table.set_records(filtered)
+            table.set_records(
+                filtered,
+                success_page=self.target_statuses == ["success"],
+                action_text=self._record_table_action_button_text(),
+            )
             self._row_by_record_id = {
                 rid: row
                 for row, rid in enumerate(filtered_ids)
@@ -970,6 +1009,23 @@ class PublishRecordsPage(BasePage):
             table.blockSignals(False)
             table.setSortingEnabled(True)
             table.setUpdatesEnabled(True)
+        elapsed_ms = (time.perf_counter() - apply_start) * 1000
+        if elapsed_ms >= 80:
+            logger.warning(
+                "Applied publish filters statuses=%s source_rows=%s visible_rows=%s in %.1f ms",
+                self.target_statuses,
+                len(self.publish_records or []),
+                len(filtered),
+                elapsed_ms,
+            )
+        else:
+            logger.debug(
+                "Applied publish filters statuses=%s source_rows=%s visible_rows=%s in %.1f ms",
+                self.target_statuses,
+                len(self.publish_records or []),
+                len(filtered),
+                elapsed_ms,
+            )
 
     def _on_record_table_cell_clicked(self, row: int, col: int) -> None:
         if col == self.COL_ACTION and self.records_table.cellWidget(row, col) is None:
@@ -1024,7 +1080,10 @@ class PublishRecordsPage(BasePage):
 
     def resizeEvent(self, event: QResizeEvent):
         super().resizeEvent(event)
-        self._sync_filter_bar_layout()
+        if hasattr(self, "_resize_filter_sync_timer"):
+            self._resize_filter_sync_timer.start()
+        else:
+            self._sync_filter_bar_layout()
 
     # 低于此宽度启用紧凑样式（缩小字体/图标/下拉宽）
     FILTER_BAR_COMPACT_WIDTH = 1000
@@ -1035,14 +1094,37 @@ class PublishRecordsPage(BasePage):
         if not hasattr(self, "filter_card") or not self.filter_card:
             return
         w = self.width()
-        compact = w < self.FILTER_BAR_COMPACT_WIDTH
-        if compact == self._filter_bar_compact:
+        if w < self.FILTER_BAR_ULTRA_COMPACT_WIDTH:
+            state = "ultra"
+        elif w < self.FILTER_BAR_COMPACT_WIDTH:
+            state = "compact"
+        else:
+            state = "normal"
+        if state == self._filter_bar_compact_state:
             return
+        sync_start = time.perf_counter()
+        self._filter_bar_compact_state = state
+        compact = state != "normal"
         self._filter_bar_compact = compact
         if compact:
             self._apply_compact_filter_bar()
         else:
             self._apply_normal_filter_bar()
+        elapsed_ms = (time.perf_counter() - sync_start) * 1000
+        if elapsed_ms >= 40:
+            logger.warning(
+                "Synced publish filter bar state=%s width=%s in %.1f ms",
+                state,
+                w,
+                elapsed_ms,
+            )
+        else:
+            logger.debug(
+                "Synced publish filter bar state=%s width=%s in %.1f ms",
+                state,
+                w,
+                elapsed_ms,
+            )
 
     def _apply_compact_filter_bar(self):
         """窄窗口：缩小筛选栏字体、图标、下拉宽度与间距，避免堆叠遮挡。"""

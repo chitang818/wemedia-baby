@@ -7,6 +7,7 @@
 from abc import ABC, abstractmethod
 from typing import Optional, Protocol, Any
 from dataclasses import dataclass
+import logging
 
 
 @dataclass
@@ -122,6 +123,7 @@ class BaseFilter(ABC):
     def __init__(self):
         """初始化过滤器"""
         self._error: Optional[str] = None
+        self.logger = logging.getLogger(self.__class__.__name__)
     
     @abstractmethod
     async def process(self, context: PublishContext) -> bool:

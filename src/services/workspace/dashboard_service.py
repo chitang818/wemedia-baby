@@ -292,6 +292,9 @@ class DashboardService:
     def get_cached_snapshot(self) -> Optional[DashboardSnapshot]:
         return self._stats_cache.get(self.user_id)
 
+    def get_persistent_snapshot(self) -> Optional[DashboardSnapshot]:
+        return self._stats_cache.get_persistent(self.user_id)
+
     def invalidate_cache(self) -> None:
         self._stats_cache.invalidate()
 

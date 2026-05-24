@@ -368,21 +368,43 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
             today = date.today()
             today_start = datetime.combine(today, datetime.min.time())
             tomorrow_start = today_start + timedelta(days=1)
-            base = self._active_dashboard_queryset().filter(
-                created_at__gte=today_start,
-                created_at__lt=tomorrow_start,
+            conn = Tortoise.get_connection("default")
+            result = await conn.execute_query(
+                """
+                SELECT
+                    COUNT(*) AS today_count,
+                    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS today_success,
+                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS today_failed,
+                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS today_pending,
+                    SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS today_running
+                FROM publish_records
+                WHERE status NOT IN ('deleted_pending', 'deleted_success')
+                  AND created_at >= ?
+                  AND created_at < ?
+                """,
+                [
+                    today_start.isoformat(sep=" ", timespec="seconds"),
+                    tomorrow_start.isoformat(sep=" ", timespec="seconds"),
+                ],
             )
-            today_count = await base.count()
-            today_success = await base.filter(status="success").count()
-            today_failed = await base.filter(status="failed").count()
-            today_pending = await base.filter(status="pending").count()
-            today_running = await base.filter(status="running").count()
+            rows = result[1] if isinstance(result, tuple) and len(result) > 1 else []
+            row = rows[0] if rows else {}
+            if hasattr(row, "get"):
+                values = (
+                    row.get("today_count", 0),
+                    row.get("today_success", 0),
+                    row.get("today_failed", 0),
+                    row.get("today_pending", 0),
+                    row.get("today_running", 0),
+                )
+            else:
+                values = tuple(row[:5]) if row else (0, 0, 0, 0, 0)
             return {
-                "today_count": today_count,
-                "today_success": today_success,
-                "today_failed": today_failed,
-                "today_pending": today_pending,
-                "today_running": today_running,
+                "today_count": int(values[0] or 0),
+                "today_success": int(values[1] or 0),
+                "today_failed": int(values[2] or 0),
+                "today_pending": int(values[3] or 0),
+                "today_running": int(values[4] or 0),
             }
         except Exception as e:
             self.handle_error(e, "aggregate_today_publish_counts")
@@ -398,16 +420,34 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
     async def count_active_publish_by_status(self) -> Dict[str, int]:
         """有效发布记录按状态计数（排除回收站）。"""
         try:
-            base = self._active_dashboard_queryset()
-            success = await base.filter(status="success").count()
-            failed = await base.filter(status="failed").count()
-            pending = await base.filter(status__in=["pending", "running"]).count()
-            total = await base.count()
+            conn = Tortoise.get_connection("default")
+            result = await conn.execute_query(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success,
+                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+                    SUM(CASE WHEN status IN ('pending', 'running') THEN 1 ELSE 0 END) AS pending
+                FROM publish_records
+                WHERE status NOT IN ('deleted_pending', 'deleted_success')
+                """,
+            )
+            rows = result[1] if isinstance(result, tuple) and len(result) > 1 else []
+            row = rows[0] if rows else {}
+            if hasattr(row, "get"):
+                values = (
+                    row.get("total", 0),
+                    row.get("success", 0),
+                    row.get("failed", 0),
+                    row.get("pending", 0),
+                )
+            else:
+                values = tuple(row[:4]) if row else (0, 0, 0, 0)
             return {
-                "total": total,
-                "success": success,
-                "failed": failed,
-                "pending": pending,
+                "total": int(values[0] or 0),
+                "success": int(values[1] or 0),
+                "failed": int(values[2] or 0),
+                "pending": int(values[3] or 0),
             }
         except Exception as e:
             self.handle_error(e, "count_active_publish_by_status")
@@ -417,15 +457,30 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
     async def count_finished_publish_since(self, since: datetime) -> Dict[str, int]:
         """自 since 起已完成（success+failed）记录数，用于近 7 天成功率。"""
         try:
-            base = self._active_dashboard_queryset().filter(
-                created_at__gte=since,
-                status__in=["success", "failed"],
+            conn = Tortoise.get_connection("default")
+            result = await conn.execute_query(
+                """
+                SELECT
+                    COUNT(*) AS finished_total,
+                    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS finished_success
+                FROM publish_records
+                WHERE status IN ('success', 'failed')
+                  AND created_at >= ?
+                """,
+                [since.isoformat(sep=" ", timespec="seconds")],
             )
-            finished_total = await base.count()
-            finished_success = await base.filter(status="success").count()
+            rows = result[1] if isinstance(result, tuple) and len(result) > 1 else []
+            row = rows[0] if rows else {}
+            if hasattr(row, "get"):
+                values = (
+                    row.get("finished_total", 0),
+                    row.get("finished_success", 0),
+                )
+            else:
+                values = tuple(row[:2]) if row else (0, 0)
             return {
-                "finished_total": finished_total,
-                "finished_success": finished_success,
+                "finished_total": int(values[0] or 0),
+                "finished_success": int(values[1] or 0),
             }
         except Exception as e:
             self.handle_error(e, "count_finished_publish_since")

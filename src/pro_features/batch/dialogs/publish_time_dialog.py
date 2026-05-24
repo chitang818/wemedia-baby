@@ -39,7 +39,7 @@ from qfluentwidgets.components.widgets.table_view import TableItemDelegate
 from src.ui.components.base_dialog import AppMessageBoxBase
 from src.ui.components.fast_calendar_picker import create_fast_calendar_picker
 from src.ui.utils.fluent_tooltips import apply_instructional_tooltip
-from src.ui.pages.publish.publish_records_page import _TableCellCenterHost
+from src.ui.utils.table_cell_center_host import _TableCellCenterHost
 
 # QFluentWidgets TimePicker：无秒时库默认每列 120px；项目与单任务页一致用 80px 即可完整显示时/分。
 # 批量 Tab 标题栏内曾用 42px 导致弹层分钟列变为「…」，与官方组件表现不符。

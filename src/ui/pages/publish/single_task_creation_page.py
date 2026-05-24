@@ -66,7 +66,7 @@ from src.domain.publish.work_description import (
     normalize_topics_for_paste,
     parse_topic_list,
 )
-from src.ui.publish.work_description import WorkDescriptionEditController
+from src.ui.publish.work_description.work_description_edit_controller import WorkDescriptionEditController
 from src.domain.publish.location_settings import (
     LOCATION_MODE_CHECKIN,
     LOCATION_MODE_CHOICES,
@@ -84,6 +84,10 @@ from src.ui.dialogs.file_select_dialog import (
 from src.ui.publish.promotion import CartSelectorWidget
 from src.services.copywriting.copywriting_match_service import CopywritingMatchService, CopywritingMatchMode
 from src.infrastructure.storage.repositories.random_copywriting_repository import RandomCopywritingRepository
+from src.ui.publish.work_description.work_declaration_prefs import (
+    load_persisted_work_declaration,
+    save_persisted_work_declaration,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -454,6 +458,8 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         self._editing_record_original_file_path: Optional[str] = None
         # 从「待发布 / 已发布 / 回收站」哪一页进入编辑；点「返回」时回到该页；「保存修改」成功后一律去待发布
         self._publish_edit_return_route: Optional[str] = None
+        self.available_accounts: List[dict] = []
+        self._accounts_loading = False
         self._init_task_tracking()
         self._creation_controller = SingleTaskCreationController(self)
 
@@ -548,8 +554,12 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
 
     def _update_preview_video_source(self, file_path: str) -> None:
         """将下方 Fluent VideoWidget 绑定到本地视频文件；无有效视频路径时停止并清空。"""
-        w = getattr(self, "preview_video_widget", None)
-        if w is None or self._is_image_mode:
+        if self._is_image_mode:
+            return
+        if getattr(self, "preview_video_widget", None) is None and not (file_path or "").strip():
+            return
+        w = self._ensure_preview_video_widget()
+        if w is None:
             return
         resolved: Optional[str] = None
         if file_path and file_path.strip():
@@ -590,12 +600,64 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
     def showEvent(self, event):
         """页面显示时触发账号加载（此时 qasync 事件循环已就绪）"""
         super().showEvent(event)
-        if not hasattr(self, 'available_accounts') or not self.available_accounts:
-            logger.info("showEvent: 账号列表为空，触发异步加载…")
+        if self.available_accounts or self._accounts_loading:
+            self._schedule_preview_video_idle_init(delay_ms=1200)
+            return
+        if self._try_apply_cached_accounts():
+            self._schedule_accounts_refresh(delay_ms=800)
+            self._schedule_preview_video_idle_init(delay_ms=1200)
+            return
+        mode_zh = "图文" if self._is_image_mode else "视频"
+        logger.info("showEvent: %s任务页首次显示，加载账号列表…", mode_zh)
+        self._accounts_loading = True
+        self._create_tracked_task(
+            self._load_accounts(),
+            name="ui.single_publish.load_accounts",
+        )
+        self._schedule_preview_video_idle_init(delay_ms=1200)
+
+    def _try_apply_cached_accounts(self) -> bool:
+        try:
+            from src.services.account.account_list_cache import get_cached_accounts
+
+            cached = get_cached_accounts()
+            if cached is None:
+                return False
+            self.available_accounts = cached
+            self._apply_accounts_to_ui()
+            logging.getLogger("ui.perf").debug(
+                "[页面耗时] account load cache single_task_creation_page: %d accounts",
+                len(cached),
+            )
+            return True
+        except Exception as e:
+            logger.debug("读取账号列表缓存失败: %s", e)
+            return False
+
+    def _schedule_accounts_refresh(self, *, delay_ms: int = 1000) -> None:
+        if self._accounts_loading:
+            return
+
+        def _refresh() -> None:
+            if self._accounts_loading:
+                return
+            self._accounts_loading = True
             self._create_tracked_task(
                 self._load_accounts(),
-                name="ui.single_publish.load_accounts",
+                name="ui.single_publish.refresh_accounts",
             )
+
+        self._schedule_base_page_timer("single_accounts_refresh", delay_ms, _refresh)
+
+    def _apply_accounts_to_ui(self) -> None:
+        if not hasattr(self, "btn_select_account") or not hasattr(self, "account_label"):
+            return
+        if self.available_accounts:
+            self.btn_select_account.setEnabled(True)
+        else:
+            self.account_label.setText("无可用发布账号 (请先添加并登录)")
+            self.btn_select_account.setEnabled(False)
+        self._update_publish_button_state()
 
     def _track_task(self, task: asyncio.Task) -> asyncio.Task:
         """跟踪异步任务，自动清理已完成任务并记录异常"""
@@ -607,9 +669,56 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
 
     def closeEvent(self, event):
         """页面关闭时取消所有未完成的异步任务"""
-        self._update_preview_video_source("")
+        self._release_preview_video_player()
         self._cancel_tracked_tasks()
         super().closeEvent(event)
+
+    def _release_preview_video_player(self) -> None:
+        """离开页面/退出前停止 Qt Multimedia，减轻退出时 QThreadStorage 告警。"""
+        w = getattr(self, "preview_video_widget", None)
+        if w is None or self._is_image_mode:
+            return
+        try:
+            self._disconnect_preview_first_frame_arm(w)
+            w.stop()
+            w.player.stop()
+            w.player.setSource(QUrl())
+        except Exception as e:
+            logger.debug("释放预览播放器: %s", e)
+
+    def prewarm_for_fast_show(self, *, preview_delay_ms: int = 2500) -> bool:
+        """Build hidden content during startup idle so first navigation only switches pages."""
+        try:
+            if self.isVisible() or getattr(self, "_content_initialized", False):
+                return False
+            import time
+            from src.utils.startup_profiler import is_page_load_profiler_enabled
+
+            t0 = time.perf_counter() if is_page_load_profiler_enabled() else 0.0
+            self._ensure_content()
+            self._try_apply_cached_accounts()
+            self._schedule_accounts_refresh(delay_ms=1200)
+            self._schedule_preview_video_idle_init(delay_ms=preview_delay_ms)
+            if is_page_load_profiler_enabled():
+                logging.getLogger("ui.perf").info(
+                    "[页面耗时] single page prewarm content: %.0f ms",
+                    (time.perf_counter() - t0) * 1000,
+                )
+            return True
+        except Exception as e:
+            logger.debug("单视频任务页预热失败: %s", e, exc_info=True)
+            return False
+
+    def _schedule_preview_video_idle_init(self, *, delay_ms: int) -> None:
+        if self._is_image_mode or getattr(self, "preview_video_widget", None) is not None:
+            return
+        if getattr(self, "_preview_video_card", None) is None:
+            return
+        self._schedule_base_page_timer(
+            "preview_video_widget_idle_init",
+            max(0, delay_ms),
+            self._ensure_preview_video_widget,
+        )
     
     def _apply_preview_placeholder_style(self):
         """为预览区 label 应用空状态样式（主题感知）"""
@@ -644,6 +753,11 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
     
     def _setup_content(self):
         """设置内容"""
+        import time
+        from src.utils.startup_profiler import is_page_load_profiler_enabled
+
+        _fallback_visible = self.isVisible()
+        _setup_t0 = time.perf_counter() if is_page_load_profiler_enabled() else 0.0
         # 创建滚动区域
         self.scroll_area = SmoothScrollArea(self)
         self.scroll_area.setScrollAnimation(Qt.Vertical, 400, QEasingCurve.OutQuint)
@@ -716,7 +830,15 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         
         # 将滚动区域添加到BasePage的内容布局中
         self.content_layout.addWidget(self.scroll_area)
+        self._apply_accounts_to_ui()
         self._refresh_work_declaration_ui()
+        if _fallback_visible:
+            self._schedule_preview_video_idle_init(delay_ms=1200)
+            if is_page_load_profiler_enabled():
+                logging.getLogger("ui.perf").info(
+                    "[页面耗时] single page first show fallback content: %.0f ms",
+                    (time.perf_counter() - _setup_t0) * 1000,
+                )
 
     # ---------- UI 搭建：卡片与区块 (_create_*_card) ----------
     def _create_preview_card(self) -> QWidget:
@@ -728,6 +850,8 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
 
         self.preview_label = None
         self.preview_video_widget = None
+        self._preview_video_card = card
+        self._preview_video_layout = layout
 
         if self._is_image_mode:
             self.preview_label = QLabel(card)
@@ -737,19 +861,53 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             self._apply_preview_placeholder_style()
             layout.addWidget(self.preview_label)
         else:
-            try:
-                from src.ui.components.preview_video_widget import PreviewVideoWidget
-
-                # 高度需容纳 StandardMediaPlayBar（约 102px）+ 边距，否则视频区过扁
-                self.preview_video_widget = PreviewVideoWidget(card)
-                self.preview_video_widget.setMinimumSize(280, 384)
-                self.preview_video_widget.setMaximumWidth(280)
-                layout.addWidget(self.preview_video_widget)
-            except Exception as e:
-                logger.warning("内置视频预览播放器不可用: %s", e)
-                self.preview_video_widget = None
+            self.preview_label = QLabel(card)
+            self.preview_label.setAlignment(Qt.AlignCenter)
+            self.preview_label.setFixedSize(280, 384)
+            self.preview_label.setText(self._preview_placeholder_text())
+            self._apply_preview_placeholder_style()
+            layout.addWidget(self.preview_label)
 
         return card
+
+    def _ensure_preview_video_widget(self) -> Optional[QWidget]:
+        """Create the Qt Multimedia preview lazily to keep first navigation light."""
+        if self._is_image_mode:
+            return None
+        existing = getattr(self, "preview_video_widget", None)
+        if existing is not None:
+            return existing
+        card = getattr(self, "_preview_video_card", None)
+        layout = getattr(self, "_preview_video_layout", None)
+        if card is None or layout is None:
+            return None
+        import time
+        from src.utils.startup_profiler import is_page_load_profiler_enabled
+
+        t0 = time.perf_counter() if is_page_load_profiler_enabled() else 0.0
+        try:
+            from src.ui.components.preview_video_widget import PreviewVideoWidget
+
+            placeholder = getattr(self, "preview_label", None)
+            if placeholder is not None:
+                layout.removeWidget(placeholder)
+                placeholder.deleteLater()
+                self.preview_label = None
+            self.preview_video_widget = PreviewVideoWidget(card)
+            self.preview_video_widget.setMinimumSize(280, 384)
+            self.preview_video_widget.setMaximumWidth(280)
+            layout.addWidget(self.preview_video_widget)
+            return self.preview_video_widget
+        except Exception as e:
+            logger.warning("内置视频预览播放器不可用: %s", e)
+            self.preview_video_widget = None
+            return None
+        finally:
+            if is_page_load_profiler_enabled():
+                logging.getLogger("ui.perf").info(
+                    "[页面耗时] single page preview idle init: %.0f ms",
+                    (time.perf_counter() - t0) * 1000,
+                )
     
     def _create_core_config_card(self) -> QWidget:
         """创建核心配置卡片（账号、视频或图片、封面）"""
@@ -1586,11 +1744,6 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
 
     def _persist_work_declaration_merge(self, updates: Dict[str, Any]) -> None:
         """合并写入全局「作品申明」偏好（与批量页共用 batch_publish.work_declaration）。"""
-        from src.ui.publish.work_description.publish_description_dialog import (
-            load_persisted_work_declaration,
-            save_persisted_work_declaration,
-        )
-
         cur = load_persisted_work_declaration()
         cur.update(updates)
         save_persisted_work_declaration(cur)
@@ -1675,10 +1828,6 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             normalize_kuaishou_value,
             normalize_xhs_content_attr,
         )
-        from src.ui.publish.work_description.publish_description_dialog import (
-            load_persisted_work_declaration,
-        )
-
         self._wd_set_syncing(True)
         try:
             wd = load_persisted_work_declaration()
@@ -1850,10 +1999,6 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             normalize_xhs_content_attr,
             strip_privacy_declaration_keys_for_platform,
         )
-        from src.ui.publish.work_description.publish_description_dialog import (
-            load_persisted_work_declaration,
-        )
-
         privacy = "public"
         if hasattr(self, "privacy_combo"):
             p_text = self.privacy_combo.currentText()
@@ -2238,25 +2383,32 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         logger.info("SingleTaskCreationPage 准备加载可用账号列表...")
         if not hasattr(self, 'account_manager') or not self.account_manager:
             logger.warning("account_manager 未初始化，放弃加载账号。")
+            self._accounts_loading = False
             return
         
         # 直接从数据库获取全部账号，跳过 PlatformRegistry（发布页未注册适配器）
         try:
-            accounts = await self.account_manager.get_accounts()
+            import time
+            from src.services.account.account_list_cache import load_accounts_for_publish_cache
+            from src.utils.startup_profiler import is_page_load_profiler_enabled
+
+            t0 = time.perf_counter() if is_page_load_profiler_enabled() else 0.0
+            accounts = await load_accounts_for_publish_cache(force_refresh=True)
             logger.info(f"从数据库加载到 {len(accounts) if accounts else 0} 个账号")
             
             self.available_accounts = accounts or []
             logger.info(f"账号列表加载完毕，共 {len(self.available_accounts)} 个账号")
-            
-            # 更新 UI 状态
-            if self.available_accounts:
-                self.btn_select_account.setEnabled(True)
-            else:
-                self.account_label.setText("无可用发布账号 (请先添加并登录)")
-                self.btn_select_account.setEnabled(False)
+            if is_page_load_profiler_enabled():
+                logging.getLogger("ui.perf").info(
+                    "[页面耗时] single page account db refresh: %.0f ms",
+                    (time.perf_counter() - t0) * 1000,
+                )
+            self._apply_accounts_to_ui()
                 
         except Exception as e:
             logger.error(f"加载账号列表失败: {e}", exc_info=True)
+        finally:
+            self._accounts_loading = False
     
     async def _load_accounts_async(self, platform='douyin'):
         """异步加载账号"""

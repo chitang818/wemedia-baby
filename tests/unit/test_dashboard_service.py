@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -130,6 +132,54 @@ def test_dashboard_stats_cache_invalidate():
     cache.set(snap, user_id=1)
     cache.invalidate()
     assert cache.get(1) is None
+
+
+def test_dashboard_stats_cache_persistent_round_trip(monkeypatch):
+    from src.infrastructure.common.path_manager import PathManager
+
+    with tempfile.TemporaryDirectory() as tmp:
+        monkeypatch.setattr(PathManager, "get_cache_dir", staticmethod(lambda: Path(tmp)))
+        cache = DashboardStatsCache()
+        snap = DashboardSnapshot(
+            account={"total": 2},
+            publish={"today_count": 1},
+            task={"publish_tab_total": 3},
+            reminders=[{"account_name": "demo"}],
+            partial=False,
+        )
+
+        cache.set(snap, user_id=7)
+        restored = cache.get_persistent(7)
+
+        assert restored is not None
+        assert restored.account["total"] == 2
+        assert restored.publish["today_count"] == 1
+        assert restored.reminders[0]["account_name"] == "demo"
+
+
+def test_dashboard_stats_cache_persistent_stale_still_available(monkeypatch):
+    from src.infrastructure.common.path_manager import PathManager
+
+    with tempfile.TemporaryDirectory() as tmp:
+        monkeypatch.setattr(PathManager, "get_cache_dir", staticmethod(lambda: Path(tmp)))
+        cache = DashboardStatsCache(persistent_ttl_seconds=0.001)
+        snap = DashboardSnapshot(account={"total": 2}, partial=False)
+        cache.set_complete_snapshot(snap, user_id=7)
+        time.sleep(0.01)
+
+        assert cache.get_persistent(7) is not None
+        assert cache.get_persistent(7, allow_stale=False) is None
+
+
+def test_dashboard_stats_cache_does_not_persist_partial(monkeypatch):
+    from src.infrastructure.common.path_manager import PathManager
+
+    with tempfile.TemporaryDirectory() as tmp:
+        monkeypatch.setattr(PathManager, "get_cache_dir", staticmethod(lambda: Path(tmp)))
+        cache = DashboardStatsCache()
+        cache.set(DashboardSnapshot(account={"total": 2}, partial=True), user_id=7)
+
+        assert cache.get_persistent(7) is None
 
 
 def test_snapshot_merge_keeps_fast_task():

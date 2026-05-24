@@ -7,6 +7,7 @@
 import ctypes
 import os
 import sys
+import time
 from PySide6.QtWidgets import (
     QWidget,
     QMainWindow,
@@ -105,6 +106,7 @@ def get_startup_preload_page_names(
     pages = [
         "publish_list_page",
         "account_page",
+        "single_task_creation_page",
     ]
     if selected_mode != "full":
         return pages
@@ -112,7 +114,6 @@ def get_startup_preload_page_names(
     pages.extend(
         [
             "publish_records_page",
-            "single_task_creation_page",
             "settings_page",
         ]
     )
@@ -247,9 +248,33 @@ class MainWindow(FluentWindow):
                 return
             if hasattr(self, page_name):
                 return
-            self._get_or_create_page(page_name)
+            page = self._get_or_create_page(page_name)
+            self._schedule_page_content_prewarm(page_name, page, delay_ms=700)
 
         self._schedule_single_shot(f"preload:{page_name}", delay_ms, _preload)
+
+    def _single_page_content_prewarm_enabled(self) -> bool:
+        raw = os.environ.get("WEMEDIABABY_SINGLE_PAGE_CONTENT_PREWARM", "1")
+        return raw.strip().lower() not in {"0", "false", "no", "off", "disabled"}
+
+    def _schedule_page_content_prewarm(self, page_name: str, page, *, delay_ms: int) -> None:
+        if page_name != "single_task_creation_page":
+            return
+        if page is None or not self._single_page_content_prewarm_enabled():
+            return
+
+        def _prewarm() -> None:
+            if not self.isVisible():
+                return
+            prewarm = getattr(page, "prewarm_for_fast_show", None)
+            if callable(prewarm):
+                prewarm()
+
+        self._schedule_single_shot(
+            f"preload_content:{page_name}",
+            delay_ms,
+            _prewarm,
+        )
 
     def _schedule_startup_preloads(self) -> None:
         base_ms, step_ms = _startup_preload_timing()
@@ -260,6 +285,30 @@ class MainWindow(FluentWindow):
         ]
         for index, page_name in enumerate(missing_pages):
             self._schedule_page_preload(page_name, base_ms + index * step_ms)
+        if hasattr(self, "single_task_creation_page"):
+            self._schedule_page_content_prewarm(
+                "single_task_creation_page",
+                getattr(self, "single_task_creation_page"),
+                delay_ms=base_ms + len(missing_pages) * step_ms,
+            )
+
+    def _schedule_account_list_prewarm(self) -> None:
+        self._schedule_single_shot(
+            "startup.account_list_prewarm",
+            4500,
+            self._run_account_list_prewarm,
+        )
+
+    def _run_account_list_prewarm(self) -> None:
+        async def _prewarm() -> None:
+            try:
+                from src.services.account.account_list_cache import load_accounts_for_publish_cache
+
+                await load_accounts_for_publish_cache(force_refresh=True)
+            except Exception as e:
+                logger.debug("启动期账号列表预热失败: %s", e)
+
+        run_async_from_ui(_prewarm)
     
     def _init_services(self):
         """初始化服务和事件监听"""
@@ -276,11 +325,17 @@ class MainWindow(FluentWindow):
                 self.event_bus.subscribe("TaskFailedEvent", self._on_task_failed)
                 self.event_bus.subscribe("PublishCompletedEvent", self._on_publish_completed)
                 self.event_bus.subscribe("SessionEvictedEvent", self._on_session_evicted)
+                self.event_bus.subscribe("AccountAddedEvent", self._on_account_cache_event)
+                self.event_bus.subscribe("AccountRemovedEvent", self._on_account_cache_event)
+                self.event_bus.subscribe("AccountUpdatedEvent", self._on_account_cache_event)
                 self._event_handlers.extend([
                     ("PublishStartedEvent", self._on_publish_started),
                     ("TaskFailedEvent", self._on_task_failed),
                     ("PublishCompletedEvent", self._on_publish_completed),
                     ("SessionEvictedEvent", self._on_session_evicted),
+                    ("AccountAddedEvent", self._on_account_cache_event),
+                    ("AccountRemovedEvent", self._on_account_cache_event),
+                    ("AccountUpdatedEvent", self._on_account_cache_event),
                 ])
                 logger.debug("主窗口事件监听已注册")
             self._init_event_subscriptions()
@@ -301,6 +356,15 @@ class MainWindow(FluentWindow):
         """任务失败事件回调"""
         msg = f"任务失败: {getattr(event, 'error', '未知错误')}"
         self.show_status_message(msg, 5000, is_error=True)
+
+    def _on_account_cache_event(self, event):
+        """账号变更后失效发布页账号缓存。"""
+        try:
+            from src.services.account.account_list_cache import invalidate_account_list_cache
+
+            invalidate_account_list_cache()
+        except Exception as e:
+            logger.debug("账号列表缓存失效失败: %s", e)
 
     def _on_session_evicted(self, event):
         """账号在其他设备登录，当前会话被顶下线"""
@@ -391,6 +455,7 @@ class MainWindow(FluentWindow):
                 self._run_material_library_startup_check,
             )
         # 空闲预加载高频页面：错开时间片，避免同一时刻多页 import/__init__ 抢满 UI 线程
+        self._schedule_account_list_prewarm()
         self._schedule_startup_preloads()
         try:
             from src.utils.startup_profiler import log_summary
@@ -916,6 +981,12 @@ class MainWindow(FluentWindow):
             for page_name in self.page_factory.get_all_page_names():
                 if hasattr(self, page_name):
                     page = getattr(self, page_name)
+                    release_preview = getattr(page, "_release_preview_video_player", None)
+                    if callable(release_preview):
+                        try:
+                            release_preview()
+                        except Exception as e:
+                            logger.debug("释放页面预览播放器 %s: %s", page_name, e)
                     if hasattr(page, 'shutdown'):
                         try:
                             logger.info(f"正在关闭页面资源: {page_name}")
@@ -1285,11 +1356,46 @@ class MainWindow(FluentWindow):
         """
         if page is None:
             return
+        refresh_start = time.perf_counter()
         if page_name in ("publish_records_page", "publish_list_page"):
+            refresher = getattr(page, "refresh_after_navigation", None)
+            if callable(refresher):
+                refresher()
+                elapsed_ms = (time.perf_counter() - refresh_start) * 1000
+                if elapsed_ms >= 40:
+                    logger.warning(
+                        "Navigation refresh hook page=%s took %.1f ms",
+                        page_name,
+                        elapsed_ms,
+                    )
+                else:
+                    logger.debug(
+                        "Navigation refresh hook page=%s took %.1f ms",
+                        page_name,
+                        elapsed_ms,
+                    )
+                return
             loader = getattr(page, "_load_publish_records", None)
             if callable(loader):
                 loader()
         elif page_name == "publish_recycle_bin_page":
+            refresher = getattr(page, "refresh_after_navigation", None)
+            if callable(refresher):
+                refresher()
+                elapsed_ms = (time.perf_counter() - refresh_start) * 1000
+                if elapsed_ms >= 40:
+                    logger.warning(
+                        "Navigation refresh hook page=%s took %.1f ms",
+                        page_name,
+                        elapsed_ms,
+                    )
+                else:
+                    logger.debug(
+                        "Navigation refresh hook page=%s took %.1f ms",
+                        page_name,
+                        elapsed_ms,
+                    )
+                return
             loader = getattr(page, "_load_deleted_records", None)
             if callable(loader):
                 loader()

@@ -1,7 +1,15 @@
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
 
 from src.ui.pages.account.components.account_table_model import AccountTableModel
 from src.ui.pages.publish.publish_record_table_model import PublishRecordTableModel
+from src.ui.pages.publish.publish_record_table_view import PublishRecordTableView
+from src.ui.pages.publish.publish_records_page import PublishRecordsPage
+from src.ui.pages.publish.publish_recycle_bin_page import PublishRecycleBinPage
+
+
+def _qapp() -> QApplication:
+    return QApplication.instance() or QApplication([])
 
 
 def test_account_table_model_indexes_records_by_account_id() -> None:
@@ -75,3 +83,69 @@ def test_publish_record_table_model_recycle_page_columns() -> None:
     assert model.data(model.index(0, PublishRecordTableModel.COL_LOCATION)) == "回收（原已发布）"
     assert model.data(model.index(0, PublishRecordTableModel.COL_FILE_LOCATION)) == "已发布"
     assert model.data(model.index(0, PublishRecordTableModel.COL_ACTION)) == "查看"
+
+
+def test_publish_records_navigation_refresh_skips_fresh_page() -> None:
+    _qapp()
+    page = PublishRecordsPage.__new__(PublishRecordsPage)
+    page._content_initialized = True
+    page.records_table = object()
+    page._data_stale = False
+    page._last_filter_render_state = ("fresh",)
+    calls = {"load": 0, "filter": 0}
+    page._load_publish_records = lambda: calls.__setitem__("load", calls["load"] + 1)
+    page._apply_filters = lambda: calls.__setitem__("filter", calls["filter"] + 1)
+
+    page.refresh_after_navigation()
+
+    assert calls == {"load": 0, "filter": 0}
+
+
+def test_publish_records_navigation_refresh_loads_stale_page() -> None:
+    _qapp()
+    page = PublishRecordsPage.__new__(PublishRecordsPage)
+    page._content_initialized = True
+    page.records_table = object()
+    page._data_stale = True
+    page._last_filter_render_state = ("old",)
+    calls = {"load": 0, "filter": 0}
+    page._load_publish_records = lambda: calls.__setitem__("load", calls["load"] + 1)
+    page._apply_filters = lambda: calls.__setitem__("filter", calls["filter"] + 1)
+
+    page.refresh_after_navigation()
+
+    assert calls == {"load": 1, "filter": 0}
+
+
+def test_recycle_navigation_refresh_skips_fresh_page() -> None:
+    _qapp()
+    page = PublishRecycleBinPage.__new__(PublishRecycleBinPage)
+    page._content_initialized = True
+    page.records_table = object()
+    page._data_stale = False
+    page.deleted_records = [{"id": 1}]
+    page._total_deleted_count = 1
+    calls = {"load": 0}
+    page._load_deleted_records = lambda: calls.__setitem__("load", calls["load"] + 1)
+
+    page.refresh_after_navigation()
+
+    assert calls == {"load": 0}
+
+
+def test_publish_record_table_view_recycle_mode_is_idempotent(monkeypatch) -> None:
+    _qapp()
+    calls = {"apply": 0}
+    original = PublishRecordTableView._apply_legacy_table_visual_defaults
+
+    def counted_apply(self) -> None:
+        calls["apply"] += 1
+        original(self)
+
+    monkeypatch.setattr(PublishRecordTableView, "_apply_legacy_table_visual_defaults", counted_apply)
+    table = PublishRecordTableView(recycle_page=True)
+    initial_calls = calls["apply"]
+
+    table.set_recycle_page(True)
+
+    assert calls["apply"] == initial_calls

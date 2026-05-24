@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 
-from src.domain.publish.work_declaration import ellipsize, format_work_declaration_table_cell
+from src.domain.publish.work_declaration import format_work_declaration_table_cell
 from src.ui.pages.publish.poi_info_display import format_poi_table_cell_display
 from src.ui.pages.publish.task_field_display import (
     TASK_FIELD_EMPTY_DISPLAY,
@@ -203,8 +203,21 @@ class PublishRecordTableModel(QAbstractTableModel):
             bottom = self.index(self.rowCount() - 1, self.COL_ACTION)
             self.dataChanged.emit(top, bottom, [Qt.ItemDataRole.DisplayRole])
 
-    def set_records(self, records: List[Dict[str, Any]]) -> None:
+    def set_records(
+        self,
+        records: List[Dict[str, Any]],
+        *,
+        success_page: Optional[bool] = None,
+        action_text: Optional[str] = None,
+        recycle_page: Optional[bool] = None,
+    ) -> None:
         self.beginResetModel()
+        if recycle_page is not None:
+            self._recycle_page = bool(recycle_page)
+        if success_page is not None:
+            self._success_page = bool(success_page)
+        if action_text is not None:
+            self._action_text = str(action_text or "编辑")
         self._records = [dict(r) for r in records or []]
         self._cell_overrides = {}
         self._rebuild_index()
@@ -345,7 +358,7 @@ class PublishRecordTableModel(QAbstractTableModel):
                 )
             except Exception:
                 full = TASK_FIELD_EMPTY_DISPLAY
-            return ellipsize(full, 14)
+            return full
         if col == self.COL_MUSIC:
             return _music_display(record)
         if col == self.COL_CART:
@@ -405,7 +418,7 @@ class PublishRecordTableModel(QAbstractTableModel):
                 )
             except Exception:
                 full = TASK_FIELD_EMPTY_DISPLAY
-            return ellipsize(full, 14)
+            return full
         if col == self.COL_MUSIC:
             return format_cart_info_table_cell((record.get("cart_info") or "").strip())
         if col == self.COL_CART:
@@ -427,6 +440,38 @@ class PublishRecordTableModel(QAbstractTableModel):
         return ""
 
     def _tooltip_value(self, record: Dict[str, Any], col: int) -> str:
+        if col == self.COL_CREATE_TIME:
+            if self._recycle_page:
+                return _format_timestamp(record.get("created_at"))
+            value = (
+                (record.get("updated_at") or record.get("created_at"))
+                if self._success_page
+                else record.get("created_at")
+            )
+            return _format_timestamp(value)
+        if col == self.COL_SCHEDULED_TIME:
+            return (
+                format_schedule_time_st_str(record.get("scheduled_publish_time"))
+                or "立即发布"
+            )
+        if col == self.COL_COVER:
+            cover_path = record.get("cover_path")
+            if self._recycle_page:
+                if cover_path and os.path.exists(str(cover_path)):
+                    return "本地封面"
+                return "首帧封面"
+            return "本地封面" if cover_path else "首帧封面"
+        if col == self.COL_TYPE:
+            return "图文" if _record_is_image_task(record) else "视频"
+        if col == self.COL_ACCOUNT_NAME:
+            return str(record.get("platform_username") or "").strip()
+        if col == self.COL_STATUS and not self._recycle_page:
+            status = (record.get("status") or "").strip()
+            return {
+                "success": "✅ 成功",
+                "failed": "❌ 失败",
+                "pending": "⏳ 待发布",
+            }.get(status, status) if status else TASK_FIELD_EMPTY_DISPLAY
         if col == self.COL_TITLE:
             return str(record.get("title") or "")
         if col == self.COL_DESCRIPTION:
