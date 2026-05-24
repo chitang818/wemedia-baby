@@ -8,6 +8,34 @@
 from __future__ import annotations
 
 from typing import Optional, Dict, Any
+import logging
+
+_logger = logging.getLogger(__name__)
+
+
+def _publish_current_user_changed(
+    *,
+    username: Optional[str],
+    logged_in: bool,
+    source: str,
+) -> None:
+    try:
+        from src.infrastructure.common.di.service_locator import ServiceLocator
+        from src.infrastructure.common.event.event_bus import EventBus
+        from src.infrastructure.common.event.events import CurrentUserChangedEvent
+
+        locator = ServiceLocator()
+        if not locator.is_registered(EventBus):
+            return
+        locator.get(EventBus).publish_sync(
+            CurrentUserChangedEvent(
+                username=username,
+                logged_in=logged_in,
+                source=source,
+            )
+        )
+    except Exception as exc:
+        _logger.debug("发布 CurrentUserChangedEvent 失败（可忽略）: %s", exc)
 
 
 try:
@@ -31,22 +59,37 @@ except Exception:
             self._level: str = "vip0"
             self._is_expired: bool = True
 
-        def set_user(self, user_id: int, username: str, level: str = "vip0", is_expired: bool = True, **_: Any) -> None:
+        def set_user(
+            self,
+            user_id: int,
+            username: str,
+            level: str = "vip0",
+            is_expired: bool = True,
+            source: str = "login",
+            **_: Any,
+        ) -> None:
             self._user_id = user_id
             self._username = username
             self._level = level or "vip0"
             self._is_expired = bool(is_expired)
+            _publish_current_user_changed(username=username, logged_in=True, source=source)
 
         def sync_from_cloud_data(self, data: Dict[str, Any]) -> None:
             # 开源版不做云端同步
             if data and data.get("username"):
-                self.set_user(int(data.get("user_id") or 1), str(data.get("username")), level=str(data.get("level") or "vip0"))
+                self.set_user(
+                    int(data.get("user_id") or 1),
+                    str(data.get("username")),
+                    level=str(data.get("level") or "vip0"),
+                    source="sync",
+                )
 
-        def clear_user(self) -> None:
+        def clear_user(self, source: str = "logout") -> None:
             self._user_id = None
             self._username = None
             self._level = "vip0"
             self._is_expired = True
+            _publish_current_user_changed(username=None, logged_in=False, source=source)
 
         def get_user_id(self) -> Optional[int]:
             return self._user_id

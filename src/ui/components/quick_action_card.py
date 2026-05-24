@@ -5,17 +5,23 @@
 """
 
 from typing import Optional
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QGraphicsDropShadowEffect
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
+
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QGraphicsDropShadowEffect, QSizePolicy
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCursor, QColor, QEnterEvent
 
 from qfluentwidgets import (
-    CardWidget, IconWidget, FluentIconBase, BodyLabel, CaptionLabel, isDarkTheme
+    CardWidget,
+    IconWidget,
+    FluentIconBase,
+    BodyLabel,
+    CaptionLabel,
+    isDarkTheme,
 )
 
 
 class QuickActionCard(CardWidget):
-    """快速操作卡片，点击触发对应功能导航"""
+    """快速操作卡片，点击触发对应功能导航。"""
 
     clicked = Signal()
 
@@ -24,22 +30,32 @@ class QuickActionCard(CardWidget):
         icon: FluentIconBase,
         title: str,
         desc: str = "",
-        parent: Optional[QWidget] = None
+        parent: Optional[QWidget] = None,
+        *,
+        compact: bool = False,
     ):
         super().__init__(parent)
+        self._compact = compact
         self.setCursor(QCursor(Qt.PointingHandCursor))
-        self.setFixedHeight(84)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(64 if compact else 84)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
+        if compact:
+            layout.setContentsMargins(8, 6, 8, 6)
+            layout.setSpacing(4 if not desc else 4)
+        else:
+            layout.setContentsMargins(10, 8, 10, 8)
+            layout.setSpacing(8 if not desc else 6)
         layout.setAlignment(Qt.AlignCenter)
-        layout.setSpacing(8 if not desc else 6)
 
         self.icon_widget = IconWidget(icon, self)
-        self.icon_widget.setFixedSize(28, 28)
+        icon_px = 24 if compact else 28
+        self.icon_widget.setFixedSize(icon_px, icon_px)
         layout.addWidget(self.icon_widget, 0, Qt.AlignCenter)
 
         self.title_label = BodyLabel(title, self)
+        self.title_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.title_label, 0, Qt.AlignCenter)
 
         self.desc_label = None
@@ -56,16 +72,19 @@ class QuickActionCard(CardWidget):
 
         self._apply_theme()
 
-    def _apply_theme(self):
+    def _apply_theme(self) -> None:
         dark = isDarkTheme()
-        title_size = "14px" if self.desc_label else "15px"
+        if self._compact:
+            title_size = "12px"
+        else:
+            title_size = "14px" if self.desc_label else "15px"
         title_color = "#E0E0E0" if dark else "#1A1A1A"
         self.title_label.setStyleSheet(f"font-size: {title_size}; color: {title_color};")
         if self.desc_label:
             desc_color = "#AAAAAA" if dark else "#757575"
             self.desc_label.setStyleSheet(f"color: {desc_color};")
 
-    def enterEvent(self, event: QEnterEvent):
+    def enterEvent(self, event: QEnterEvent) -> None:
         super().enterEvent(event)
         dark = isDarkTheme()
         shadow_color = QColor(255, 255, 255, 18) if dark else QColor(0, 0, 0, 30)
@@ -73,12 +92,12 @@ class QuickActionCard(CardWidget):
         self._shadow.setBlurRadius(16)
         self._shadow.setOffset(0, 2)
 
-    def leaveEvent(self, event):
+    def leaveEvent(self, event) -> None:
         super().leaveEvent(event)
         self._shadow.setBlurRadius(0)
         self._shadow.setOffset(0, 0)
         self._shadow.setColor(QColor(0, 0, 0, 0))
 
-    def mouseReleaseEvent(self, e):
+    def mouseReleaseEvent(self, e) -> None:
         super().mouseReleaseEvent(e)
         self.clicked.emit()

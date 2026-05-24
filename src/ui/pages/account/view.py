@@ -80,6 +80,7 @@ class AccountPage(BasePage):
         self._auto_refresh_timer.timeout.connect(self._on_auto_refresh_timer)
         # 发布过程中账号状态会频繁更新，不可见时只标记过期，等下次显示再刷
         self._accounts_data_stale: bool = False
+        self._pending_open_add_account: bool = False
         self._account_controller = AccountPageController(self)
 
         self._init_services()
@@ -257,6 +258,8 @@ class AccountPage(BasePage):
         self.user_id = CurrentUserService().get_user_id_or_default(1)
         if self.account_manager is not None:
             self.account_manager.user_id = self.user_id  # type: ignore
+        if self._pending_open_add_account:
+            self._schedule_pending_open_add_account()
         if was_first_show:
             return
         # 若发布期间积累了过期标记，显示时立即刷新（忽略5秒节流）
@@ -820,6 +823,30 @@ class AccountPage(BasePage):
         if msg_box.exec():
             run_delete(cb_delete_cookie.isChecked())
 
+
+    def request_open_add_account_dialog(self) -> None:
+        """由工作台等入口请求：进入本页后自动打开「选择平台」弹窗。"""
+        self._pending_open_add_account = True
+        if self.isVisible():
+            self._schedule_pending_open_add_account()
+
+    def _schedule_pending_open_add_account(self) -> None:
+        if not self._pending_open_add_account:
+            return
+        self._schedule_base_page_timer(
+            "account_open_add_dialog",
+            0,
+            self._flush_pending_open_add_account,
+        )
+
+    def _flush_pending_open_add_account(self) -> None:
+        if not self._pending_open_add_account:
+            return
+        if not self.isVisible():
+            return
+        self._ensure_content()
+        self._pending_open_add_account = False
+        self._on_add_account()
 
     def _on_add_account(self):
         """添加账号按钮点击（先占位、后更新流程：选择平台后先在列表中插入占位账号，再打开浏览器）"""

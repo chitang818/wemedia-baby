@@ -15,6 +15,7 @@ from .events import (
     BatchTaskStartedEvent,
     BatchTaskCompletedEvent,
     SessionEvictedEvent,
+    CurrentUserChangedEvent,
 )
 
 __all__ = [
@@ -29,5 +30,6 @@ __all__ = [
     'BatchTaskStartedEvent',
     'BatchTaskCompletedEvent',
     'SessionEvictedEvent',
+    'CurrentUserChangedEvent',
 ]
 

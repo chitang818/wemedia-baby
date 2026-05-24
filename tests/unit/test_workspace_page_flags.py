@@ -22,18 +22,17 @@ def test_workspace_page_disables_first_show_freeze_and_fade():
     assert WorkspacePage._enable_show_fade is False
 
 
-def test_workspace_page_does_not_create_charts_in_constructor(qapp, monkeypatch):
+def test_workspace_page_lazy_widgets_not_created_in_constructor(qapp, monkeypatch):
     monkeypatch.setattr(WorkspacePage, "_init_services", lambda self: None)
     monkeypatch.setattr(WorkspacePage, "_setup_refresh_timer", lambda self: None)
     monkeypatch.setattr(WorkspacePage, "_schedule_base_page_timer", lambda *args, **kwargs: None)
 
     page = WorkspacePage()
     try:
-        assert page._charts_created is False
-        assert page.platform_chart is None
-        assert page.trend_chart is None
+        assert hasattr(page, "account_platform_card")
+        assert not hasattr(page, "trend_chart")
+        assert page._announcement_created is True
         assert page._secondary_widgets_created is False
-        assert page._announcement_created is False
         assert page._recent_activity_created is False
         assert not hasattr(page, "recent_activity")
     finally:
@@ -54,14 +53,40 @@ def test_noncritical_first_paint_schedules_staggered_tasks(qapp, monkeypatch):
     try:
         page.schedule_noncritical_first_paint()
         assert [call[0] for call in calls] == [
-            "workspace_announcement_create",
             "workspace_recent_activity_create",
-            "workspace_platform_chart_prewarm",
-            "workspace_trend_chart_prewarm",
+            "workspace_account_platform_prewarm",
         ]
-        assert [call[1] for call in calls] == [0, 80, 180, 320]
+        assert [call[1] for call in calls] == [0, 80]
     finally:
         page.deleteLater()
+        qapp.processEvents()
+
+
+def test_recent_activity_shows_latest_publish_time_column_when_narrow(qapp):
+    from src.ui.components.recent_activity_widget import RecentActivityWidget
+
+    widget = RecentActivityWidget()
+    try:
+        widget.resize(220, 280)
+        widget.set_narrow_column(True)
+        widget.set_account_reminders(
+            [
+                {
+                    "account_id": 1,
+                    "account_name": "演示账号",
+                    "latest_publish_time": "2026-05-23 10:00",
+                    "reminder_text": "今天",
+                }
+            ]
+        )
+        widget.show()
+        qapp.processEvents()
+        assert widget._header_row is not None
+        assert not widget._header_row._time_label.isHidden()
+        assert not widget._reminder_rows[0]._time_label.isHidden()
+        assert widget._reminder_rows[0]._time_label.text() == "2026-05-23 10:00"
+    finally:
+        widget.deleteLater()
         qapp.processEvents()
 
 
@@ -84,26 +109,6 @@ def test_recent_activity_consumes_cached_reminders(qapp, monkeypatch):
         page.ensure_recent_activity_created()
         assert hasattr(page, "recent_activity")
         assert len(page.recent_activity._reminder_rows) == 1
-    finally:
-        page.deleteLater()
-        qapp.processEvents()
-
-
-def test_chart_placeholders_are_visual_skeletons(qapp, monkeypatch):
-    from src.ui.components.skeleton import SkeletonItem
-
-    monkeypatch.setattr(WorkspacePage, "_init_services", lambda self: None)
-    monkeypatch.setattr(WorkspacePage, "_setup_refresh_timer", lambda self: None)
-    monkeypatch.setattr(WorkspacePage, "_schedule_base_page_timer", lambda *args, **kwargs: None)
-
-    page = WorkspacePage()
-    try:
-        placeholders = [
-            page._platform_chart_placeholder,
-            page._trend_chart_placeholder,
-        ]
-        assert all(p.property("workspaceChartPlaceholderKind") for p in placeholders)
-        assert sum(len(p.findChildren(SkeletonItem)) for p in placeholders) >= 5
     finally:
         page.deleteLater()
         qapp.processEvents()

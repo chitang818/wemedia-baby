@@ -10,6 +10,31 @@ import threading
 logger = logging.getLogger(__name__)
 
 
+def _publish_current_user_changed(
+    *,
+    username: Optional[str],
+    logged_in: bool,
+    source: str,
+) -> None:
+    try:
+        from src.infrastructure.common.di.service_locator import ServiceLocator
+        from src.infrastructure.common.event.event_bus import EventBus
+        from src.infrastructure.common.event.events import CurrentUserChangedEvent
+
+        locator = ServiceLocator()
+        if not locator.is_registered(EventBus):
+            return
+        locator.get(EventBus).publish_sync(
+            CurrentUserChangedEvent(
+                username=username,
+                logged_in=logged_in,
+                source=source,
+            )
+        )
+    except Exception as exc:
+        logger.debug("发布 CurrentUserChangedEvent 失败（可忽略）: %s", exc)
+
+
 class CurrentUserService:
     """当前用户服务（单例，线程安全）"""
 
@@ -64,6 +89,7 @@ class CurrentUserService:
         register_ip: Optional[str] = None,
         last_login_ip: Optional[str] = None,
         token: Optional[str] = None,
+        source: str = "login",
     ) -> None:
         with self._lock:
             self._user_id = user_id
@@ -84,6 +110,7 @@ class CurrentUserService:
             self._last_login_ip = last_login_ip
         from src.utils.masking import mask_username
         self.logger.info("当前用户已设置: username=%s, level=%s, is_expired=%s", mask_username(username), level, is_expired)
+        _publish_current_user_changed(username=username, logged_in=True, source=source)
 
     def sync_from_cloud_data(self, data: Dict[str, Any]) -> None:
         if not data:
@@ -112,11 +139,12 @@ class CurrentUserService:
             register_ip=data.get("register_ip"),
             last_login_ip=data.get("last_login_ip"),
             token=data.get("token"),
+            source="sync",
         )
         from src.utils.masking import mask_username
         self.logger.info("已从云端同步账号权限: username=%s, level=%s", mask_username(username), data.get("level", "vip0"))
 
-    def clear_user(self) -> None:
+    def clear_user(self, source: str = "logout") -> None:
         with self._lock:
             self._user_id = None
             self._username = None
@@ -135,6 +163,7 @@ class CurrentUserService:
             self._last_login_ip = None
             self._token = None
         self.logger.info("当前用户已清除")
+        _publish_current_user_changed(username=None, logged_in=False, source=source)
 
     def get_user_id(self) -> Optional[int]:
         with self._lock:

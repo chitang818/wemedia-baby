@@ -64,6 +64,30 @@ def create_and_show_main_window():
     return window
 
 
+def _publish_auto_login_user_changed() -> None:
+    try:
+        from src.infrastructure.common.di.service_locator import ServiceLocator
+        from src.infrastructure.common.event.event_bus import EventBus
+        from src.infrastructure.common.event.events import CurrentUserChangedEvent
+        from src.services.auth import CurrentUserService
+
+        locator = ServiceLocator()
+        if not locator.is_registered(EventBus):
+            return
+        svc = CurrentUserService()
+        user = svc.get_user()
+        username = (user or {}).get("username") if user else None
+        locator.get(EventBus).publish_sync(
+            CurrentUserChangedEvent(
+                username=username,
+                logged_in=svc.is_logged_in(),
+                source="auto_login",
+            )
+        )
+    except Exception as e:
+        logging.debug("发布自动登录用户变更事件失败（可忽略）: %s", e)
+
+
 async def _auto_login_and_maybe_log() -> None:
     try:
         from src.services.auth.auth_remember import try_auto_login_async
@@ -74,6 +98,7 @@ async def _auto_login_and_maybe_log() -> None:
         logging.warning("Auto login failed: %s", e)
     finally:
         _mark("autologin_done")
+        _publish_auto_login_user_changed()
 
 
 def schedule_auto_login(task_registry: Any) -> None:

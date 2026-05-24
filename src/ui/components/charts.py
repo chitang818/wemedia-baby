@@ -34,6 +34,10 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QGraphicsSimpleTextItem,
     QSizePolicy,
+    QLabel,
+    QFrame,
+    QProgressBar,
+    QScrollArea,
 )
 from PySide6.QtGui import QPainter, QColor, QFont, QPen, QBrush, QLinearGradient
 from PySide6.QtCharts import (
@@ -46,9 +50,9 @@ from PySide6.QtCharts import (
     QDateTimeAxis,
     QValueAxis,
 )
-from PySide6.QtCore import Qt, QDateTime, QPointF, QTimer
+from PySide6.QtCore import Qt, QDateTime, QPointF, QTimer, QPropertyAnimation, QEasingCurve
 
-from qfluentwidgets import CardWidget, SubtitleLabel, CaptionLabel, isDarkTheme
+from qfluentwidgets import CardWidget, SubtitleLabel, CaptionLabel, BodyLabel, PushButton, isDarkTheme
 
 from src.ui.components.loading_spinner import LoadingOverlay
 from src.ui.workspace_chart_animation_prefs import (
@@ -247,63 +251,267 @@ def _get_platform_color(name: str, index: int) -> QColor:
     return c
 
 
+class _PlatformDistributionRow(QFrame):
+    """平台分布排名行，提供轻量 hover 高亮。"""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._normal_bg = "transparent"
+        self._hover_bg = "rgba(0, 120, 212, 0.07)"
+        self.setObjectName("platformDistributionRow")
+        self.setStyleSheet(
+            "QFrame#platformDistributionRow {"
+            f"background: {self._normal_bg}; border-radius: 6px;"
+            "}"
+        )
+
+    def enterEvent(self, event):
+        self.setStyleSheet(
+            "QFrame#platformDistributionRow {"
+            f"background: {self._hover_bg}; border-radius: 6px;"
+            "}"
+        )
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.setStyleSheet(
+            "QFrame#platformDistributionRow {"
+            f"background: {self._normal_bg}; border-radius: 6px;"
+            "}"
+        )
+        super().leaveEvent(event)
+
+
 class PlatformDistributionChart(ChartBase):
-    """平台分布环形图"""
+    """平台分布概览卡：总览指标 + 平台排名进度条。"""
+
+    MAX_VISIBLE_ROWS = 6
+    COLLAPSED_TOP_ROWS = 5
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__("平台分布", parent)
         self._skeleton_items: list = []
-        self.series = QPieSeries()
-        self.series.setHoleSize(0.55)
-        self.chart.addSeries(self.series)
-        _apply_chart_animation(self.chart, animate=False)
+        self._bar_animations: List[QPropertyAnimation] = []
+        self._row_widgets: List[QWidget] = []
+        self._current_data: Dict[str, int] = {}
+        self._expanded = False
 
-        self._center_text: Optional[QGraphicsSimpleTextItem] = None
-        self._center_sub: Optional[QGraphicsSimpleTextItem] = None
+        self.chart_view.hide()
 
-    def _update_center_text(self, total: int):
+        title_item = self.v_layout.takeAt(0)
+        header = QWidget(self)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
+        if title_item is not None and title_item.widget() is not None:
+            header_layout.addWidget(title_item.widget())
+        header_layout.addStretch(1)
+        self.total_label = CaptionLabel("共 0 个账号", self)
+        self.total_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        header_layout.addWidget(self.total_label)
+        self.expand_button = PushButton("展开", self)
+        self.expand_button.setFixedHeight(26)
+        self.expand_button.setMinimumWidth(58)
+        self.expand_button.clicked.connect(self._toggle_expanded)
+        header_layout.addWidget(self.expand_button)
+        self.v_layout.insertWidget(0, header)
+
         tc = _theme_colors()
+        self.summary_host = QWidget(self)
+        summary_layout = QHBoxLayout(self.summary_host)
+        summary_layout.setContentsMargins(0, 0, 0, 0)
+        summary_layout.setSpacing(8)
+        self.platform_count_label = self._make_metric_label("0 个平台", "已接入")
+        self.top_platform_label = self._make_metric_label("暂无", "最多账号")
+        summary_layout.addWidget(self.platform_count_label, 1)
+        summary_layout.addWidget(self.top_platform_label, 1)
+        self.v_layout.insertWidget(1, self.summary_host)
 
-        if self._center_text:
-            self.chart.scene().removeItem(self._center_text)
-            self._center_text = None
+        self._platform_scroll = QScrollArea(self._chart_body)
+        self._platform_scroll.setWidgetResizable(True)
+        self._platform_scroll.setFrameShape(QFrame.NoFrame)
+        self._platform_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._platform_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._platform_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
 
-        text_item = QGraphicsSimpleTextItem()
-        text_item.setText(f"{total}")
-        font = QFont()
-        font.setPixelSize(22)
-        font.setBold(True)
-        text_item.setFont(font)
-        text_item.setBrush(QBrush(QColor(tc["text_primary"])))
+        self._platform_body = QWidget(self._platform_scroll)
+        self._platform_body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._platform_body_layout = QVBoxLayout(self._platform_body)
+        self._platform_body_layout.setContentsMargins(0, 4, 0, 0)
+        self._platform_body_layout.setSpacing(4)
 
-        self.chart.scene().addItem(text_item)
-        self._center_text = text_item
-        self._reposition_center_text()
+        self.empty_label = BodyLabel("暂无账号", self._platform_body)
+        self.empty_label.setAlignment(Qt.AlignCenter)
+        self.empty_label.setStyleSheet(f"color: {tc['text_muted']}; font-size: 13px;")
 
-        sub_item = QGraphicsSimpleTextItem()
-        sub_item.setText("个账号")
-        sub_font = QFont()
-        sub_font.setPixelSize(11)
-        sub_item.setFont(sub_font)
-        sub_item.setBrush(QBrush(QColor(tc["text_muted"])))
-        self.chart.scene().addItem(sub_item)
-        self._center_sub = sub_item
-        self._reposition_center_text()
+        body_layout = self._chart_body.layout()
+        if body_layout is not None:
+            body_layout.addWidget(self._platform_scroll)
+        self._platform_scroll.setWidget(self._platform_body)
+        self.set_data({}, animate=False)
 
-    def _reposition_center_text(self):
-        plot_area = self.chart.plotArea()
-        if plot_area.isEmpty():
-            return
-        cx = plot_area.center().x()
-        cy = plot_area.center().y()
+    def _make_metric_label(self, value: str, caption: str) -> QLabel:
+        tc = _theme_colors()
+        label = QLabel(f"<b>{value}</b><br><span>{caption}</span>", self)
+        label.setTextFormat(Qt.RichText)
+        label.setAlignment(Qt.AlignCenter)
+        label.setStyleSheet(
+            "QLabel {"
+            f"background: {'rgba(255,255,255,0.06)' if isDarkTheme() else '#F6F8FA'};"
+            f"color: {tc['text_primary']};"
+            "border-radius: 6px;"
+            "padding: 6px 8px;"
+            "font-size: 12px;"
+            "}"
+            f"QLabel span {{ color: {tc['text_muted']}; font-size: 11px; }}"
+        )
+        return label
 
-        if self._center_text:
-            br = self._center_text.boundingRect()
-            self._center_text.setPos(cx - br.width() / 2, cy - br.height() / 2 - 6)
+    @staticmethod
+    def build_distribution_rows(
+        data: Dict[str, int],
+        *,
+        max_rows: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        clean_rows = [
+            (str(platform), int(count or 0))
+            for platform, count in (data or {}).items()
+            if int(count or 0) > 0
+        ]
+        clean_rows.sort(key=lambda item: (-item[1], item[0]))
 
-        if self._center_sub:
-            br = self._center_sub.boundingRect()
-            self._center_sub.setPos(cx - br.width() / 2, cy + 10)
+        total = sum(count for _, count in clean_rows)
+        rows: List[Dict[str, Any]] = []
+        for index, (platform, count) in enumerate(clean_rows):
+            percent = (count / total * 100.0) if total else 0.0
+            color = _get_platform_color(platform, index).name()
+            if platform == "其他":
+                color = "#8A8F98" if not isDarkTheme() else "#A0A7B0"
+            rows.append(
+                {
+                    "platform": platform,
+                    "count": count,
+                    "percent": percent,
+                    "color": color,
+                }
+            )
+        return rows
+
+    @classmethod
+    def build_collapsed_rows(cls, data: Dict[str, int]) -> List[Dict[str, Any]]:
+        rows = cls.build_distribution_rows(data)
+        if len(rows) <= cls.MAX_VISIBLE_ROWS:
+            return rows
+
+        visible = rows[: cls.COLLAPSED_TOP_ROWS]
+        other_rows = rows[cls.COLLAPSED_TOP_ROWS :]
+        other_count = sum(int(row["count"]) for row in other_rows)
+        total = sum(int(row["count"]) for row in rows)
+        percent = (other_count / total * 100.0) if total else 0.0
+        visible.append(
+            {
+                "platform": f"其他 {len(other_rows)} 个平台",
+                "count": other_count,
+                "percent": percent,
+                "color": "#8A8F98" if not isDarkTheme() else "#A0A7B0",
+                "is_other": True,
+                "other_platform_count": len(other_rows),
+            }
+        )
+        return visible
+
+    def _clear_rows(self) -> None:
+        for ani in self._bar_animations:
+            try:
+                ani.stop()
+            except Exception:
+                pass
+        self._bar_animations = []
+        while self._platform_body_layout.count():
+            item = self._platform_body_layout.takeAt(0)
+            widget = item.widget() if item is not None else None
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
+        self._row_widgets = []
+
+    def _update_metric_labels(self, rows: List[Dict[str, Any]], total: int) -> None:
+        platform_count = len(rows)
+        top_row = rows[0] if rows else None
+        top_text = (
+            f"{top_row['platform']} {top_row['count']}"
+            if top_row is not None
+            else "暂无"
+        )
+        self.total_label.setText(f"共 {total} 个账号")
+        self.platform_count_label.setText(f"<b>{platform_count} 个平台</b><br><span>已接入</span>")
+        self.top_platform_label.setText(f"<b>{top_text}</b><br><span>最多账号</span>")
+
+    def _create_row(self, row: Dict[str, Any], *, animate: bool) -> QWidget:
+        tc = _theme_colors()
+        platform = str(row["platform"])
+        count = int(row["count"])
+        percent = float(row["percent"])
+        color = str(row["color"])
+        value_text = (
+            f"共 {count} 个账号 · {percent:.1f}%"
+            if row.get("is_other")
+            else f"{count}  ·  {percent:.1f}%"
+        )
+
+        item = _PlatformDistributionRow(self._platform_body)
+        item.setToolTip(f"{platform}: {count} 个账号，占比 {percent:.1f}%")
+        layout = QVBoxLayout(item)
+        layout.setContentsMargins(8, 3, 8, 3)
+        layout.setSpacing(3)
+
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(6)
+
+        dot = QLabel(item)
+        dot.setFixedSize(8, 8)
+        dot.setStyleSheet(f"background: {color}; border-radius: 4px;")
+        top_row.addWidget(dot, 0, Qt.AlignVCenter)
+
+        name_label = CaptionLabel(platform, item)
+        name_label.setToolTip(platform)
+        name_label.setStyleSheet(f"color: {tc['text_primary']}; font-size: 12px;")
+        top_row.addWidget(name_label, 1)
+
+        value_label = CaptionLabel(value_text, item)
+        value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        value_label.setStyleSheet(f"color: {tc['text_secondary']}; font-size: 12px;")
+        top_row.addWidget(value_label, 0)
+        layout.addLayout(top_row)
+
+        progress = QProgressBar(item)
+        progress.setRange(0, 1000)
+        progress.setTextVisible(False)
+        progress.setFixedHeight(5)
+        progress.setValue(0 if animate else int(percent * 10))
+        track_color = "rgba(255,255,255,0.10)" if isDarkTheme() else "#E9EEF3"
+        progress.setStyleSheet(
+            "QProgressBar {"
+            f"background: {track_color}; border: none; border-radius: 3px;"
+            "}"
+            "QProgressBar::chunk {"
+            f"background: {color}; border-radius: 3px;"
+            "}"
+        )
+        layout.addWidget(progress)
+
+        if animate:
+            ani = QPropertyAnimation(progress, b"value", self)
+            ani.setDuration(360)
+            ani.setStartValue(0)
+            ani.setEndValue(int(percent * 10))
+            ani.setEasingCurve(QEasingCurve.OutCubic)
+            self._bar_animations.append(ani)
+            ani.start()
+
+        return item
 
     def _show_chart_skeleton(self) -> None:
         from src.ui.components.skeleton import SkeletonItem
@@ -312,12 +520,17 @@ class PlatformDistributionChart(ChartBase):
         host = QWidget(self._chart_body)
         host.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout = QVBoxLayout(host)
-        layout.setAlignment(Qt.AlignCenter)
-        ring = SkeletonItem(host, radius=80)
-        ring.setFixedSize(140, 140)
-        layout.addWidget(ring, alignment=Qt.AlignCenter)
-        self._skeleton_items = [ring]
-        ring.start_breathing()
+        layout.setContentsMargins(8, 14, 8, 8)
+        layout.setSpacing(12)
+        self._skeleton_items = []
+        for width in (0.86, 0.72, 0.64, 0.48):
+            row = SkeletonItem(host, radius=5)
+            row.setFixedHeight(14)
+            layout.addWidget(row)
+            layout.addStretch(max(0, int((1 - width) * 10)))
+            self._skeleton_items.append(row)
+            row.start_breathing()
+        layout.addStretch(1)
         host.setGeometry(self._chart_body.rect())
         host.show()
         host.raise_()
@@ -336,7 +549,6 @@ class PlatformDistributionChart(ChartBase):
         super().resizeEvent(event)
         if self._skeleton_host is not None:
             self._skeleton_host.setGeometry(self._chart_body.rect())
-        self._reposition_center_text()
 
     def reveal_platform_data(self, data: Dict[str, int], *, animate_entry: bool = True) -> None:
         self.reveal_with_data(
@@ -345,49 +557,38 @@ class PlatformDistributionChart(ChartBase):
         )
 
     def set_data(self, data: Dict[str, int], *, animate: bool = False):
-        _apply_chart_animation(self.chart, animate=animate)
-        if animate:
-            self.chart_view.setRenderHint(QPainter.Antialiasing, True)
-        tc = _theme_colors()
-        self.series.clear()
-        if self._center_sub:
-            self.chart.scene().removeItem(self._center_sub)
-            self._center_sub = None
+        self._current_data = dict(data or {})
+        self._render_current_data(animate=animate)
 
-        total = sum(data.values())
-        idx = 0
+    def _toggle_expanded(self) -> None:
+        self._expanded = not self._expanded
+        self._render_current_data(animate=False)
 
-        for platform, count in data.items():
-            if count > 0:
-                slice_ = self.series.append(platform, count)
-                slice_.setLabel(f"{platform}  {count}")
-                slice_.setLabelVisible(True)
-                slice_.setLabelPosition(QPieSlice.LabelOutside)
-                label_font = QFont()
-                label_font.setPixelSize(11)
-                slice_.setLabelFont(label_font)
-                slice_.setLabelColor(QColor(tc["text_secondary"]))
-                color = _get_platform_color(platform, idx)
-                slice_.setColor(color)
-                slice_.setBorderColor(color)
-                slice_.setBorderWidth(0)
-                slice_.hovered.connect(
-                    lambda state, s=slice_: self._on_slice_hovered(state, s)
-                )
-                idx += 1
+    def _render_current_data(self, *, animate: bool = False) -> None:
+        all_rows = self.build_distribution_rows(self._current_data)
+        visible_rows = all_rows if self._expanded else self.build_collapsed_rows(self._current_data)
+        total = sum(int(row["count"]) for row in all_rows)
+        self._clear_rows()
+        self._update_metric_labels(all_rows, total)
+        can_expand = len(all_rows) > self.MAX_VISIBLE_ROWS
+        self.expand_button.setVisible(can_expand)
+        self.expand_button.setText("收起" if self._expanded else "展开")
 
-        if total == 0:
-            empty = self.series.append("暂无数据", 1)
-            empty.setColor(QColor(tc["empty"]))
-            empty.setBorderColor(QColor(tc["empty"]))
-            empty.setLabelVisible(False)
+        if total <= 0:
+            hint = BodyLabel("暂无账号", self._platform_body)
+            hint.setAlignment(Qt.AlignCenter)
+            hint.setStyleSheet(f"color: {_theme_colors()['text_muted']}; font-size: 13px;")
+            self._platform_body_layout.addStretch(1)
+            self._platform_body_layout.addWidget(hint)
+            self._platform_body_layout.addStretch(1)
+            self._row_widgets.append(hint)
+            return
 
-        self._update_center_text(total)
-
-    def _on_slice_hovered(self, state: bool, slice_: QPieSlice):
-        slice_.setExploded(state)
-        if state:
-            slice_.setExplodeDistanceFactor(0.06)
+        for row in visible_rows:
+            widget = self._create_row(row, animate=animate)
+            self._platform_body_layout.addWidget(widget)
+            self._row_widgets.append(widget)
+        self._platform_body_layout.addStretch(1)
 
 
 class PublishTrendChart(ChartBase):

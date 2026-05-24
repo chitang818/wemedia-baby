@@ -16,7 +16,6 @@ from src.services.material.media_library_stats_cache import get_media_library_st
 from src.services.material.media_library_stats_service import get_media_library_stats_service
 from src.services.material.media_library_stats_types import MediaLibraryStats
 from src.services.workspace.dashboard_snapshot import DashboardSnapshot
-from src.ui.workspace_chart_animation_prefs import CHART_STAGGER_MS
 
 if TYPE_CHECKING:
     from src.ui.pages.workspace_page import WorkspacePage
@@ -25,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class WorkspaceLoadOrchestrator:
-    """按 fast / slow 分阶段加载；统计卡与媒体库并行；图表独立 loading → reveal。"""
+    """按 fast / slow 分阶段加载；统计卡与媒体库并行。"""
 
     STARTUP_DELAY_MS = 50
     DEBOUNCE_MS = 300
@@ -136,11 +135,8 @@ class WorkspaceLoadOrchestrator:
         self._page._cancel_chart_pending_reveals()
         self._page._cancel_stats_pending_reveals()
         self._page._cancel_base_page_timer("workspace_orchestrator_start")
-        self._page._cancel_base_page_timer("workspace_trend_reveal")
-        self._page._cancel_base_page_timer("workspace_announcement_create")
         self._page._cancel_base_page_timer("workspace_recent_activity_create")
-        self._page._cancel_base_page_timer("workspace_platform_chart_prewarm")
-        self._page._cancel_base_page_timer("workspace_trend_chart_prewarm")
+        self._page._cancel_base_page_timer("workspace_account_platform_prewarm")
         if self._debounce_timer is not None:
             try:
                 self._debounce_timer.stop()
@@ -159,15 +155,11 @@ class WorkspaceLoadOrchestrator:
 
     async def _run_pipeline(self, generation: int, *, include_media: bool) -> None:
         svc = self._page.dashboard_service
-        use_entry_animation = not getattr(self._page, "_chart_first_reveal_done", False)
         use_stats_animation = not getattr(self._page, "_stats_first_reveal_done", False)
 
         had_media_cache = self._apply_media_cache_first()
 
         try:
-            if use_entry_animation:
-                self._page.begin_charts_loading()
-
             need_media_loading = include_media and not had_media_cache
             if use_stats_animation:
                 self._page.begin_stats_loading(top=True, media=need_media_loading)
@@ -189,14 +181,13 @@ class WorkspaceLoadOrchestrator:
             self._accounts_cache = accounts
             self._page._apply_snapshot(
                 fast,
-                charts=False,
                 animate_entry=use_stats_animation,
             )
 
             if fast.account:
-                self._page.reveal_platform_chart(
+                self._page.reveal_account_platform(
                     fast.account,
-                    animate_entry=use_entry_animation,
+                    animate_entry=use_stats_animation,
                 )
 
             reminders = await svc.get_online_account_publish_reminders(accounts=accounts)
@@ -220,30 +211,9 @@ class WorkspaceLoadOrchestrator:
                     animate_entry=use_stats_animation,
                 )
 
-                def _reveal_trend() -> None:
-                    if generation != self._generation:
-                        return
-                    if getattr(self._page, "trend_chart", None) is not None:
-                        self._page.reveal_trend_chart(
-                            publish_stats,
-                            animate_entry=use_entry_animation,
-                        )
-
-                if use_entry_animation and CHART_STAGGER_MS > 0:
-                    self._page._schedule_base_page_timer(
-                        "workspace_trend_reveal",
-                        CHART_STAGGER_MS,
-                        _reveal_trend,
-                    )
-                else:
-                    _reveal_trend()
-            elif use_entry_animation:
-                self._page.reveal_trend_chart({}, animate_entry=False)
-
             if hasattr(self._page, "set_cached_reminders"):
                 self._page.set_cached_reminders(reminders)
 
-            self._page._chart_first_reveal_done = True
             self._page._stats_first_reveal_done = True
         except asyncio.CancelledError:
             raise
@@ -277,7 +247,6 @@ class WorkspaceLoadOrchestrator:
             self._accounts_cache = accounts
             self._page._apply_snapshot(
                 fast,
-                charts=False,
                 animate_entry=use_stats_animation,
             )
             if publish_stats:
@@ -303,19 +272,7 @@ class WorkspaceLoadOrchestrator:
             self._latest_snapshot = interim
 
             if fast.account:
-                self._page.apply_chart_cache_if_available(kind="platform")
-
-            if publish_stats:
-                def _reveal_trend() -> None:
-                    if generation != self._generation:
-                        return
-                    self._page.apply_chart_cache_if_available(kind="trend")
-
-                self._page._schedule_base_page_timer(
-                    "workspace_trend_reveal",
-                    max(CHART_STAGGER_MS, 120),
-                    _reveal_trend,
-                )
+                self._page.apply_account_platform_cache_if_available()
 
             reminders = await svc.get_online_account_publish_reminders(accounts=accounts)
             if generation != self._generation:
@@ -335,7 +292,6 @@ class WorkspaceLoadOrchestrator:
                 self._page.set_cached_reminders(reminders)
 
             self._cached_snapshot_applied = True
-            self._page._chart_first_reveal_done = True
             self._page._stats_first_reveal_done = True
 
             get_async_task_registry().create_task(

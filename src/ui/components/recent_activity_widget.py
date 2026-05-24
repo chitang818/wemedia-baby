@@ -1,12 +1,12 @@
 """
 最近活动组件
 文件路径：src/ui/components/recent_activity_widget.py
-功能：工作台「最近发布」卡片，展示在线账号的已发布最晚时间与发布提醒
+功能：工作台「发布统计」卡片，展示在线账号的已发布最晚时间与到期提醒
 """
 
 from typing import List, Dict, Any, Optional
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame, QSizePolicy
+    QWidget, QVBoxLayout, QHBoxLayout, QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal, QEvent, QTimer
 from PySide6.QtGui import QCursor
@@ -16,12 +16,16 @@ from qfluentwidgets import (
     FluentIcon, TransparentToolButton, isDarkTheme
 )
 
+from src.ui.components.workspace_scroll_area import (
+    create_workspace_scroll_area,
+    set_workspace_scroll_content,
+)
 from src.ui.utils.fluent_tooltips import ToolTipPosition, install_fluent_tool_tip
 
 _OVERDUE_LIGHT = "#E81123"
 _OVERDUE_DARK = "#FF6B6B"
 _COMPACT_NAME_MAX_LEN = 9
-# 卡片宽度低于此值时使用紧凑两列；最大化主窗口时始终展开三列
+# 卡片宽度低于此值时缩短账号名；三列（含已发布最晚时间）始终展示
 _COMPACT_LAYOUT_MIN_WIDTH = 300
 
 
@@ -59,7 +63,7 @@ class _ReminderHeaderRow(QWidget):
         layout.setSpacing(8)
 
         self._time_label: Optional[CaptionLabel] = None
-        for text, stretch in (("账号", 4), ("已发布最晚时间", 5), ("发布提醒", 3)):
+        for text, stretch in (("账号", 4), ("已发布最晚时间", 5), ("到期提醒", 3)):
             lbl = CaptionLabel(text, self)
             lbl.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: 600;")
             if text == "账号":
@@ -169,7 +173,7 @@ class RecentActivityWidget(CardWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._names_hidden = False
-        self._hide_time_column: Optional[bool] = None
+        self._force_name_compact = False
         self._name_compact: Optional[bool] = None
         self._reminder_rows: List[AccountPublishReminderRow] = []
         self._header_row: Optional[_ReminderHeaderRow] = None
@@ -186,13 +190,13 @@ class RecentActivityWidget(CardWidget):
         layout.setSpacing(0)
 
         header = QHBoxLayout()
-        self.title_label = SubtitleLabel("最近发布", self)
+        self.title_label = SubtitleLabel("发布统计", self)
         dark = isDarkTheme()
         title_color = "#FFFFFF" if dark else "#1A1A1A"
-        self.title_label.setStyleSheet(f"font-weight: 600; font-size: 16px; color: {title_color};")
+        self.title_label.setStyleSheet(f"font-weight: 600; font-size: 15px; color: {title_color};")
         _set_fluent_tooltip(
             self.title_label,
-            "展示已登录账号的最近成功发布时间与发布提醒，按紧急程度排序",
+            "展示已登录账号的已发布最晚时间与到期提醒（今天 / 剩余天数 / 已逾期等），按紧急程度排序",
         )
         header.addWidget(self.title_label)
         header.addStretch()
@@ -205,18 +209,13 @@ class RecentActivityWidget(CardWidget):
 
         layout.addLayout(header)
 
-        self.scroll_area = QScrollArea(self)
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setFrameShape(QFrame.NoFrame)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.scroll_area = create_workspace_scroll_area(self)
 
         self.list_container = QWidget(self)
-        self.list_container.setStyleSheet("background: transparent;")
         self.list_layout = QVBoxLayout(self.list_container)
         self.list_layout.setContentsMargins(0, 4, 0, 0)
         self.list_layout.setSpacing(2)
-        self.scroll_area.setWidget(self.list_container)
+        set_workspace_scroll_content(self.scroll_area, self.list_container)
 
         layout.addWidget(self.scroll_area, 1)
 
@@ -239,8 +238,16 @@ class RecentActivityWidget(CardWidget):
                 return True
         return False
 
-    def _should_use_compact_layout(self) -> bool:
-        """还原且卡片较窄时用紧凑布局；最大化主窗口时始终三列+完整昵称。"""
+    def set_narrow_column(self, narrow: bool) -> None:
+        """工作台半宽并列布局：缩短账号名显示，「已发布最晚时间」列始终保留。"""
+        self._force_name_compact = bool(narrow)
+        self._name_compact = None
+        self._sync_compact_layout()
+
+    def _should_use_name_compact(self) -> bool:
+        """半宽或卡片较窄时缩短账号名；最大化主窗口下显示完整昵称。"""
+        if self._force_name_compact:
+            return True
         if self._is_main_window_maximized():
             return False
         if self.width() >= _COMPACT_LAYOUT_MIN_WIDTH:
@@ -267,17 +274,15 @@ class RecentActivityWidget(CardWidget):
         super().closeEvent(event)
 
     def _sync_compact_layout(self) -> None:
-        compact = self._should_use_compact_layout()
-        if compact == self._hide_time_column and compact == self._name_compact:
+        name_compact = self._should_use_name_compact()
+        if name_compact == self._name_compact:
             return
-        self._hide_time_column = compact
-        self._name_compact = compact
-        show_time = not compact
+        self._name_compact = name_compact
         if self._header_row is not None:
-            self._header_row.set_time_column_visible(show_time)
+            self._header_row.set_time_column_visible(True)
         for row in self._reminder_rows:
-            row.set_time_column_visible(show_time)
-            row.set_name_compact(compact)
+            row.set_time_column_visible(True)
+            row.set_name_compact(name_compact)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -339,6 +344,5 @@ class RecentActivityWidget(CardWidget):
             self.list_layout.addWidget(item)
 
         self.list_layout.addStretch()
-        self._hide_time_column = None
         self._name_compact = None
         self._sync_compact_layout()

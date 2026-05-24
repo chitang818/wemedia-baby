@@ -1571,15 +1571,23 @@ class MainWindow(FluentWindow):
         except Exception as e:
             logger.warning(f"禁用导航指示器失败: {e}")
 
-    def navigate_to(self, page_name: str):
+    def navigate_to(self, page_name: str, *, open_add_account: bool = False):
         """导航到指定页面 (支持 Lazy Loading)
         
         Args:
             page_name: 页面名称 (routeKey)
+            open_add_account: 为 True 时进入账号管理页后自动打开添加平台弹窗
         """
         try:
             # 1. 尝试获取或创建页面
             page = self._get_or_create_page(page_name)
+
+            if (
+                open_add_account
+                and page
+                and hasattr(page, "request_open_add_account_dialog")
+            ):
+                page.request_open_add_account_dialog()
             
             if page:
                 self.switchTo(page)

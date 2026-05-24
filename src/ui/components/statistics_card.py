@@ -58,19 +58,22 @@ class StatisticsCard(CardWidget):
         desc: str,
         icon: Optional[FluentIconBase] = None,
         parent: Optional[QWidget] = None,
+        *,
+        compact: bool = False,
     ):
         super().__init__(parent)
         self.icon_enum = icon
+        self._compact = compact
         self._value_color = "#0078D4"
-        self._value_font_px_default = 28
-        self._value_font_px_percent = 24
+        self._value_font_px_default = 26 if compact else 28
+        self._value_font_px_percent = 22 if compact else 24
         self._load_state = StatCardLoadState.READY
         self._loading_shown_at = 0.0
         self._reveal_timer: Optional[QTimer] = None
         self._value_skeleton: Optional[SkeletonItem] = None
         self._value_fade_ani: Optional[QVariantAnimation] = None
 
-        self.setMinimumHeight(90)
+        self.setMinimumHeight(78 if compact else 90)
         self.setMinimumWidth(160)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
@@ -83,12 +86,17 @@ class StatisticsCard(CardWidget):
 
     def _init_ui(self, title: str, value: str, desc: str):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 10, 18, 10)
-        layout.setSpacing(12)
+        if self._compact:
+            layout.setContentsMargins(14, 8, 16, 8)
+            layout.setSpacing(10)
+        else:
+            layout.setContentsMargins(16, 10, 18, 10)
+            layout.setSpacing(12)
 
         if self.icon_enum:
             self.icon_widget = IconWidget(self.icon_enum, self)
-            self.icon_widget.setFixedSize(22, 22)
+            icon_size = 20 if self._compact else 22
+            self.icon_widget.setFixedSize(icon_size, icon_size)
             layout.addWidget(self.icon_widget, 0, Qt.AlignVCenter)
 
         text_container = QWidget()
@@ -268,7 +276,7 @@ class StatisticsCard(CardWidget):
     def _show_value_skeleton(self) -> None:
         self._hide_value_skeleton()
         sk = SkeletonItem(self._value_host, radius=6)
-        sk.setFixedSize(56, 28)
+        sk.setFixedSize(52 if self._compact else 56, 24 if self._compact else 28)
         sk.start_breathing()
         self._value_skeleton = sk
         host_layout = self._value_host.layout()

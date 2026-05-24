@@ -154,3 +154,12 @@ class PublishQueueExecutingCountChangedEvent(DomainEvent):
     executing_count: int = 0
 
 
+@dataclass(kw_only=True)
+class CurrentUserChangedEvent(DomainEvent):
+    """软件账号登录态变更（登录、退出、自动登录完成等）"""
+
+    username: Optional[str] = None
+    logged_in: bool = False
+    source: str = ""
+
+
