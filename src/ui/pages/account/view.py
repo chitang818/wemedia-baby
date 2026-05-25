@@ -121,13 +121,19 @@ class AccountPage(BasePage):
         stats_layout.setContentsMargins(0, 0, 0, 0)
         stats_layout.setSpacing(16)
 
-        self.stats_total = StatisticsCard("账号总数", "0", "已绑定账号", FluentIcon.PEOPLE, self)
+        self.stats_total = StatisticsCard(
+            "账号总数", "0", "已绑定账号", FluentIcon.PEOPLE, self, compact=True
+        )
         self.stats_total.setMinimumWidth(200)
 
-        self.stats_online = StatisticsCard("在线账号", "0", "状态正常", FluentIcon.ACCEPT, self)
+        self.stats_online = StatisticsCard(
+            "在线账号", "0", "状态正常", FluentIcon.ACCEPT, self, compact=True
+        )
         self.stats_online.setMinimumWidth(200)
 
-        self.stats_offline = StatisticsCard("离线账号", "0", "需要重新登录", FluentIcon.INFO, self)
+        self.stats_offline = StatisticsCard(
+            "离线账号", "0", "需要重新登录", FluentIcon.INFO, self, compact=True
+        )
         self.stats_offline.setMinimumWidth(200)
 
         stats_layout.addWidget(self.stats_total)

@@ -52,6 +52,8 @@ def create_and_show_main_window():
     _mark("create_window_done")
 
     _mark("window_show")
+    if hasattr(window, "ensure_navigation_expanded"):
+        window.ensure_navigation_expanded()
     window.show()
     window.apply_startup_tray_behavior()
 

@@ -436,8 +436,6 @@ class MainWindow(FluentWindow):
             self._maximized_set = True
             logger.debug("窗口显示完成")
         # 浏览器页已从导航移除，不再延迟初始化
-        # 强制展开导航栏 (解决默认收起问题)
-        self._schedule_single_shot("startup.force_nav_expand", 50, self._force_nav_expand)
         # 强制更新：打开软件立即检测，有新版本则弹窗并退出，旧版本不可用
         # 52POJIE 特别版不检测软件更新
         if not FeatureFlags.is_52pojie() and not getattr(self, "_update_check_startup_done", False):
@@ -565,29 +563,60 @@ class MainWindow(FluentWindow):
             logger.warning("显示强制更新对话框失败: %s", e)
             QApplication.quit()
     
-    def _force_nav_expand(self):
-        """强制展开导航栏 (安全调用)"""
+    def _navigation_expand_width(self) -> int:
+        nav = getattr(self, "navigationInterface", None)
+        if nav is None:
+            return 200
+        panel = getattr(nav, "panel", None)
+        if panel is not None and getattr(panel, "expandWidth", None):
+            return int(panel.expandWidth)
+        return 200
+
+    def _sync_navigation_expanded_width(self) -> None:
+        """expand() 在窗口 show 前可能只改 panel 模式，需同步 NavigationInterface 占位宽度。"""
         try:
-            if not hasattr(self, 'navigationInterface'):
+            nav = getattr(self, "navigationInterface", None)
+            if nav is None:
                 return
-                
-            nav = self.navigationInterface
-            
-            # 方法1: 使用 expand() (推荐)
-            if hasattr(nav, 'expand'):
-                # useAni=False 禁用动画，立即展开
-                nav.expand(useAni=False)
-                logger.debug("已通过 expand() 强制展开导航栏")
-                return
-            
-            # 方法2: 使用 setDisplayMode
-            if hasattr(nav, 'setDisplayMode'):
-                from qfluentwidgets import NavigationDisplayMode
-                nav.setDisplayMode(NavigationDisplayMode.EXPAND)
-                logger.debug("已通过 setDisplayMode() 强制展开导航栏")
-                
+            width = self._navigation_expand_width()
+            nav.setFixedWidth(width)
+            panel = getattr(nav, "panel", None)
+            if panel is not None:
+                panel.resize(width, panel.height())
         except Exception as e:
-            logger.warning(f"强制展开导航栏失败: {e}")
+            logger.debug("同步侧栏展开宽度失败（可忽略）: %s", e)
+
+    def is_navigation_expanded(self) -> bool:
+        """侧栏是否已处于展开态（以实际占位宽度为准）。"""
+        try:
+            nav = getattr(self, "navigationInterface", None)
+            if nav is None:
+                return False
+            return int(nav.width()) >= max(160, self._navigation_expand_width() - 24)
+        except Exception:
+            return False
+
+    def ensure_navigation_expanded(self) -> bool:
+        """启动时立即展开侧栏（无动画），避免首帧从收起再展开的闪烁。"""
+        try:
+            nav = getattr(self, "navigationInterface", None)
+            if nav is None:
+                return False
+            if self.is_navigation_expanded():
+                return True
+            if hasattr(nav, "expand"):
+                nav.expand(useAni=False)
+                self._sync_navigation_expanded_width()
+                logger.debug("侧栏已在启动时展开（无动画）")
+                return self.is_navigation_expanded()
+            return False
+        except Exception as e:
+            logger.warning("启动时展开侧栏失败: %s", e)
+            return False
+
+    def _force_nav_expand(self) -> None:
+        """兼容旧调用：委托 ensure_navigation_expanded。"""
+        self.ensure_navigation_expanded()
 
     def _setup_tray_icon(self):
         """创建系统托盘图标和右键菜单"""
@@ -1169,6 +1198,7 @@ class MainWindow(FluentWindow):
         self._setup_accordion_behavior()  # 设置手风琴效果
         self._disable_all_indicators()  # 确保所有导航项指示器被禁用
         self._optimize_page_transitions()  # 优化页面切换动画
+        self.ensure_navigation_expanded()
         logger.debug("导航栏设置完成 (Config Driven)")
 
     def _remove_indicators(self):
@@ -1437,26 +1467,19 @@ class MainWindow(FluentWindow):
             logger.warning(f"平滑导航失败: {e}")
     
     def _setup_nav_width(self):
-        """设置导航栏宽度"""
+        """设置导航栏宽度与默认展开态。"""
         try:
-            if hasattr(self, 'navigationInterface'):
-                nav = self.navigationInterface
-                # 设置展开宽度
-                if hasattr(nav, 'setExpandWidth'):
-                    nav.setExpandWidth(200)
-                    logger.debug("导航栏展开宽度已设置为 200px")
-                # 设置默认展开模式
-                if hasattr(nav, 'displayMode'):
-                    nav.setDisplayMode(NavigationDisplayMode.EXPAND)
-                    logger.debug("导航栏已设置为默认展开模式")
-                
-                # 连接显示模式变更信号
-                if hasattr(nav, 'displayModeChanged'):
-                    nav.displayModeChanged.connect(self._on_display_mode_changed)
-                    logger.debug("已连接导航栏模式变更信号")
-                    
+            if not hasattr(self, "navigationInterface"):
+                return
+            nav = self.navigationInterface
+            if hasattr(nav, "setExpandWidth"):
+                nav.setExpandWidth(200)
+                logger.debug("导航栏展开宽度已设置为 200px")
+            if hasattr(nav, "displayModeChanged"):
+                nav.displayModeChanged.connect(self._on_display_mode_changed)
+                logger.debug("已连接导航栏模式变更信号")
         except Exception as e:
-            logger.warning(f"设置导航栏宽度及模式失败: {e}")
+            logger.warning("设置导航栏宽度及模式失败: %s", e)
 
     def _on_display_mode_changed(self, mode):
         """处理导航栏显示模式变更：收起时折叠所有手风琴菜单。"""

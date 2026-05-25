@@ -209,11 +209,19 @@ class RecentActivityWidget(CardWidget):
 
         layout.addLayout(header)
 
+        # 表头固定在滚动区外，滚动时仅数据行移动
+        self._header_slot = QWidget(self)
+        self._header_slot_layout = QVBoxLayout(self._header_slot)
+        self._header_slot_layout.setContentsMargins(0, 0, 0, 0)
+        self._header_slot_layout.setSpacing(0)
+        self._header_slot.hide()
+        layout.addWidget(self._header_slot)
+
         self.scroll_area = create_workspace_scroll_area(self)
 
         self.list_container = QWidget(self)
         self.list_layout = QVBoxLayout(self.list_container)
-        self.list_layout.setContentsMargins(0, 4, 0, 0)
+        self.list_layout.setContentsMargins(0, 0, 0, 0)
         self.list_layout.setSpacing(2)
         set_workspace_scroll_content(self.scroll_area, self.list_container)
 
@@ -246,10 +254,10 @@ class RecentActivityWidget(CardWidget):
 
     def _should_use_name_compact(self) -> bool:
         """半宽或卡片较窄时缩短账号名；最大化主窗口下显示完整昵称。"""
-        if self._force_name_compact:
-            return True
         if self._is_main_window_maximized():
             return False
+        if self._force_name_compact:
+            return True
         if self.width() >= _COMPACT_LAYOUT_MIN_WIDTH:
             return False
         return True
@@ -303,9 +311,17 @@ class RecentActivityWidget(CardWidget):
         self.list_layout.addWidget(empty_label)
         self.list_layout.addStretch()
 
+    def _clear_column_header(self) -> None:
+        self._header_row = None
+        while self._header_slot_layout.count():
+            child = self._header_slot_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
     def _clear_items(self):
         self._reminder_rows = []
-        self._header_row = None
+        self._clear_column_header()
+        self._header_slot.hide()
         while self.list_layout.count():
             child = self.list_layout.takeAt(0)
             if child.widget():
@@ -333,8 +349,9 @@ class RecentActivityWidget(CardWidget):
             self._show_empty()
             return
 
-        self._header_row = _ReminderHeaderRow(self.list_container)
-        self.list_layout.addWidget(self._header_row)
+        self._header_row = _ReminderHeaderRow(self._header_slot)
+        self._header_slot_layout.addWidget(self._header_row)
+        self._header_slot.show()
 
         for row in rows:
             item = AccountPublishReminderRow(row, self.list_container)

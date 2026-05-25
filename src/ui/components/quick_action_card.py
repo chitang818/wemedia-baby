@@ -38,11 +38,11 @@ class QuickActionCard(CardWidget):
         self._compact = compact
         self.setCursor(QCursor(Qt.PointingHandCursor))
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setFixedHeight(64 if compact else 84)
+        self.setFixedHeight(68 if compact else 84)
 
         layout = QVBoxLayout(self)
         if compact:
-            layout.setContentsMargins(8, 6, 8, 6)
+            layout.setContentsMargins(10, 7, 10, 7)
             layout.setSpacing(4 if not desc else 4)
         else:
             layout.setContentsMargins(10, 8, 10, 8)
@@ -50,12 +50,14 @@ class QuickActionCard(CardWidget):
         layout.setAlignment(Qt.AlignCenter)
 
         self.icon_widget = IconWidget(icon, self)
-        icon_px = 24 if compact else 28
+        icon_px = 25 if compact else 28
         self.icon_widget.setFixedSize(icon_px, icon_px)
         layout.addWidget(self.icon_widget, 0, Qt.AlignCenter)
 
         self.title_label = BodyLabel(title, self)
         self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setWordWrap(False)
+        self.title_label.setToolTip(title)
         layout.addWidget(self.title_label, 0, Qt.AlignCenter)
 
         self.desc_label = None
@@ -79,10 +81,23 @@ class QuickActionCard(CardWidget):
         else:
             title_size = "14px" if self.desc_label else "15px"
         title_color = "#E0E0E0" if dark else "#1A1A1A"
-        self.title_label.setStyleSheet(f"font-size: {title_size}; color: {title_color};")
+        self.title_label.setStyleSheet(f"font-size: {title_size}; font-weight: 500; color: {title_color};")
         if self.desc_label:
             desc_color = "#AAAAAA" if dark else "#757575"
             self.desc_label.setStyleSheet(f"color: {desc_color};")
+
+        bg = "rgba(255, 255, 255, 0.04)" if dark else "#FFFFFF"
+        border = "rgba(255, 255, 255, 0.08)" if dark else "#EBEEF2"
+        self.setStyleSheet(
+            "CardWidget {"
+            f"background: {bg};"
+            f"border: 1px solid {border};"
+            "border-radius: 8px;"
+            "}"
+            "CardWidget:hover {"
+            f"border: 1px solid {'rgba(76, 194, 255, 0.38)' if dark else 'rgba(0, 120, 212, 0.28)'};"
+            "}"
+        )
 
     def enterEvent(self, event: QEnterEvent) -> None:
         super().enterEvent(event)

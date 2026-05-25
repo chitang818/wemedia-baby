@@ -34,10 +34,11 @@ class CollapsibleAnnouncementPanel(CardWidget):
         self._collapsed = collapsed
 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self._apply_panel_style()
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(14, 2, 14, 10)
-        root.setSpacing(6)
+        root.setContentsMargins(14, 1, 14, 8)
+        root.setSpacing(5)
 
         header = _AnnouncementHeaderBar(self)
         header.setFixedHeight(self.HEADER_HEIGHT)
@@ -68,6 +69,18 @@ class CollapsibleAnnouncementPanel(CardWidget):
         root.addWidget(self._content)
 
         self._apply_collapsed_state()
+
+    def _apply_panel_style(self) -> None:
+        dark = isDarkTheme()
+        bg = "rgba(255, 255, 255, 0.04)" if dark else "#FFFFFF"
+        border = "rgba(255, 255, 255, 0.08)" if dark else "#EBEEF2"
+        self.setStyleSheet(
+            "CardWidget {"
+            f"background: {bg};"
+            f"border: 1px solid {border};"
+            "border-radius: 8px;"
+            "}"
+        )
 
     @property
     def is_collapsed(self) -> bool:

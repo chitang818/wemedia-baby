@@ -65,8 +65,8 @@ class StatisticsCard(CardWidget):
         self.icon_enum = icon
         self._compact = compact
         self._value_color = "#0078D4"
-        self._value_font_px_default = 26 if compact else 28
-        self._value_font_px_percent = 22 if compact else 24
+        self._value_font_px_default = 24 if compact else 28
+        self._value_font_px_percent = 21 if compact else 24
         self._load_state = StatCardLoadState.READY
         self._loading_shown_at = 0.0
         self._reveal_timer: Optional[QTimer] = None
@@ -87,8 +87,8 @@ class StatisticsCard(CardWidget):
     def _init_ui(self, title: str, value: str, desc: str):
         layout = QHBoxLayout(self)
         if self._compact:
-            layout.setContentsMargins(14, 8, 16, 8)
-            layout.setSpacing(10)
+            layout.setContentsMargins(14, 8, 14, 8)
+            layout.setSpacing(9)
         else:
             layout.setContentsMargins(16, 10, 18, 10)
             layout.setSpacing(12)
@@ -137,7 +137,7 @@ class StatisticsCard(CardWidget):
 
         title_color = "#E0E0E0" if dark else "#333333"
         desc_color = "#AAAAAA" if dark else "#757575"
-        self.title_label.setStyleSheet(f"color: {title_color}; font-weight: 600; font-size: 14px;")
+        self.title_label.setStyleSheet(f"color: {title_color}; font-weight: 600; font-size: 13px;")
         self.desc_label.setStyleSheet(f"color: {desc_color}; font-size: 12px;")
 
         value_color = "#4CC2FF" if dark else "#0078D4"
@@ -158,7 +158,16 @@ class StatisticsCard(CardWidget):
         self._apply_single_line_label_heights()
 
         border_color = BORDER_COLORS.get(self.icon_enum, "#0078D4")
-        self.setStyleSheet(f"CardWidget {{ border-left: 4px solid {border_color}; }}")
+        card_bg = "rgba(255, 255, 255, 0.045)" if dark else "#FFFFFF"
+        border = "rgba(255, 255, 255, 0.08)" if dark else "#EBEEF2"
+        self.setStyleSheet(
+            "CardWidget {"
+            f"background: {card_bg};"
+            f"border: 1px solid {border};"
+            f"border-left: 4px solid {border_color};"
+            "border-radius: 8px;"
+            "}"
+        )
 
     def _apply_single_line_label_heights(self) -> None:
         try:
@@ -185,7 +194,7 @@ class StatisticsCard(CardWidget):
     def _sync_value_width(self) -> None:
         try:
             text_width = self.value_label.fontMetrics().horizontalAdvance(str(self.value_label.text() or "0"))
-            min_width = max(44, text_width + 8)
+            min_width = max(42, text_width + 6)
             self.value_label.setMinimumWidth(min_width)
             self._value_host.setMinimumWidth(min_width)
             self.value_label.updateGeometry()

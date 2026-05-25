@@ -50,6 +50,11 @@ class WorkspacePage(BasePage):
     _enable_show_fade = False
     _quick_action_card_min_width = 96
     _quick_action_spacing = 10
+    # 六卡单行：6×最小宽 + 5×间距
+    _quick_action_single_row_min_width = 6 * _quick_action_card_min_width + 5 * _quick_action_spacing
+    # 顶部 KPI：四卡单行所需宽度（4×160 + 间距），与下方图表堆叠断点分开
+    _stats_compact_width = 520
+    _compact_width = 760
 
     refreshRequested = Signal()
     refreshWelcomeRequested = Signal()
@@ -71,6 +76,9 @@ class WorkspacePage(BasePage):
         self._cached_reminders = []
         self._hold_media_stats_updates = False
         self._held_media_stats = None
+        self._last_stats_width = 0
+        self._quick_action_grid_columns = 6
+        self._overview_stacked = False
 
         self.refreshRequested.connect(self._on_refresh_requested)
         self.refreshWelcomeRequested.connect(self.refresh_welcome_display)
@@ -240,12 +248,15 @@ class WorkspacePage(BasePage):
         from ..components.collapsible_announcement_panel import CollapsibleAnnouncementPanel
 
         scroll_area = create_workspace_scroll_area(self)
+        self._workspace_scroll_area = scroll_area
 
         scroll_content = QWidget()
         scroll_content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self._scroll_content = scroll_content
         scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setContentsMargins(12, 12, 12, 12)
-        scroll_layout.setSpacing(10)
+        # 外边距由 BasePage.main_layout(24,16,24,16) 统一控制，与账号库等页面一致
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(12)
         scroll_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         date_str = ""
@@ -254,20 +265,33 @@ class WorkspacePage(BasePage):
         except Exception:
             pass
 
-        self.welcome_line = BodyLabel("", self)
+        self._header_card = CardWidget(self)
+        self._header_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._header_card.setFixedHeight(50)
+        header_layout = QHBoxLayout(self._header_card)
+        header_layout.setContentsMargins(14, 8, 14, 8)
+        header_layout.setSpacing(10)
+
+        self.welcome_line = BodyLabel("", self._header_card)
         self.welcome_line.setObjectName("workspaceWelcomeLine")
         self.welcome_line.setWordWrap(True)
+        header_layout.addWidget(self.welcome_line, 1, Qt.AlignmentFlag.AlignVCenter)
+
+        self._welcome_meta_label = CaptionLabel("", self._header_card)
+        self._welcome_meta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        header_layout.addWidget(self._welcome_meta_label, 0, Qt.AlignmentFlag.AlignVCenter)
+
         self._apply_welcome_line_style()
         self._update_welcome_text(date_str)
-        scroll_layout.addWidget(self.welcome_line)
+        scroll_layout.addWidget(self._header_card)
 
         self._stats_cards = []
         self._stats_grid_columns = 4
         self._stats_container = QWidget(self)
         self._stats_grid = QGridLayout(self._stats_container)
         self._stats_grid.setContentsMargins(0, 0, 0, 0)
-        self._stats_grid.setHorizontalSpacing(12)
-        self._stats_grid.setVerticalSpacing(12)
+        self._stats_grid.setHorizontalSpacing(10)
+        self._stats_grid.setVerticalSpacing(10)
 
         self.publish_card = StatisticsCard("今日发布", "—", "—", FluentIcon.SEND, self, compact=True)
         self.task_card = StatisticsCard("待执行任务", "—", "—", FluentIcon.FOLDER, self, compact=True)
@@ -288,9 +312,6 @@ class WorkspacePage(BasePage):
         scroll_layout.addWidget(self._announcement_panel)
         self._announcement_created = True
         self.announcement = self._announcement_panel._content
-
-        mid_row = QHBoxLayout()
-        mid_row.setSpacing(12)
 
         cards_container = QWidget(self)
         cards_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -322,8 +343,8 @@ class WorkspacePage(BasePage):
         )
         for index, card in enumerate(quick_action_cards):
             self._add_quick_action_card(quick_action_layout, card, index)
-        mid_row.addWidget(cards_container, 1)
-        scroll_layout.addLayout(mid_row)
+        self._quick_action_cards = quick_action_cards
+        scroll_layout.addWidget(cards_container)
 
         self.account_platform_card = AccountPlatformOverviewCard(self, half_column=True)
         self.account_platform_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -333,10 +354,11 @@ class WorkspacePage(BasePage):
         self._overview_pair_host = QWidget(self)
         self._overview_pair_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._overview_pair_host.setFixedHeight(OVERVIEW_PAIR_HEIGHT)
-        overview_pair_row = QHBoxLayout(self._overview_pair_host)
-        overview_pair_row.setContentsMargins(0, 0, 0, 0)
-        overview_pair_row.setSpacing(12)
-        self._overview_pair_layout = overview_pair_row
+        overview_pair_layout = QGridLayout(self._overview_pair_host)
+        overview_pair_layout.setContentsMargins(0, 0, 0, 0)
+        overview_pair_layout.setHorizontalSpacing(12)
+        overview_pair_layout.setVerticalSpacing(10)
+        self._overview_pair_layout = overview_pair_layout
 
         self._recent_activity_placeholder = self._make_panel_placeholder("发布统计")
         self._recent_activity_placeholder.setMinimumHeight(OVERVIEW_PAIR_HEIGHT)
@@ -345,12 +367,15 @@ class WorkspacePage(BasePage):
             QSizePolicy.Expanding, QSizePolicy.Fixed
         )
 
-        overview_pair_row.addWidget(self.account_platform_card, 1)
-        overview_pair_row.addWidget(self._recent_activity_placeholder, 1)
+        overview_pair_layout.addWidget(self.account_platform_card, 0, 0)
+        overview_pair_layout.addWidget(self._recent_activity_placeholder, 0, 1)
+        overview_pair_layout.setColumnStretch(0, 1)
+        overview_pair_layout.setColumnStretch(1, 1)
         scroll_layout.addWidget(self._overview_pair_host)
 
         set_workspace_scroll_content(scroll_area, scroll_content)
         self.content_layout.addWidget(scroll_area)
+        self._sync_responsive_layout()
 
     def _make_panel_placeholder(self, title: str) -> CardWidget:
         card = CardWidget(self)
@@ -404,14 +429,15 @@ class WorkspacePage(BasePage):
                 self.recent_activity.setMaximumHeight(OVERVIEW_PAIR_HEIGHT)
                 if hasattr(self.recent_activity, "set_narrow_column"):
                     self.recent_activity.set_narrow_column(True)
-                if parent_layout is not None:
-                    parent_layout.addWidget(self.recent_activity, 1)
+                if parent_layout is not None and not isinstance(parent_layout, QGridLayout):
+                    parent_layout.addWidget(self.recent_activity)
 
             self._recent_activity_created = True
             self._secondary_widgets_created = self._recent_activity_created
 
             rows = self._cached_reminders if reminders is None else reminders
             self.set_cached_reminders(rows or [])
+            self._sync_overview_pair_layout()
             self._sync_recent_activity_layout()
         except Exception as e:
             logger.debug("工作台最近发布创建失败（可忽略）: %s", e)
@@ -434,31 +460,98 @@ class WorkspacePage(BasePage):
         )
 
     @classmethod
-    def _create_quick_action_layout(cls, container: QWidget) -> QHBoxLayout:
-        """六张快捷卡片单行等分，随窗口宽度同比例拉伸。"""
-        layout = QHBoxLayout(container)
+    def _create_quick_action_layout(cls, container: QWidget) -> QGridLayout:
+        """六张快捷卡片响应式网格：内容区够宽时单行六列，极窄时降级为多行。"""
+        layout = QGridLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(cls._quick_action_spacing)
-        layout.setProperty("workspaceQuickActionLayoutKind", "equal")
+        layout.setHorizontalSpacing(cls._quick_action_spacing)
+        layout.setVerticalSpacing(cls._quick_action_spacing)
+        layout.setProperty("workspaceQuickActionLayoutKind", "responsive-grid")
         return layout
 
     @classmethod
-    def _add_quick_action_card(cls, layout: QHBoxLayout, card: QWidget, index: int) -> None:
-        del index  # 保留参数以兼容调用方
+    def _add_quick_action_card(cls, layout: QGridLayout, card: QWidget, index: int) -> None:
         card.setMinimumWidth(cls._quick_action_card_min_width)
         card.setMaximumWidth(16777215)
         card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        layout.addWidget(card, 1)
+        layout.addWidget(card, 0, index)
 
-    def _relayout_stats_cards(self) -> None:
+    @classmethod
+    def _stats_columns_for_width(cls, width: int) -> int:
+        if width < cls._stats_compact_width:
+            return 2
+        return 4
+
+    def _content_available_width(self) -> int:
+        candidates: list[int] = []
+        try:
+            candidates.append(int(self.width()))
+        except Exception:
+            pass
+        scroll = getattr(self, "_workspace_scroll_area", None)
+        if scroll is not None:
+            try:
+                vp = scroll.viewport()
+                if vp is not None:
+                    candidates.append(int(vp.width()))
+            except Exception:
+                pass
+        container = getattr(self, "_stats_container", None)
+        if container is not None:
+            try:
+                w = int(container.width())
+                if w > 0:
+                    candidates.append(w)
+            except Exception:
+                pass
+        return max(candidates) if candidates else 0
+
+    def _quick_action_columns_for_width(self, width: int) -> int:
+        if width >= self._quick_action_single_row_min_width:
+            return 6
+        if width < 420:
+            return 2
+        return 3
+
+    def _relayout_quick_actions(self, width: Optional[int] = None) -> None:
+        layout = getattr(self, "_quick_action_layout", None)
+        cards = getattr(self, "_quick_action_cards", None) or ()
+        if layout is None or not cards:
+            return
+        content_width = self._content_available_width() if width is None else width
+        columns = self._quick_action_columns_for_width(content_width)
+        if self._quick_action_grid_columns == columns and layout.count() == len(cards):
+            return
+        self._quick_action_grid_columns = columns
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget() if item is not None else None
+            if widget is not None:
+                widget.setParent(self._quick_actions_container)
+        for i, card in enumerate(cards):
+            layout.addWidget(card, i // columns, i % columns)
+        for c in range(6):
+            layout.setColumnStretch(c, 1 if c < columns else 0)
+        for r in range(3):
+            layout.setRowStretch(r, 0)
+
+    def _relayout_stats_cards(self, *, force: bool = False) -> None:
         if not hasattr(self, "_stats_grid") or self._stats_grid is None:
             return
         cards = getattr(self, "_stats_cards", None) or []
         if not cards:
             return
-        columns = 4
-        if getattr(self, "_stats_grid_columns", None) == columns and self._stats_grid.count() > 0:
+        width = self._content_available_width()
+        columns = self._stats_columns_for_width(width)
+        last_width = getattr(self, "_last_stats_width", 0)
+        if (
+            not force
+            and getattr(self, "_stats_grid_columns", None) == columns
+            and self._stats_grid.count() > 0
+            and abs(width - last_width) < 8
+        ):
             return
+        self._last_stats_width = width
         self._stats_grid_columns = columns
         while self._stats_grid.count():
             item = self._stats_grid.takeAt(0)
@@ -472,8 +565,48 @@ class WorkspacePage(BasePage):
                 ww.setParent(self._stats_container)
         for i, card in enumerate(cards):
             self._stats_grid.addWidget(card, i // columns, i % columns)
-        for c in range(columns):
-            self._stats_grid.setColumnStretch(c, 1)
+        for c in range(4):
+            self._stats_grid.setColumnStretch(c, 1 if c < columns else 0)
+
+    def _sync_overview_pair_layout(self, width: Optional[int] = None) -> None:
+        layout = getattr(self, "_overview_pair_layout", None)
+        if layout is None:
+            return
+        content_width = self._content_available_width() if width is None else width
+        stacked = content_width < self._compact_width
+        if stacked == self._overview_stacked and layout.count() >= 2:
+            return
+        self._overview_stacked = stacked
+
+        widgets = [
+            getattr(self, "account_platform_card", None),
+            getattr(self, "recent_activity", None)
+            or getattr(self, "_recent_activity_placeholder", None),
+        ]
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget() if item is not None else None
+            if widget is not None:
+                widget.setParent(self._overview_pair_host)
+        if stacked:
+            self._overview_pair_host.setFixedHeight(300 * 2 + 10)
+            for row, widget in enumerate(w for w in widgets if w is not None):
+                layout.addWidget(widget, row, 0)
+            layout.setColumnStretch(0, 1)
+            layout.setColumnStretch(1, 0)
+        else:
+            self._overview_pair_host.setFixedHeight(300)
+            for col, widget in enumerate(w for w in widgets if w is not None):
+                layout.addWidget(widget, 0, col)
+            layout.setColumnStretch(0, 1)
+            layout.setColumnStretch(1, 1)
+        self._sync_recent_activity_layout()
+
+    def _sync_responsive_layout(self) -> None:
+        width = self._content_available_width()
+        self._relayout_stats_cards()
+        self._relayout_quick_actions(width)
+        self._sync_overview_pair_layout(width)
 
     def _on_refresh_requested(self) -> None:
         if self._orchestrator:
@@ -628,12 +761,25 @@ class WorkspacePage(BasePage):
 
     def _apply_welcome_line_style(self) -> None:
         dark = isDarkTheme()
-        primary = "#4FC3F7" if dark else "#0078D4"
-        muted = "#90A4AE" if dark else "#5E6B73"
+        primary = "#EAF6FF" if dark else "#1F2937"
+        muted = "#A9B7C2" if dark else "#6B7280"
+        card_bg = "rgba(255, 255, 255, 0.045)" if dark else "#FFFFFF"
+        border = "rgba(255, 255, 255, 0.08)" if dark else "#EBEEF2"
+        if hasattr(self, "_header_card") and self._header_card:
+            self._header_card.setStyleSheet(
+                "CardWidget {"
+                f"background: {card_bg};"
+                f"border: 1px solid {border};"
+                "border-radius: 8px;"
+                "}"
+            )
         if hasattr(self, "welcome_line") and self.welcome_line:
             self.welcome_line.setStyleSheet(
-                f"font-size: 15px; font-weight: 600; color: {primary}; margin: 0; padding: 0;"
-                f" QLabel span {{ color: {muted}; font-weight: 400; }}"
+                f"font-size: 15px; font-weight: 650; color: {primary}; margin: 0; padding: 0;"
+            )
+        if hasattr(self, "_welcome_meta_label") and self._welcome_meta_label:
+            self._welcome_meta_label.setStyleSheet(
+                f"font-size: 12px; color: {muted}; font-weight: 400;"
             )
 
     def _resolve_welcome_username(self) -> Optional[str]:
@@ -669,6 +815,12 @@ class WorkspacePage(BasePage):
             self.welcome_line.setText(
                 f"{name} · 今天是 {date_str}"
             )
+        if hasattr(self, "_welcome_meta_label") and self._welcome_meta_label:
+            try:
+                time_str = datetime.now().strftime("%H:%M")
+            except Exception:
+                time_str = ""
+            self._welcome_meta_label.setText(f"数据自动刷新 · {time_str}" if time_str else "数据自动刷新")
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -676,6 +828,15 @@ class WorkspacePage(BasePage):
             self.refresh_timer.start()
         self.refresh_welcome_display()
         self._apply_welcome_line_style()
+        # 首帧 viewport 宽度可能仍为 0，显示后再强制按实际宽度排四列 KPI
+        self._relayout_stats_cards(force=True)
+        self._schedule_base_page_timer(
+            "workspace_stats_relayout_deferred",
+            0,
+            lambda: self._relayout_stats_cards(force=True),
+        )
+        self._relayout_quick_actions()
+        self._sync_overview_pair_layout()
         self._sync_recent_activity_layout()
         self.schedule_noncritical_first_paint()
         if self._orchestrator:
@@ -683,11 +844,13 @@ class WorkspacePage(BasePage):
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
+        self._sync_responsive_layout()
         self._sync_recent_activity_layout()
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange:
+            self._sync_responsive_layout()
             self._sync_recent_activity_layout()
 
     def _sync_recent_activity_layout(self) -> None:
