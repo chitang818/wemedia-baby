@@ -135,6 +135,7 @@ class NavigationConfig:
                     "selectable": False,
                     "children": [
                         {"route_key": "cart_promotion_page", "icon": FluentIcon.SHOPPING_CART, "text": "购物车推广"},
+                        {"route_key": "location_promotion_page", "icon": FluentIcon.PIN, "text": "位置推广"},
                         {"route_key": "group_buy_promotion_page", "icon": FluentIcon.TAG, "text": "团购推广"},
                     ],
                 }
@@ -260,5 +261,6 @@ class NavigationConfig:
             "random_copywriting_page": "material_library_container",
             # 带货推广是顶层一级菜单，两个子页归属于它
             "cart_promotion_page": "commerce_promotion_container",
+            "location_promotion_page": "commerce_promotion_container",
             "group_buy_promotion_page": "commerce_promotion_container",
         }

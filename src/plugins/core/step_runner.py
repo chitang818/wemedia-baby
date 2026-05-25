@@ -30,6 +30,11 @@ class BaseRunnerConfig:
     screenshot_on_error: bool = True
     screenshot_platform: str = "unknown"
     log_selector_probe: bool = True
+    diagnostics_on_error: bool = True
+    diagnostics_capture_html: bool = True
+    diagnostics_capture_dom_summary: bool = True
+    diagnostics_max_html_bytes: int = 5_000_000
+    diagnostics_retention_days: int = 14
 
 
 def _build_phase_index(
@@ -168,13 +173,14 @@ class GenericStepRunner:
                 except Exception as e:
                     last_failure = PublishResult(success=False, error_message=f"{step_name} 执行异常: {e}")
                     if attempt >= step_max_retries:
-                        await self._diagnose(step_name, reason=f"exception_after_retries: {e}")
+                        diagnostic_path = await self._diagnose(step_name, reason=f"exception_after_retries: {e}")
                         short = str(e)[:50] + ("..." if len(str(e)) > 50 else "")
                         USER_LOG.warning(f"{prefix} ✗ 失败: {short}")
                         return PublishResult(
                             success=False,
                             error_message=f"{step_name} 执行异常（已重试 {step_max_retries} 次）: {e}",
                             failed_step=step_name,
+                            diagnostic_path=diagnostic_path,
                         )
                     logger.warning(f"{step_name} 第 {attempt} 次执行异常，剩余 {step_max_retries - attempt} 次重试: {e}")
                     await self._retry_sleep(retry_delay)
@@ -195,12 +201,13 @@ class GenericStepRunner:
                 if isinstance(outcome, NeedsAction):
                     handled = await self._handle_action(outcome)
                     if not handled:
-                        await self._diagnose(step_name, reason=f"needs_action_unhandled: {outcome.action}")
+                        diagnostic_path = await self._diagnose(step_name, reason=f"needs_action_unhandled: {outcome.action}")
                         USER_LOG.warning(f"{prefix} ✗ 失败: 需要补救但未实现")
                         return PublishResult(
                             success=False,
                             error_message=outcome.message or f"需要处理动作但未实现: {outcome.action}",
                             failed_step=step_name,
+                            diagnostic_path=diagnostic_path,
                         )
 
                     USER_LOG.info(f"{prefix} ▶ 需补救({outcome.action})，执行补救后重试")
@@ -212,34 +219,41 @@ class GenericStepRunner:
                             try:
                                 h_outcome = await h_step.execute(self.page, self.file_path, self.metadata)
                             except Exception as e:
-                                await self._diagnose(h_name, reason=f"handler_exception: {e}")
+                                diagnostic_path = await self._diagnose(h_name, reason=f"handler_exception: {e}")
                                 USER_LOG.warning(f"{self._phase_prefix(h_name)} ✗ 失败: 补救步骤异常")
-                                return PublishResult(success=False, error_message=f"{h_name} 执行异常: {e}", failed_step=h_name)
+                                return PublishResult(
+                                    success=False,
+                                    error_message=f"{h_name} 执行异常: {e}",
+                                    failed_step=h_name,
+                                    diagnostic_path=diagnostic_path,
+                                )
 
                             if isinstance(h_outcome, PublishResult):
                                 if not h_outcome.success:
-                                    await self._diagnose(h_name, reason=h_outcome.error_message or "failed")
+                                    diagnostic_path = await self._diagnose(h_name, reason=h_outcome.error_message or "failed")
                                     short = (h_outcome.error_message or "")[:50]
                                     USER_LOG.warning(f"{self._phase_prefix(h_name)} ✗ 失败: {short}")
-                                    return PublishResult(success=False, error_message=h_outcome.error_message, failed_step=h_name)
+                                    return PublishResult(success=False, error_message=h_outcome.error_message, failed_step=h_name, diagnostic_path=diagnostic_path)
                                 return h_outcome
                             if isinstance(h_outcome, NeedsAction):
-                                await self._diagnose(h_name, reason=f"nested_needs_action: {h_outcome.action}")
+                                diagnostic_path = await self._diagnose(h_name, reason=f"nested_needs_action: {h_outcome.action}")
                                 USER_LOG.warning(f"{self._phase_prefix(h_name)} ✗ 失败: 返回未处理动作")
                                 return PublishResult(
                                     success=False,
                                     error_message=h_outcome.message or f"{h_name} 返回未处理动作: {h_outcome.action}",
                                     failed_step=h_name,
+                                    diagnostic_path=diagnostic_path,
                                 )
 
                     if submit_index is not None:
                         if self._submit_retry_count >= self.config.max_submit_retries:
-                            await self._diagnose(step_name, reason="submit_retry_exceeded")
+                            diagnostic_path = await self._diagnose(step_name, reason="submit_retry_exceeded")
                             USER_LOG.warning(f"{prefix} ✗ 失败: 提交重试次数已达上限")
                             return PublishResult(
                                 success=False,
                                 error_message=outcome.message or "已触发补救，但提交重试次数已达上限",
                                 failed_step=step_name,
+                                diagnostic_path=diagnostic_path,
                             )
                         self._submit_retry_count += 1
                         logger.info(f"准备重试提交: {self._submit_retry_count}/{self.config.max_submit_retries}")
@@ -255,13 +269,14 @@ class GenericStepRunner:
                         return outcome
                     last_failure = outcome
                     if attempt >= step_max_retries:
-                        await self._diagnose(step_name, reason=outcome.error_message or "failed")
+                        diagnostic_path = await self._diagnose(step_name, reason=outcome.error_message or "failed")
                         short = (outcome.error_message or "未知原因")[:50]
                         USER_LOG.warning(f"{prefix} ✗ 失败: {short}")
                         return PublishResult(
                             success=False,
                             error_message=f"{step_name} 失败（已重试 {step_max_retries} 次）: {outcome.error_message or '未知原因'}",
                             failed_step=step_name,
+                            diagnostic_path=diagnostic_path or getattr(outcome, "diagnostic_path", None),
                         )
                     logger.warning(f"{step_name} 第 {attempt} 次返回失败，剩余 {step_max_retries - attempt} 次重试: {outcome.error_message}")
                     await self._retry_sleep(retry_delay)
@@ -270,7 +285,8 @@ class GenericStepRunner:
                 # 未知结果类型
                 last_failure = PublishResult(success=False, error_message=f"{step_name} 返回未知结果类型，流程中断", failed_step=step_name)
                 if attempt >= step_max_retries:
-                    await self._diagnose(step_name, reason="unknown_outcome")
+                    diagnostic_path = await self._diagnose(step_name, reason="unknown_outcome")
+                    last_failure.diagnostic_path = diagnostic_path
                     USER_LOG.warning(f"{prefix} ✗ 失败: 未知结果类型")
                     return last_failure
                 logger.warning(f"{step_name} 返回未知结果类型，剩余 {step_max_retries - attempt} 次重试")
@@ -289,7 +305,7 @@ class GenericStepRunner:
 
     # ------ 诊断 ------
 
-    async def _diagnose(self, step_name: str, reason: str) -> None:
+    async def _diagnose(self, step_name: str, reason: str) -> Optional[str]:
         if self.config.log_selector_probe:
             try:
                 probes = self.metadata.get("selector_probes") or {}
@@ -303,8 +319,32 @@ class GenericStepRunner:
             except Exception:
                 pass
 
+        if self.config.diagnostics_on_error:
+            try:
+                from src.plugins.core.diagnostics import PageDiagnosticsConfig, PageDomDiagnosticPlugin
+
+                diag_config = PageDiagnosticsConfig(
+                    enabled=True,
+                    capture_html=self.config.diagnostics_capture_html,
+                    capture_dom_summary=self.config.diagnostics_capture_dom_summary,
+                    max_html_bytes=self.config.diagnostics_max_html_bytes,
+                    retention_days=self.config.diagnostics_retention_days,
+                )
+                result = await PageDomDiagnosticPlugin(diag_config).capture(
+                    self.page,
+                    platform=self.config.screenshot_platform,
+                    step_name=step_name,
+                    reason=reason,
+                    metadata=self.metadata,
+                    selector_probes=self.metadata.get("selector_probes") or {},
+                )
+                if result:
+                    return result.path
+            except Exception as e:
+                logger.warning("page diagnostics capture failed: %s", e)
+
         if not self.config.screenshot_on_error:
-            return
+            return None
 
         try:
             now = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -319,6 +359,8 @@ class GenericStepRunner:
             safe_reason = "".join([c if c.isalnum() or c in ("-", "_") else "_" for c in reason])[:80]
             path = out_dir / f"{now}_{step_name}_{safe_reason}.png"
             await self.page.screenshot(path=str(path), full_page=True)
+            diagnostic_path = str(path)
             logger.info(f"已保存诊断截图: {path} (url={url})")
+            return diagnostic_path
         except Exception as e:
             logger.warning("诊断时页面不可用或已关闭: %s", e)

@@ -137,6 +137,36 @@ def test_connect_main_window_activation_restores_hidden_window(monkeypatch):
     assert calls == [("persist_tray", False), "show_normal", "foreground"]
 
 
+@pytest.mark.asyncio
+async def test_schedule_auto_login_waits_before_task(monkeypatch):
+    import asyncio
+
+    sleep_calls = []
+
+    async def fake_sleep(seconds):
+        sleep_calls.append(seconds)
+
+    async def noop_login():
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(app_runtime, "_auto_login_and_maybe_log", noop_login)
+
+    class Registry:
+        def __init__(self):
+            self.task = None
+
+        def create_task(self, coro, *, name, group):
+            self.task = coro
+            return coro
+
+    registry = Registry()
+    app_runtime.schedule_auto_login(registry, delay_ms=400)
+    await registry.task
+
+    assert sleep_calls == [0.4]
+
+
 def test_schedule_optional_browser_warmup_skips_by_default(monkeypatch):
     monkeypatch.delenv("ENABLE_BROWSER_WARMUP_ON_START", raising=False)
 

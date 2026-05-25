@@ -37,6 +37,43 @@ class RecordSaveFilterAsync(BaseFilter):
             如果保存成功返回True，否则返回False
         """
         try:
+            publish_url = getattr(context, 'publish_url', None)
+            diagnostic_path = getattr(context, 'diagnostic_path', None)
+            diagnostic_update = {}
+            if diagnostic_path is not None:
+                diagnostic_update["diagnostic_path"] = diagnostic_path
+            existing_id = getattr(context, 'publish_record_id', None)
+            if existing_id is not None:
+                try:
+                    record_id = int(existing_id)
+                except (TypeError, ValueError):
+                    record_id = None
+            else:
+                record_id = None
+
+            if record_id is not None:
+                if publish_url:
+                    await self.publish_record_repo.update_status(
+                        record_id=record_id,
+                        status='success',
+                        publish_url=publish_url,
+                        **diagnostic_update,
+                    )
+                else:
+                    error_message = (
+                        getattr(context, 'error_message', None)
+                        or self.get_error()
+                        or "发布失败"
+                    )
+                    await self.publish_record_repo.update_status(
+                        record_id=record_id,
+                        status='failed',
+                        error_message=error_message,
+                        **diagnostic_update,
+                    )
+                self.logger.info(f"发布记录已更新（待发布任务）: ID={record_id}")
+                return True
+
             # 判断文件类型
             file_type = 'video'
             if context.file_path.endswith(('.jpg', '.jpeg', '.png', '.gif')):
@@ -51,7 +88,7 @@ class RecordSaveFilterAsync(BaseFilter):
                 elif isinstance(aid, str) and aid.isdigit():
                     platform_account_id = int(aid)
             
-            # 创建发布记录
+            # 无既有记录时新建（如批量直发等未先入待发布列表的场景）
             record_id = await self.publish_record_repo.create(
                 user_id=context.user_id,
                 platform_username=context.account_name,
@@ -64,16 +101,12 @@ class RecordSaveFilterAsync(BaseFilter):
                 platform_account_id=platform_account_id,
             )
             
-            # 如果发布成功，更新记录状态和URL
-            publish_url = None
-            if hasattr(context, 'publish_url'):
-                publish_url = context.publish_url
-            
             if publish_url:
                 await self.publish_record_repo.update_status(
                     record_id=record_id,
                     status='success',
-                    publish_url=publish_url
+                    publish_url=publish_url,
+                    **diagnostic_update,
                 )
             else:
                 # 优先取管道级 context.error_message（由平台过滤器设置），其次取本过滤器自身错误
@@ -81,7 +114,8 @@ class RecordSaveFilterAsync(BaseFilter):
                 await self.publish_record_repo.update_status(
                     record_id=record_id,
                     status='failed',
-                    error_message=error_message
+                    error_message=error_message,
+                    **diagnostic_update,
                 )
             
             self.logger.info(f"发布记录保存成功: ID={record_id}")

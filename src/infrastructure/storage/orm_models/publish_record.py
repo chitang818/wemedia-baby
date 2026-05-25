@@ -63,6 +63,7 @@ class PublishRecord(Model):
     scheduled_publish_time = fields.DatetimeField(null=True)
     status = fields.CharField(max_length=20)
     error_message = fields.TextField(null=True)
+    diagnostic_path = fields.TextField(null=True)
     publish_url = fields.TextField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(null=True)

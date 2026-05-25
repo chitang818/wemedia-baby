@@ -4,21 +4,24 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QVBoxLayout, QWidget
 
-from qfluentwidgets import BodyLabel, CaptionLabel, ComboBox, LineEdit, RadioButton
+from qfluentwidgets import BodyLabel, CaptionLabel, ComboBox, RadioButton
 
 from src.domain.publish.location_settings import (
     LOCATION_MODE_CHECKIN,
     LOCATION_MODE_CHOICES,
     LocationPoiInputChoice,
+    LocationPublishFields,
     WechatNoPoiSubchoice,
     dialog_state_from_persisted,
-    format_poi_info_storage,
     location_publish_fields_from_intent,
+    parse_location_short_name_from_storage,
     parse_poi_info_storage,
 )
 from src.ui.components.base_dialog import StandardBaseDialog
+from src.ui.publish.location.location_selector_widget import LocationSelectorWidget
 
 
 class BatchLocationDialog(StandardBaseDialog):
@@ -41,7 +44,8 @@ class BatchLocationDialog(StandardBaseDialog):
             wx_pick_initial,
             show_wechat_subchoice=self._show_wx_sub,
         )
-        loc_text, loc_mode = parse_poi_info_storage(poi_info_initial)
+        loc_short = parse_location_short_name_from_storage(poi_info_initial)
+        _, loc_mode = parse_poi_info_storage(poi_info_initial)
         if loc_mode not in LOCATION_MODE_CHOICES:
             loc_mode = LOCATION_MODE_CHECKIN
 
@@ -65,11 +69,11 @@ class BatchLocationDialog(StandardBaseDialog):
         need_lay.setSpacing(8)
         r1 = QHBoxLayout()
         r1.setSpacing(12)
-        r1.addWidget(BodyLabel("地理位置", self.widget))
-        self.loc_edit = LineEdit(self.widget)
-        self.loc_edit.setPlaceholderText("输入地理位置")
-        self.loc_edit.setText(loc_text)
-        r1.addWidget(self.loc_edit, 1)
+        r1.addWidget(BodyLabel("选择位置", self.widget))
+        self._location_selector = LocationSelectorWidget(
+            self.widget, initial_short_name=loc_short
+        )
+        r1.addWidget(self._location_selector, 1)
         need_lay.addLayout(r1)
         r2 = QHBoxLayout()
         r2.setSpacing(12)
@@ -79,6 +83,12 @@ class BatchLocationDialog(StandardBaseDialog):
         self.mode_combo.setCurrentText(loc_mode)
         r2.addWidget(self.mode_combo, 1)
         need_lay.addLayout(r2)
+        need_lay.addWidget(
+            CaptionLabel(
+                "请先在「带货推广 → 位置推广」配置各平台搜索词，再在此选择位置简称。",
+                self.widget,
+            )
+        )
         root.addWidget(self._need_wrap)
 
         self._wx_wrap = QWidget(self.widget)
@@ -106,7 +116,6 @@ class BatchLocationDialog(StandardBaseDialog):
         wx_lay.addWidget(self._rb_wx_keep)
         wx_lay.addWidget(self._rb_wx_hide)
         root.addWidget(self._wx_wrap)
-        # 无视频号目标时整块不展示，避免占位或样式残留
         self._wx_wrap.setVisible(False)
 
         self.viewLayout.addLayout(root)
@@ -131,30 +140,31 @@ class BatchLocationDialog(StandardBaseDialog):
 
     def accept(self) -> None:
         if self._rb_need.isChecked():
-            poi = format_poi_info_storage(
-                self.loc_edit.text().strip(),
-                self.mode_combo.currentText().strip(),
+            poi = self._location_selector.build_poi_info_storage(
+                self.mode_combo.currentText().strip()
             )
             if not (poi or "").strip():
                 from qfluentwidgets import InfoBar, InfoBarPosition
 
                 InfoBar.warning(
-                    "请填写地理位置",
-                    "已选择「需要输入位置」时，请填写地理位置或改选「不需要输入位置」。",
+                    "请选择位置",
+                    "已选择「需要输入位置」时，请从位置推广库选择位置，或改选「不需要输入位置」。"
+                    "若列表为空，请先到「带货推广 → 位置推广」添加配置。",
                     parent=self.window() or self,
                     position=InfoBarPosition.TOP,
-                    duration=3000,
+                    duration=4000,
                 )
                 return
         super().accept()
 
     def outcome(self) -> Tuple[str, Optional[bool]]:
         if self._rb_need.isChecked():
-            fields = location_publish_fields_from_intent(
-                input_choice=LocationPoiInputChoice.NEED_INPUT,
-                wechat_sub=WechatNoPoiSubchoice.NOT_APPLICABLE,
-                loc_text=self.loc_edit.text(),
-                loc_mode=self.mode_combo.currentText(),
+            poi = self._location_selector.build_poi_info_storage(
+                self.mode_combo.currentText().strip()
+            )
+            fields = LocationPublishFields(
+                poi_info=poi,
+                wechat_empty_location_open_picker=False,
             )
         else:
             sub = (

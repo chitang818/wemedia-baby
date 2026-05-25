@@ -33,6 +33,10 @@ _REGISTRY: Dict[str, Tuple[str, str]] = {
     "image_library_page": ("src.ui.pages.material.image_library_page", "ImageLibraryPage"),
     "copywriting_library_page": ("src.ui.pages.material.copywriting_library_page", "CopywritingLibraryPage"),
     "cart_promotion_page": ("src.ui.pages.material.cart_promotion_page", "CartPromotionPage"),
+    "location_promotion_page": (
+        "src.ui.pages.material.location_promotion_page",
+        "LocationPromotionPage",
+    ),
     "group_buy_promotion_page": ("src.ui.pages.material.group_buy_promotion_page", "GroupBuyPromotionPage"),
     "random_copywriting_page": ("src.ui.pages.material.random_copywriting_page", "RandomCopywritingPage"),
 }

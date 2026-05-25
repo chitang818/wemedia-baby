@@ -23,6 +23,7 @@ from qfluentwidgets import TableView
 from qfluentwidgets.components.widgets.table_view import TableItemDelegate
 
 from src.ui.pages.publish.publish_record_table_model import PublishRecordTableModel
+from src.utils.platform_names import PLATFORM_ID_TO_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,12 @@ class PublishRecordTableView(TableView):
         return PublishRecordTableView._table_font_metrics().horizontalAdvance(sample) + extra
 
     @staticmethod
+    def _platform_column_width() -> int:
+        """平台列宽：按最长中文平台名（含兼容名「微信视频号」）完整显示。"""
+        longest = max((*PLATFORM_ID_TO_NAME.values(), "微信视频号"), key=len)
+        return PublishRecordTableView._text_column_width(longest)
+
+    @staticmethod
     def _cover_column_width() -> int:
         """封面列宽：按 Fluent TableItemDelegate 的 13pt 字体测算「本地封面」完整显示。"""
         return PublishRecordTableView._text_column_width("本地封面")
@@ -157,6 +164,7 @@ class PublishRecordTableView(TableView):
         return {
             m.COL_CREATE_TIME: 158,
             m.COL_TYPE: 68,
+            m.COL_PLATFORM: PublishRecordTableView._platform_column_width(),
             m.COL_COVER: PublishRecordTableView._cover_column_width(),
             m.COL_SCHEDULED_TIME: 158,
             m.COL_ORIGINAL: PublishRecordTableView._original_column_width(),
@@ -181,7 +189,7 @@ class PublishRecordTableView(TableView):
         return {
             PublishRecordTableModel.COL_CREATE_TIME: 158,
             PublishRecordTableModel.COL_TYPE: 68,
-            PublishRecordTableModel.COL_PLATFORM: 72,
+            PublishRecordTableModel.COL_PLATFORM: PublishRecordTableView._platform_column_width(),
             PublishRecordTableModel.COL_ACCOUNT_GROUP: 88,
             PublishRecordTableModel.COL_TASK_SOURCE: 72,
             PublishRecordTableModel.COL_ACCOUNT_NAME: 168,
@@ -205,7 +213,7 @@ class PublishRecordTableView(TableView):
         return {
             PublishRecordTableModel.COL_CREATE_TIME: 158,
             PublishRecordTableModel.COL_TYPE: 68,
-            PublishRecordTableModel.COL_PLATFORM: 72,
+            PublishRecordTableModel.COL_PLATFORM: PublishRecordTableView._platform_column_width(),
             PublishRecordTableModel.COL_ACCOUNT_GROUP: 88,
             PublishRecordTableModel.COL_TASK_SOURCE: 72,
             PublishRecordTableModel.COL_ACCOUNT_NAME: 168,

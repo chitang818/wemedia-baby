@@ -29,11 +29,17 @@ from src.infrastructure.common.config.app_config_keys import (
     BATCH_LOCATION_WX_OPEN_PICKER,
     BATCH_WORK_DECLARATION,
     KEY_BATCH_PUBLISH,
+    KEY_PUBLISH_DIAGNOSTICS,
     KEY_PUBLISH_LIST,
     KEY_SINGLE_PUBLISH,
     KEY_UI,
     PUBLISH_LIST_POST_PUBLISH_FILE_ACTION,
     PUBLISH_LIST_SHOW_BROWSER,
+    PUBLISH_DIAGNOSTICS_CAPTURE_DOM_SUMMARY,
+    PUBLISH_DIAGNOSTICS_CAPTURE_HTML,
+    PUBLISH_DIAGNOSTICS_ENABLED,
+    PUBLISH_DIAGNOSTICS_MAX_HTML_BYTES,
+    PUBLISH_DIAGNOSTICS_RETENTION_DAYS,
     MAIN_WINDOW_CLOSE_BEHAVIOR,
     MAIN_WINDOW_CLOSE_REMIND,
     MAIN_WINDOW_CLOSE_REMEMBER_CHOICE,
@@ -45,6 +51,7 @@ from src.infrastructure.common.config.app_config_keys import (
     SINGLE_DECLARE_ORIGINAL,
     START_IN_TRAY_NEXT_LAUNCH,
     UI_PAGE_ANIMATION_REDUCED,
+    UI_STARTUP_PRELOADS,
 )
 
 # 须与 src.utils.plugin_settings.get_default_enabled_platform_ids 默认返回值保持一致
@@ -55,6 +62,13 @@ def default_app_config_skeleton() -> Dict[str, Any]:
     """权威顶层结构：标量/列表用空或安全默认值，业务分组用空对象占位。"""
     return {
         "enabled_platform_plugins": list(_DEFAULT_ENABLED_PLATFORM_PLUGINS),
+        KEY_PUBLISH_DIAGNOSTICS: {
+            PUBLISH_DIAGNOSTICS_ENABLED: True,
+            PUBLISH_DIAGNOSTICS_CAPTURE_HTML: True,
+            PUBLISH_DIAGNOSTICS_CAPTURE_DOM_SUMMARY: True,
+            PUBLISH_DIAGNOSTICS_MAX_HTML_BYTES: 5_000_000,
+            PUBLISH_DIAGNOSTICS_RETENTION_DAYS: 14,
+        },
         "material_library_root": "",
         "chrome_executable_path": "",
         "browser_scheme": "playwright",
@@ -106,6 +120,7 @@ def default_app_config_skeleton() -> Dict[str, Any]:
         },
         KEY_UI: {
             UI_PAGE_ANIMATION_REDUCED: False,
+            UI_STARTUP_PRELOADS: "off",
         },
     }
 

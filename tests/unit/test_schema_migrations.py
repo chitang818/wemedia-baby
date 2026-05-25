@@ -94,6 +94,8 @@ async def test_run_pending_migrations_adds_missing_columns_and_indexes(old_schem
         "wechat_empty_location_open_picker",
         "task_source",
         "group_id",
+        "diagnostic_path",
+        "updated_at",
     ]:
         assert column in publish_columns
 
@@ -123,6 +125,27 @@ async def test_run_pending_migrations_is_idempotent(old_schema_conn):
         old_schema_conn.conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
         == len(MIGRATION_STEPS)
     )
+
+
+@pytest.mark.asyncio
+async def test_location_promotion_items_table_migration(old_schema_conn):
+    await run_pending_migrations(old_schema_conn)
+    tables = {
+        row[0]
+        for row in old_schema_conn.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    assert "location_promotion_items" in tables
+    cols = _column_names(old_schema_conn, "location_promotion_items")
+    for col in [
+        "short_name",
+        "douyin_location",
+        "kuaishou_location",
+        "channels_location",
+        "xiaohongshu_location",
+    ]:
+        assert col in cols
 
 
 @pytest.mark.asyncio

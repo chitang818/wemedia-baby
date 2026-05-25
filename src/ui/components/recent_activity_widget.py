@@ -1,12 +1,17 @@
 """
 最近活动组件
 文件路径：src/ui/components/recent_activity_widget.py
-功能：工作台「发布统计」卡片，展示在线账号的已发布最晚时间与到期提醒
+功能：工作台「发布统计」卡片，展示全部账号的已发布最晚时间与到期提醒
 """
 
+from __future__ import annotations
+
+import time
+from enum import Enum
 from typing import List, Dict, Any, Optional
+
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSizePolicy
+    QWidget, QVBoxLayout, QHBoxLayout, QSizePolicy, QFrame
 )
 from PySide6.QtCore import Qt, Signal, QEvent, QTimer
 from PySide6.QtGui import QCursor
@@ -20,10 +25,18 @@ from src.ui.components.workspace_scroll_area import (
     create_workspace_scroll_area,
     set_workspace_scroll_content,
 )
+from src.ui.components.skeleton import SkeletonItem
 from src.ui.utils.fluent_tooltips import ToolTipPosition, install_fluent_tool_tip
+from src.ui.workspace_chart_animation_prefs import STATS_SKELETON_MIN_MS
+
+_REMINDER_SKELETON_ROW_COUNT = 5
+_REMINDER_ROW_HEIGHT = 32
 
 _OVERDUE_LIGHT = "#E81123"
 _OVERDUE_DARK = "#FF6B6B"
+_STATUS_DOT_ONLINE_LIGHT = "#107C10"
+_STATUS_DOT_ONLINE_DARK = "#6CCB5F"
+_STATUS_DOT_OFFLINE = "#E81123"
 _COMPACT_NAME_MAX_LEN = 9
 # 卡片宽度低于此值时缩短账号名；三列（含已发布最晚时间）始终展示
 _COMPACT_LAYOUT_MIN_WIDTH = 300
@@ -41,6 +54,19 @@ def _set_fluent_tooltip(widget: QWidget, text: str) -> None:
     widget.setToolTip(tip)
     if tip:
         install_fluent_tool_tip(widget, position=ToolTipPosition.BOTTOM)
+
+
+def _make_login_status_dot(is_online: bool, parent: QWidget) -> QFrame:
+    """账号名前的在线/离线圆点（绿/红），不单独占列。"""
+    dark = isDarkTheme()
+    if is_online:
+        color = _STATUS_DOT_ONLINE_DARK if dark else _STATUS_DOT_ONLINE_LIGHT
+    else:
+        color = _STATUS_DOT_OFFLINE
+    dot = QFrame(parent)
+    dot.setFixedSize(8, 8)
+    dot.setStyleSheet(f"background-color: {color}; border-radius: 4px;")
+    return dot
 
 
 def _truncate_account_name(name: str, max_len: int = _COMPACT_NAME_MAX_LEN) -> str:
@@ -80,13 +106,14 @@ class _ReminderHeaderRow(QWidget):
 
 
 class AccountPublishReminderRow(QWidget):
-    """单条在线账号发布提醒"""
+    """单条账号发布提醒（账号名前绿/红圆点表示在线/离线）"""
 
     clicked = Signal(int)
 
     def __init__(self, row: Dict[str, Any], parent=None):
         super().__init__(parent)
         self._account_id = int(row.get("account_id", 0))
+        self._is_online = bool(row.get("is_online", row.get("login_status") == "online"))
         self.setCursor(QCursor(Qt.PointingHandCursor))
 
         dark = isDarkTheme()
@@ -102,17 +129,26 @@ class AccountPublishReminderRow(QWidget):
 
         name_color = "#FFFFFF" if dark else "#1A1A1A"
         mid_color = "#AAAAAA" if dark else "#666666"
+        if not self._is_online:
+            name_color = "#888888" if dark else "#999999"
 
         self._real_name = (row.get("account_name") or "未命名").strip() or "未命名"
         self._name_hidden = False
         self._name_compact = False
-        self._name_label = BodyLabel(self._real_name, self)
+
+        name_cell = QWidget(self)
+        name_layout = QHBoxLayout(name_cell)
+        name_layout.setContentsMargins(0, 0, 0, 0)
+        name_layout.setSpacing(6)
+        name_layout.addWidget(_make_login_status_dot(self._is_online, name_cell))
+        self._name_label = BodyLabel(self._real_name, name_cell)
         self._name_label.setStyleSheet(f"color: {name_color}; font-size: 13px;")
         self._name_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self._name_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._name_label.setWordWrap(False)
+        name_layout.addWidget(self._name_label, 1)
         self._refresh_name_display()
-        layout.addWidget(self._name_label, 4)
+        layout.addWidget(name_cell, 4)
 
         latest = str(row.get("latest_publish_time") or "-")
         self._time_label = CaptionLabel(latest, self)
@@ -165,13 +201,22 @@ class AccountPublishReminderRow(QWidget):
             self.clicked.emit(self._account_id)
 
 
+class ReminderLoadState(Enum):
+    LOADING = "loading"
+    READY = "ready"
+
+
 class RecentActivityWidget(CardWidget):
-    """在线账号发布提醒列表"""
+    """全部账号发布提醒列表"""
 
     account_clicked = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._load_state = ReminderLoadState.LOADING
+        self._loading_shown_at = 0.0
+        self._reveal_timer: Optional[QTimer] = None
+        self._skeleton_rows: List[SkeletonItem] = []
         self._names_hidden = False
         self._force_name_compact = False
         self._name_compact: Optional[bool] = None
@@ -182,7 +227,105 @@ class RecentActivityWidget(CardWidget):
         self._compact_layout_timer.setSingleShot(True)
         self._compact_layout_timer.timeout.connect(self._sync_compact_layout)
         self._init_ui()
-        self._show_empty()
+        self._apply_card_theme()
+        self.show_loading()
+
+    @property
+    def is_loading(self) -> bool:
+        return self._load_state == ReminderLoadState.LOADING
+
+    def show_loading(self) -> None:
+        """进入骨架加载态，避免首启先闪「暂无账号」。"""
+        self.cancel_pending_reveal()
+        self._load_state = ReminderLoadState.LOADING
+        self._loading_shown_at = time.monotonic()
+        self._clear_items()
+        self._show_skeleton_rows()
+
+    def reveal_reminders(self, rows: List[Dict[str, Any]], *, animate: bool = False) -> None:
+        """数据就绪后展示提醒列表（与 KPI 卡 reveal 对齐）。"""
+        self.cancel_pending_reveal()
+        data = list(rows or [])
+        if self._load_state == ReminderLoadState.LOADING and animate:
+            elapsed_ms = (time.monotonic() - self._loading_shown_at) * 1000.0
+            delay = max(0, int(STATS_SKELETON_MIN_MS - elapsed_ms))
+
+            def _commit() -> None:
+                self._finish_reveal(data)
+
+            self._reveal_timer = QTimer(self)
+            self._reveal_timer.setSingleShot(True)
+            self._reveal_timer.timeout.connect(_commit)
+            self._reveal_timer.start(delay)
+            return
+        self._finish_reveal(data)
+
+    def cancel_pending_reveal(self) -> None:
+        if self._reveal_timer is None:
+            return
+        try:
+            self._reveal_timer.stop()
+            self._reveal_timer.deleteLater()
+        except Exception:
+            pass
+        self._reveal_timer = None
+
+    def _show_skeleton_rows(self) -> None:
+        self._hide_skeleton_rows()
+        for _ in range(_REMINDER_SKELETON_ROW_COUNT):
+            sk = SkeletonItem(self.list_container, radius=4)
+            sk.setFixedHeight(_REMINDER_ROW_HEIGHT)
+            sk.start_breathing()
+            self.list_layout.addWidget(sk)
+            self._skeleton_rows.append(sk)
+        self.list_layout.addStretch()
+
+    def _hide_skeleton_rows(self) -> None:
+        for sk in self._skeleton_rows:
+            try:
+                sk.stop_breathing()
+                self.list_layout.removeWidget(sk)
+                sk.deleteLater()
+            except Exception:
+                pass
+        self._skeleton_rows = []
+
+    def _finish_reveal(self, rows: List[Dict[str, Any]]) -> None:
+        self._reveal_timer = None
+        self._hide_skeleton_rows()
+        self._load_state = ReminderLoadState.READY
+        self._populate_reminder_rows(rows)
+
+    def _apply_card_theme(self) -> None:
+        """与账号统计卡一致的 CardWidget 底色，避免内嵌滚动区透出灰底。"""
+        dark = isDarkTheme()
+        if dark:
+            card_bg = "rgba(255, 255, 255, 0.04)"
+            border = "rgba(255, 255, 255, 0.08)"
+        else:
+            card_bg = "#FFFFFF"
+            border = "#EBEEF2"
+        self.setStyleSheet(
+            "CardWidget {"
+            f"background: {card_bg};"
+            f"border: 1px solid {border};"
+            "border-radius: 8px;"
+            "}"
+        )
+        transparent = "background: transparent;"
+        for widget in (
+            getattr(self, "_header_slot", None),
+            getattr(self, "list_container", None),
+        ):
+            if widget is not None:
+                widget.setStyleSheet(transparent)
+        scroll = getattr(self, "scroll_area", None)
+        if scroll is not None:
+            scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+            try:
+                scroll.viewport().setStyleSheet(transparent)
+            except Exception:
+                pass
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -196,7 +339,7 @@ class RecentActivityWidget(CardWidget):
         self.title_label.setStyleSheet(f"font-weight: 600; font-size: 15px; color: {title_color};")
         _set_fluent_tooltip(
             self.title_label,
-            "展示已登录账号的已发布最晚时间与到期提醒（今天 / 剩余天数 / 已逾期等），按紧急程度排序",
+            "展示全部账号的已发布最晚时间与到期提醒；账号名前绿点为在线、红点为离线，按紧急程度排序",
         )
         header.addWidget(self.title_label)
         header.addStretch()
@@ -301,7 +444,7 @@ class RecentActivityWidget(CardWidget):
         self._ensure_window_state_filter()
         self._sync_compact_layout()
 
-    def _show_empty(self, message: str = "暂无在线账号"):
+    def _show_empty(self, message: str = "暂无账号"):
         self._clear_items()
         dark = isDarkTheme()
         empty_color = "#888888" if dark else "#AAAAAA"
@@ -341,10 +484,12 @@ class RecentActivityWidget(CardWidget):
             self._privacy_btn.setIcon(FluentIcon.HIDE.icon())
             _set_fluent_tooltip(self._privacy_btn, "隐藏账号名称")
 
-    def set_account_reminders(self, rows: List[Dict[str, Any]]):
-        """设置在线账号发布提醒列表"""
-        self._clear_items()
+    def set_account_reminders(self, rows: List[Dict[str, Any]]) -> None:
+        """兼容旧调用：直接 reveal，无骨架最短时长。"""
+        self.reveal_reminders(rows, animate=False)
 
+    def _populate_reminder_rows(self, rows: List[Dict[str, Any]]) -> None:
+        self._clear_items()
         if not rows:
             self._show_empty()
             return

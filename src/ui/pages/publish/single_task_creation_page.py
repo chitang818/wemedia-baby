@@ -48,6 +48,11 @@ _SINGLE_WD_PAGE_DOUYIN = 3
 _SINGLE_WD_PAGE_KUAISHOU = 4
 _SINGLE_WD_PAGE_XIAOHONGSHU = 5
 
+# 单条页「发布设置」堆叠页顺序（与 _create_publish_options_card 一致）
+_SINGLE_PO_PAGE_PROMPT = 0
+_SINGLE_PO_PAGE_MIXED = 1
+_SINGLE_PO_PAGE_CONTENT = 2
+
 # 发布设置卡片：标签列、控件间距、下拉宽度（权限与作品申明共用，视觉对齐）
 _SETTINGS_LABEL_WIDTH = 72   # 四字标签 + 余量
 _SETTINGS_ROW_GAP = 14       # 行与行之间的竖向间距
@@ -71,9 +76,14 @@ from src.domain.publish.location_settings import (
     LOCATION_MODE_CHECKIN,
     LOCATION_MODE_CHOICES,
     format_poi_info_storage,
+    parse_location_short_name_from_storage,
     parse_poi_info_storage,
 )
-from src.ui.publish.location import WechatVideoLocationOption
+from src.domain.publish.single_publish_options_capabilities import (
+    PublishOptionsCapabilities,
+    capabilities_for_platform,
+)
+from src.ui.publish.location import LocationSelectorWidget, WechatVideoLocationOption
 from src.utils.date_utils import format_schedule_time_st_str
 from qasync import asyncSlot
 
@@ -799,11 +809,11 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         left_vbox.addLayout(top_config_hbox)
         
         description_card = self._create_description_card()
-        extended_info_card = self._create_extended_info_card()
-        settings_card = self._create_settings_card()
+        options_card = self._create_publish_options_card()
+        schedule_card = self._create_schedule_card()
         left_vbox.addWidget(description_card)
-        left_vbox.addWidget(extended_info_card)
-        left_vbox.addWidget(settings_card)
+        left_vbox.addWidget(options_card)
+        left_vbox.addWidget(schedule_card)
         
         main_hbox.addLayout(left_vbox, 3) # 操作区比重
         
@@ -831,7 +841,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         # 将滚动区域添加到BasePage的内容布局中
         self.content_layout.addWidget(self.scroll_area)
         self._apply_accounts_to_ui()
-        self._refresh_work_declaration_ui()
+        self._refresh_account_dependent_settings_ui()
         if _fallback_visible:
             self._schedule_preview_video_idle_init(delay_ms=1200)
             if is_page_load_profiler_enabled():
@@ -1210,22 +1220,17 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         layout.addWidget(entry_container)
         return card
 
-    def _create_extended_info_card(self) -> QWidget:
-        """创建扩展信息卡片"""
-        card = CardWidget(self)
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(20)
-        
+    def _build_extended_info_rows(self, card: QWidget, layout: QVBoxLayout) -> None:
+        """向发布设置卡片追加扩展信息行（标签、带货推广、图文音乐）。"""
         # 初始化标签数据存储
         if not hasattr(self, 'tag_values'):
             self.tag_values = {}
-        
-        # 标题 (扩展信息)
-        title = SubtitleLabel("扩展信息", card)
-        layout.addWidget(title)
-        
+
         # --- 添加标签 (下拉选择 + 输入框) ---
+        self._publish_opts_row_tags = QWidget(card)
+        tags_row_layout = QVBoxLayout(self._publish_opts_row_tags)
+        tags_row_layout.setContentsMargins(0, 0, 0, 0)
+        tags_row_layout.setSpacing(0)
         add_tags_row = QHBoxLayout()
         add_tags_row.setSpacing(6)
         tags_label = BodyLabel("添加标签", card)
@@ -1245,7 +1250,13 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         self.location_mode_combo.setFixedWidth(LOCATION_MODE_COMBO_WIDTH)
         self.location_mode_combo.hide()
         self.location_mode_combo.currentTextChanged.connect(self._on_location_mode_changed)
-        
+
+        self._location_selector = LocationSelectorWidget(card)
+        self._location_selector.hide()
+        self._location_selector._combo.currentIndexChanged.connect(
+            self._on_location_selector_changed
+        )
+
         self.tag_content_edit.setPlaceholderText("请输入对应内容")
         self.promotion_title_edit = LineEdit(card)
         self.promotion_title_edit.setPlaceholderText("推广标题（最多10字）")
@@ -1270,7 +1281,8 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         add_tags_row.addWidget(tags_label)
         add_tags_row.addWidget(self.tag_type_combo)
         add_tags_row.addWidget(self.location_mode_combo)
-        # 主输入框：选「位置」时限宽，与右侧「默认城市定位」同一行；其它标签类型可拉满剩余宽
+        add_tags_row.addWidget(self._location_selector, 0)
+        # 主输入框：非「位置」标签时使用；选「位置」时改从位置推广库下拉选择
         add_tags_row.addWidget(self.tag_content_edit, 0)
         # 选「位置」时显示「默认城市定位」；未填 POI 时与批量「保留/不展示」同语义（仅视频号步骤读库字段）
         self._wx_empty_loc_opt = WechatVideoLocationOption(card)
@@ -1278,12 +1290,17 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         add_tags_row.addWidget(self._wx_empty_loc_opt.widget(), 0, Qt.AlignmentFlag.AlignVCenter)
         add_tags_row.addWidget(self.promotion_title_edit, 2)
         add_tags_row.addStretch(1)
-        layout.addLayout(add_tags_row)
+        tags_row_layout.addLayout(add_tags_row)
+        layout.addWidget(self._publish_opts_row_tags)
 
         self._apply_tag_content_line_width_for_current_type()
+        self._update_location_input_visibility()
         self._refresh_wechat_empty_location_checkbox()
 
         # --- 带货推广行（独立控件，不影响现有 tag_values 逻辑）---
+        self._publish_opts_row_promotion = QWidget(card)
+        promo_row_layout = QVBoxLayout(self._publish_opts_row_promotion)
+        promo_row_layout.setContentsMargins(0, 0, 0, 0)
         promotion_row = QHBoxLayout()
         promotion_row.setSpacing(6)
         promo_label = BodyLabel("带货推广", card)
@@ -1307,10 +1324,15 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         promotion_row.addWidget(self._yellow_cart_selector)
         promotion_row.addWidget(self._promo_placeholder_label)
         promotion_row.addStretch(1)
-        layout.addLayout(promotion_row)
+        promo_row_layout.addLayout(promotion_row)
+        layout.addWidget(self._publish_opts_row_promotion)
 
         # --- 选择音乐（仅图文模式）---
+        self._publish_opts_row_music = None
         if self._is_image_mode:
+            self._publish_opts_row_music = QWidget(card)
+            music_row_layout = QVBoxLayout(self._publish_opts_row_music)
+            music_row_layout.setContentsMargins(0, 0, 0, 0)
             music_row = QHBoxLayout()
             music_row.setSpacing(6)
             music_label = BodyLabel("选择音乐", card)
@@ -1332,9 +1354,8 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             music_row.addWidget(self._music_type_combo)
             music_row.addWidget(self._music_name_edit)
             music_row.addStretch(1)
-            layout.addLayout(music_row)
-
-        return card
+            music_row_layout.addLayout(music_row)
+            layout.addWidget(self._publish_opts_row_music)
 
     def _reset_music_controls_to_default(self) -> None:
         """图文页：音乐控件恢复为默认（随机音乐）。"""
@@ -1397,6 +1418,24 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         if getattr(self, "promotion_title_edit", None):
             self._sync_promotion_title_from_tag_values()
             self._update_promotion_title_visibility()
+
+    def _refresh_location_selector_platform(self) -> None:
+        """将当前选中账号的平台同步到 LocationSelectorWidget。"""
+        loc_sel = getattr(self, "_location_selector", None)
+        if not loc_sel:
+            return
+        sel = getattr(self, "selected_account", None)
+        if sel and isinstance(sel, dict):
+            if sel.get("type") == "account":
+                loc_sel.set_platform((sel["data"].get("platform") or "").strip())
+            elif sel.get("type") == "group":
+                platforms = sel["data"].get("platforms") or []
+                if platforms:
+                    first = platforms[0]
+                    if isinstance(first, dict):
+                        loc_sel.set_platform((first.get("platform") or "").strip())
+                    else:
+                        loc_sel.set_platform((str(first) if first is not None else "").strip())
 
     def _refresh_yellow_cart_platform(self) -> None:
         """将当前选中账号的平台同步到 CartSelectorWidget。"""
@@ -1489,21 +1528,53 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             self._refresh_wechat_empty_location_checkbox()
         self._sync_location_entry_enabled_for_intent()
 
-    def _create_settings_card(self) -> QWidget:
-        """创建发布设置卡片。
-
-        三行表单：设置权限 / 作品申明 / 发布时间，共用标签列宽度与间距常量。
-        """
+    def _create_publish_options_card(self) -> QWidget:
+        """创建发布设置卡片：未选账号提示 / 混平台说明 / 按平台显示各行。"""
         card = CardWidget(self)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(_SETTINGS_ROW_GAP)
 
-        # 标题
         title = SubtitleLabel("发布设置", card)
         layout.addWidget(title)
 
-        # ── 第 1 行：设置权限 ──
+        self._publish_opts_stack = QStackedWidget(card)
+        self._publish_opts_stack.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
+        )
+
+        def _prompt_page(text: str) -> QWidget:
+            w = QWidget(card)
+            h = QVBoxLayout(w)
+            h.setContentsMargins(0, 0, 0, 0)
+            lbl = BodyLabel(text, w)
+            lbl.setStyleSheet("color: #888;")
+            h.addWidget(lbl)
+            h.addStretch(1)
+            return w
+
+        p0 = QWidget(card)
+        p0l = QVBoxLayout(p0)
+        p0l.setContentsMargins(0, 0, 0, 0)
+        self._publish_opts_prompt_label = BodyLabel("请先选择发布账号", p0)
+        self._publish_opts_prompt_label.setStyleSheet("color: #888;")
+        p0l.addWidget(self._publish_opts_prompt_label)
+        p0l.addStretch(1)
+        self._publish_opts_stack.addWidget(p0)
+        self._publish_opts_stack.addWidget(
+            _prompt_page("组内含多平台，发布时将按各平台页面默认或已保存配置分别生效")
+        )
+
+        content = QWidget(card)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(_SETTINGS_ROW_GAP)
+        self._build_extended_info_rows(card, content_layout)
+        content_layout.addSpacing(6)
+
+        self._publish_opts_row_privacy = QWidget(card)
+        perm_outer = QVBoxLayout(self._publish_opts_row_privacy)
+        perm_outer.setContentsMargins(0, 0, 0, 0)
         perm_row = QHBoxLayout()
         perm_row.setContentsMargins(0, 0, 0, 0)
         perm_row.setSpacing(_SETTINGS_H_GAP)
@@ -1519,12 +1590,30 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         perm_row.addWidget(self.privacy_combo)
         perm_row.addWidget(self.allow_download_check)
         perm_row.addStretch(1)
-        layout.addLayout(perm_row)
+        perm_outer.addLayout(perm_row)
+        content_layout.addWidget(self._publish_opts_row_privacy)
 
-        # ── 第 2 行：作品申明 ──
-        self._create_work_declaration_settings_row(card, layout)
+        self._publish_opts_row_work_declaration = QWidget(card)
+        wd_outer = QVBoxLayout(self._publish_opts_row_work_declaration)
+        wd_outer.setContentsMargins(0, 0, 0, 0)
+        self._create_work_declaration_settings_row(card, wd_outer)
+        content_layout.addWidget(self._publish_opts_row_work_declaration)
 
-        # ── 第 3 行：发布时间 ──
+        self._publish_opts_stack.addWidget(content)
+        layout.addWidget(self._publish_opts_stack)
+
+        return card
+
+    def _create_schedule_card(self) -> QWidget:
+        """创建发布时间独立卡片。"""
+        card = CardWidget(self)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(_SETTINGS_ROW_GAP)
+
+        title = SubtitleLabel("发布时间", card)
+        layout.addWidget(title)
+
         schedule_row = QHBoxLayout()
         schedule_row.setContentsMargins(0, 0, 0, 0)
         schedule_row.setSpacing(_SETTINGS_H_GAP)
@@ -1983,6 +2072,93 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
                 )
             stack.setCurrentIndex(_SINGLE_WD_PAGE_PROMPT)
 
+    def _current_publish_options_capabilities(self) -> Optional[PublishOptionsCapabilities]:
+        """当前单账号上下文下的发布设置能力；未选账号或混平台组时返回 None。"""
+        ctx = self._work_declaration_effective_context()
+        if ctx in ("none", "mixed"):
+            return None
+        return capabilities_for_platform(ctx, is_image_mode=self._is_image_mode)
+
+    def _apply_tag_types_for_capabilities(self, cap: PublishOptionsCapabilities) -> None:
+        """按平台能力刷新「添加标签」下拉项并保持 tag_values。"""
+        combo = getattr(self, "tag_type_combo", None)
+        if combo is None or not cap.show_add_tags:
+            return
+        types = list(cap.tag_types)
+        if not types:
+            return
+        combo.blockSignals(True)
+        current = combo.currentText()
+        combo.clear()
+        combo.addItems(types)
+        if current in types:
+            combo.setCurrentText(current)
+        else:
+            combo.setCurrentIndex(0)
+        combo.blockSignals(False)
+        if getattr(self, "tag_content_edit", None):
+            self.tag_content_edit.blockSignals(True)
+            self.tag_content_edit.setText(self.tag_values.get(combo.currentText(), ""))
+            self.tag_content_edit.blockSignals(False)
+        self._sync_location_mode_from_tag_values()
+        self._sync_promotion_title_from_tag_values()
+        self._update_location_mode_visibility()
+        self._update_promotion_title_visibility()
+        self._update_tag_content_placeholder()
+        self._apply_tag_content_line_width_for_current_type()
+        self._update_location_input_visibility()
+
+    def _apply_publish_options_capabilities(self, cap: PublishOptionsCapabilities) -> None:
+        """在内容页内按能力显示/隐藏各行控件。"""
+        row_vis = (
+            (getattr(self, "_publish_opts_row_tags", None), cap.show_add_tags),
+            (getattr(self, "_publish_opts_row_promotion", None), cap.show_promotion),
+            (getattr(self, "_publish_opts_row_music", None), cap.show_music),
+            (
+                getattr(self, "_publish_opts_row_privacy", None),
+                cap.show_privacy or cap.show_allow_download,
+            ),
+            (getattr(self, "_publish_opts_row_work_declaration", None), cap.show_work_declaration),
+        )
+        for row, show in row_vis:
+            if row is not None:
+                row.setVisible(show)
+        if getattr(self, "privacy_combo", None):
+            self.privacy_combo.setVisible(cap.show_privacy)
+        if getattr(self, "allow_download_check", None):
+            self.allow_download_check.setVisible(cap.show_allow_download)
+        if cap.show_add_tags:
+            self._apply_tag_types_for_capabilities(cap)
+        self._update_location_mode_visibility()
+        self._update_location_input_visibility()
+        self._refresh_location_selector_platform()
+        self._refresh_wechat_empty_location_checkbox()
+
+    def _refresh_publish_options_ui(self) -> None:
+        """根据所选账号切换发布设置堆叠页与各平台行显隐。"""
+        stack = getattr(self, "_publish_opts_stack", None)
+        if stack is None:
+            return
+        ctx = self._work_declaration_effective_context()
+        if ctx == "none":
+            if getattr(self, "_publish_opts_prompt_label", None):
+                self._publish_opts_prompt_label.setText("请先选择发布账号")
+            stack.setCurrentIndex(_SINGLE_PO_PAGE_PROMPT)
+            return
+        if ctx == "mixed":
+            stack.setCurrentIndex(_SINGLE_PO_PAGE_MIXED)
+            return
+        stack.setCurrentIndex(_SINGLE_PO_PAGE_CONTENT)
+        cap = capabilities_for_platform(ctx, is_image_mode=self._is_image_mode)
+        self._apply_publish_options_capabilities(cap)
+
+    def _refresh_account_dependent_settings_ui(
+        self, *, sync_work_declaration_from_storage: bool = True
+    ) -> None:
+        """账号变化时刷新发布设置与作品申明。"""
+        self._refresh_publish_options_ui()
+        self._refresh_work_declaration_ui(sync_from_storage=sync_work_declaration_from_storage)
+
     def _compose_privacy_settings_json_for_platform(self, account_platform: str) -> str:
         """组装 privacy_settings JSON 并按任务平台裁剪申明键。"""
         from src.domain.publish.work_declaration import (
@@ -2102,8 +2278,41 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         self._update_promotion_title_visibility()
         self._update_tag_content_placeholder()
         self._apply_tag_content_line_width_for_current_type()
+        self._update_location_input_visibility()
         self._refresh_wechat_empty_location_checkbox()
         self._sync_location_entry_enabled_for_intent()
+
+    def _update_location_input_visibility(self) -> None:
+        """选「位置」时显示位置库下拉，隐藏手输框。"""
+        on_location = (
+            getattr(self, "tag_type_combo", None)
+            and self.tag_type_combo.currentText() == "位置"
+        )
+        loc_sel = getattr(self, "_location_selector", None)
+        ed = getattr(self, "tag_content_edit", None)
+        if loc_sel:
+            loc_sel.setVisible(bool(on_location))
+        if ed:
+            ed.setVisible(not on_location)
+
+    def _on_location_selector_changed(self, _index: int = 0) -> None:
+        sn = ""
+        loc_sel = getattr(self, "_location_selector", None)
+        if loc_sel:
+            sn = loc_sel.get_selected_short_name()
+        if hasattr(self, "tag_values"):
+            self.tag_values["位置"] = sn
+        self._refresh_wechat_empty_location_checkbox()
+
+    def _effective_location_short_name(self) -> str:
+        if (
+            getattr(self, "tag_type_combo", None)
+            and self.tag_type_combo.currentText() == "位置"
+        ):
+            loc_sel = getattr(self, "_location_selector", None)
+            if loc_sel:
+                return loc_sel.get_selected_short_name()
+        return (getattr(self, "tag_values", {}) or {}).get("位置", "") or ""
 
     def _apply_tag_content_line_width_for_current_type(self) -> None:
         """选「位置」时收窄地理输入框，便于与「默认城市定位」并排；其它类型占满中间区域。"""
@@ -2167,7 +2376,13 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
     def _update_location_mode_visibility(self) -> None:
         if not getattr(self, "location_mode_combo", None):
             return
-        self.location_mode_combo.setVisible(self.tag_type_combo.currentText() == "位置")
+        cap = self._current_publish_options_capabilities()
+        show_mode = bool(cap and cap.show_location_mode)
+        on_location = (
+            getattr(self, "tag_type_combo", None)
+            and self.tag_type_combo.currentText() == "位置"
+        )
+        self.location_mode_combo.setVisible(show_mode and on_location)
 
     def _on_location_mode_changed(self, text: str) -> None:
         if text in LOCATION_MODE_CHOICES:
@@ -2178,7 +2393,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             return
         t = self.tag_type_combo.currentText()
         if t == "位置":
-            self.tag_content_edit.setPlaceholderText("输入地理位置")
+            self.tag_content_edit.setPlaceholderText("请从位置推广库选择")
         elif t == "团购":
             self.tag_content_edit.setPlaceholderText("请输入团购相关信息")
         elif t == "购物车":
@@ -2189,17 +2404,20 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             self.tag_content_edit.setPlaceholderText("请输入对应内容")
 
     def _refresh_wechat_empty_location_checkbox(self) -> None:
-        """扩展信息里选「位置」即显示「默认城市定位」（落库字段仍仅视频号发布步骤使用）。"""
+        """视频号且选「位置」时显示「默认城市定位」（落库字段仍仅视频号步骤使用）。"""
         opt = getattr(self, "_wx_empty_loc_opt", None)
         if not opt:
             return
-        show = (
-            getattr(self, "tag_type_combo", None)
+        cap = self._current_publish_options_capabilities()
+        show = bool(
+            cap
+            and cap.show_wechat_empty_location
+            and getattr(self, "tag_type_combo", None)
             and self.tag_type_combo.currentText() == "位置"
         )
-        opt.set_row_visible(bool(show))
-        if show and getattr(self, "tag_content_edit", None):
-            opt.refresh_from_line_text(self.tag_content_edit.text())
+        opt.set_row_visible(show)
+        if show:
+            opt.refresh_from_line_text(self._effective_location_short_name())
 
     def _sync_location_entry_enabled_for_intent(self) -> None:
         """选「位置」时地理与模式始终可编辑；空 POI 时视频号行为由复选框决定。"""
@@ -2446,7 +2664,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
                     if not exists:
                         self.selected_account = None
                         self.account_label.setText("未选择账号")
-                        self._refresh_work_declaration_ui()
+                        self._refresh_account_dependent_settings_ui()
 
             # 加载完成后更新发布按钮状态
             self._update_publish_button_state()
@@ -2561,7 +2779,8 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
                 self._refresh_wechat_empty_location_checkbox()
                 self._sync_location_entry_enabled_for_intent()
                 self._refresh_yellow_cart_platform()
-                self._refresh_work_declaration_ui()
+                self._refresh_location_selector_platform()
+                self._refresh_account_dependent_settings_ui()
                 if (
                     not self._is_image_mode
                     and getattr(self, "_auto_match_video_switch", None)
@@ -3044,7 +3263,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         else:
             self.account_label.setText("未选择账号")
         self.selected_account = None
-        self._refresh_work_declaration_ui()
+        self._refresh_account_dependent_settings_ui()
 
     async def _deferred_bind_publish_record_account(self, record: Dict[str, Any], bind_gen: int) -> None:
         """账号列表尚未就绪或需按 ID 补查时，异步加载后再绑定（避免误报「不存在」）。"""
@@ -3076,7 +3295,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
                 self._apply_account_label_missing_in_library(record)
             self._update_publish_button_state()
             # 控件已在 set_publish_data 中按记录填过，此处只切换堆叠页到当前账号平台
-            self._refresh_work_declaration_ui(sync_from_storage=False)
+            self._refresh_account_dependent_settings_ui(sync_work_declaration_from_storage=False)
         except Exception as e:
             logger.error("异步回填发布账号失败: %s", e, exc_info=True)
     
@@ -3510,15 +3729,22 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             
             # 使用 self.tag_values 安全获取扩展字段
             tv = getattr(self, 'tag_values', {})
-            loc_text = tv.get("位置", "")
             loc_mode = (tv.get(_LOCATION_MODE_TAG_KEY) or "").strip()
             if loc_mode not in LOCATION_MODE_CHOICES:
                 loc_mode = ""
             wx_loc_pick = None
             if self.tag_type_combo.currentText() == "位置":
-                if (loc_text or "").strip():
+                loc_sel = getattr(self, "_location_selector", None)
+                loc_short = (
+                    loc_sel.get_selected_short_name() if loc_sel else ""
+                ) or (tv.get("位置", "") or "").strip()
+                if loc_short:
                     lm = loc_mode or LOCATION_MODE_CHECKIN
-                    poi_info = format_poi_info_storage(loc_text, lm)
+                    poi_info = (
+                        loc_sel.build_poi_info_storage(lm)
+                        if loc_sel
+                        else format_poi_info_storage(loc_short, lm)
+                    )
                     wx_loc_pick = False
                 else:
                     poi_info = ""
@@ -3529,6 +3755,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
                             effective_location_empty=True,
                         )
             else:
+                loc_text = tv.get("位置", "")
                 poi_info = format_poi_info_storage(loc_text, loc_mode)
             micro_app_info = tv.get("小程序", "")
             cart_link = tv.get("购物车", "")
@@ -3687,7 +3914,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         if hasattr(self, "allow_download_check") and self.allow_download_check:
             self.allow_download_check.setChecked(True)
         self._sync_work_declaration_widgets_from_storage()
-        self._refresh_work_declaration_ui()
+        self._refresh_account_dependent_settings_ui()
         self._reset_music_controls_to_default()
         self._update_publish_button_state()
 
@@ -3769,7 +3996,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             self.is_original_check.blockSignals(True)
             self.is_original_check.setChecked(False)
             self.is_original_check.blockSignals(False)
-        self._refresh_work_declaration_ui(sync_from_storage=False)
+        self._refresh_account_dependent_settings_ui(sync_work_declaration_from_storage=False)
         if not self._is_image_mode and getattr(self, "_auto_match_video_switch", None):
             self._auto_match_video_switch.blockSignals(True)
             self._auto_match_video_switch.setChecked(load_persisted_single_auto_match_video_library())
@@ -3973,8 +4200,28 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         ):
             self.tag_values = {t: "" for t in _ext_tag_order}
             p_raw = (record.get("poi_info") or "").strip()
+            _loc_short = parse_location_short_name_from_storage(p_raw)
             _loc_text, _loc_mode = parse_poi_info_storage(p_raw)
-            self.tag_values["位置"] = _loc_text
+            if _loc_short:
+                self.tag_values["位置"] = _loc_short
+                loc_sel = getattr(self, "_location_selector", None)
+                if loc_sel:
+                    loc_sel.apply_record(_loc_short)
+            elif _loc_text and not _loc_short:
+                self.tag_values["位置"] = ""
+                from qfluentwidgets import InfoBar, InfoBarPosition
+
+                InfoBar.warning(
+                    title="位置需重新选择",
+                    content="该任务的位置为旧版手填数据，请先在「带货推广 → 位置推广」配置位置后重新选择。",
+                    orient=Qt.Horizontal,
+                    isClosable=True,
+                    duration=6000,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+            else:
+                self.tag_values["位置"] = ""
             self.tag_values[_LOCATION_MODE_TAG_KEY] = (
                 _loc_mode if _loc_mode in LOCATION_MODE_CHOICES else LOCATION_MODE_CHECKIN
             )
@@ -4021,6 +4268,8 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             self._update_promotion_title_visibility()
             self._update_tag_content_placeholder()
             self._apply_tag_content_line_width_for_current_type()
+            self._update_location_input_visibility()
+            self._refresh_location_selector_platform()
             if getattr(self, "_wx_empty_loc_opt", None):
                 raw_wx = record.get("wechat_empty_location_open_picker")
                 self._wx_empty_loc_opt.apply_from_db(
@@ -4028,7 +4277,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
                 )
                 self._wx_empty_loc_opt.set_row_visible(_chosen == "位置")
                 self._wx_empty_loc_opt.refresh_from_line_text(
-                    self.tag_content_edit.text()
+                    self._effective_location_short_name()
                 )
             self._sync_location_entry_enabled_for_intent()
 
@@ -4220,6 +4469,6 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
 
         self._update_publish_button_state()
         if _single_wd_applied_from_record:
-            self._refresh_work_declaration_ui(sync_from_storage=False)
+            self._refresh_account_dependent_settings_ui(sync_work_declaration_from_storage=False)
         else:
-            self._refresh_work_declaration_ui(sync_from_storage=True)
+            self._refresh_account_dependent_settings_ui(sync_work_declaration_from_storage=True)

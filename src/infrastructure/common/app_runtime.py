@@ -103,7 +103,7 @@ async def _auto_login_and_maybe_log() -> None:
         _publish_auto_login_user_changed()
 
 
-def schedule_auto_login(task_registry: Any) -> None:
+def schedule_auto_login(task_registry: Any, *, delay_ms: int | None = None) -> None:
     from config.feature_flags import FeatureFlags
 
     _mark("autologin_start")
@@ -111,8 +111,21 @@ def schedule_auto_login(task_registry: Any) -> None:
         _mark("autologin_done")
         return
 
+    if delay_ms is None:
+        try:
+            from src.infrastructure.common.startup_prefs import startup_scheduler_delays_ms
+
+            delay_ms = startup_scheduler_delays_ms()["auto_login_delay"]
+        except Exception:
+            delay_ms = 400
+
+    async def _delayed_auto_login() -> None:
+        if delay_ms and delay_ms > 0:
+            await asyncio.sleep(delay_ms / 1000.0)
+        await _auto_login_and_maybe_log()
+
     task_registry.create_task(
-        _auto_login_and_maybe_log(),
+        _delayed_auto_login(),
         name="startup.auto_login",
         group="startup",
     )

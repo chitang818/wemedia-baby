@@ -1629,6 +1629,7 @@ class PublishListPage(PublishRecordsPage):
                     # 开始包装一层单独的任务执行供中途可取消操作
                     self.current_task = get_async_task_registry().create_task(publish_service.publish_single(
                         user_id=self.user_id,
+                        publish_record_id=task_id,
                         account_name=account_name,
                         platform=platform,
                         file_path=file_path,
@@ -1688,7 +1689,12 @@ class PublishListPage(PublishRecordsPage):
                              "（已写入数据库，可在「发布记录」页查看本条历史）"
                          )
                          if db_publish:
-                             await db_publish.update_status(task_id, 'success', publish_url=result.publish_url)
+                             await db_publish.update_status(
+                                 task_id,
+                                 'success',
+                                 publish_url=result.publish_url,
+                                 diagnostic_path=getattr(result, "diagnostic_path", None),
+                             )
                          if post_publish_action != "none":
                              await PostPublishFileHandler.on_task_success(
                                  task_id, task, file_groups, post_publish_action, user_log,
@@ -1703,7 +1709,12 @@ class PublishListPage(PublishRecordsPage):
                          msg = result.error_message if result else "未知错误"
                          self.log_widget.append_error(f"❌ 任务发布失败: {msg}")
                          if db_publish:
-                             await db_publish.update_status(task_id, 'failed', error_message=msg)
+                             await db_publish.update_status(
+                                 task_id,
+                                 'failed',
+                                 error_message=msg,
+                                 diagnostic_path=getattr(result, "diagnostic_path", None),
+                             )
                          if post_publish_action != "none":
                              PostPublishFileHandler.on_task_failed(task_id, file_groups)
                          for item in run_task_items:

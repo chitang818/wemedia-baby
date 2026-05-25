@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QApplication
 from src.ui.pages.account.components.account_table_model import AccountTableModel
 from src.ui.pages.publish.publish_record_table_model import PublishRecordTableModel
 from src.ui.pages.publish.publish_record_table_view import PublishRecordTableView
+from src.utils.platform_names import get_platform_display_name
 from src.ui.pages.publish.publish_records_page import PublishRecordsPage
 from src.ui.pages.publish.publish_recycle_bin_page import PublishRecycleBinPage
 
@@ -131,6 +132,17 @@ def test_recycle_navigation_refresh_skips_fresh_page() -> None:
     page.refresh_after_navigation()
 
     assert calls == {"load": 0}
+
+
+def test_publish_record_table_platform_column_fits_display_names() -> None:
+    _qapp()
+    table = PublishRecordTableView()
+    col = PublishRecordTableModel.COL_PLATFORM
+    width = table.columnWidth(col)
+    fm = PublishRecordTableView._table_font_metrics()
+    for platform_id in ("xiaohongshu", "douyin", "duoduoshipin", "bilibili"):
+        label = get_platform_display_name(platform_id)
+        assert fm.horizontalAdvance(label) + 16 <= width
 
 
 def test_publish_record_table_view_recycle_mode_is_idempotent(monkeypatch) -> None:

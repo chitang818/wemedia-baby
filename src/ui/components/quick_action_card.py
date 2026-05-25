@@ -57,7 +57,7 @@ class QuickActionCard(CardWidget):
         self.title_label = BodyLabel(title, self)
         self.title_label.setAlignment(Qt.AlignCenter)
         self.title_label.setWordWrap(False)
-        self.title_label.setToolTip(title)
+        # 标题已完整展示，勿 setToolTip：Windows 原生 QToolTip 易出现黑底深字条
         layout.addWidget(self.title_label, 0, Qt.AlignCenter)
 
         self.desc_label = None

@@ -35,7 +35,49 @@ from src.ui.workspace_chart_animation_prefs import STATS_SKELETON_MIN_MS
 
 # 工作台半宽双列统一高度（账号统计 | 发布统计）
 OVERVIEW_PAIR_HEIGHT = 300
+OVERVIEW_PAIR_HEIGHT_MAXIMIZED = 400
+OVERVIEW_PAIR_HEIGHT_MIN = 220
+OVERVIEW_PAIR_STACKED_GAP = 10
+# 视口预算余量：概览前间距、圆角与布局取整误差
+OVERVIEW_VIEWPORT_SAFETY = 16
+# 默认窗口下发布统计卡高度上限（与并排双列区单卡高度一致，由页面按视口动态收紧）
+PUBLISH_STATS_CARD_MAX_HEIGHT = OVERVIEW_PAIR_HEIGHT
 HALF_COLUMN_CARD_HEIGHT = OVERVIEW_PAIR_HEIGHT
+
+
+def resolve_overview_pair_height(*, maximized: bool, stacked: bool) -> int:
+    """并排或上下堆叠时，双列区宿主控件的总高度（未按视口收紧）。"""
+    single = OVERVIEW_PAIR_HEIGHT_MAXIMIZED if maximized else OVERVIEW_PAIR_HEIGHT
+    if stacked:
+        return single * 2 + OVERVIEW_PAIR_STACKED_GAP
+    return single
+
+
+def clamp_overview_pair_height(
+    preferred: int,
+    *,
+    budget: Optional[int],
+    stacked: bool,
+) -> int:
+    """默认窗口：用视口剩余高度收紧双列区，避免工作台整页滚动。"""
+    if budget is None:
+        return preferred
+    if stacked:
+        min_host = OVERVIEW_PAIR_HEIGHT_MIN * 2 + OVERVIEW_PAIR_STACKED_GAP
+        return max(min_host, min(preferred, budget))
+    return max(OVERVIEW_PAIR_HEIGHT_MIN, min(preferred, budget))
+
+
+def overview_pair_card_height(host_height: int, *, stacked: bool) -> int:
+    """堆叠时两张卡平分宿主高度；并排时与宿主同高。"""
+    if stacked:
+        return (host_height - OVERVIEW_PAIR_STACKED_GAP) // 2
+    return host_height
+
+
+def publish_stats_card_height(pair_card_height: int) -> int:
+    """发布统计卡与并排双列区单卡同高（列表在卡片内滚动）。"""
+    return pair_card_height
 
 MAX_PLATFORM_ROWS = 5
 BAR_ROW_HEIGHT = 36

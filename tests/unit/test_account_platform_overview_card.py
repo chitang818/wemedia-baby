@@ -8,6 +8,9 @@ from src.ui.components.account_platform_overview_card import (
     PlatformDistributionBarRow,
     PlatformStackedBar,
     build_overview_platform_rows,
+    clamp_overview_pair_height,
+    publish_stats_card_height,
+    resolve_overview_pair_height,
 )
 
 
@@ -17,6 +20,22 @@ def qapp():
     if app is None:
         app = QApplication([])
     return app
+
+
+def test_clamp_overview_pair_height_respects_viewport_budget():
+    preferred = resolve_overview_pair_height(maximized=False, stacked=False)
+    assert clamp_overview_pair_height(preferred, budget=240, stacked=False) == 240
+    assert clamp_overview_pair_height(preferred, budget=None, stacked=False) == preferred
+
+
+def test_clamp_overview_pair_height_fills_viewport_when_maximized():
+    preferred = resolve_overview_pair_height(maximized=True, stacked=False)
+    assert clamp_overview_pair_height(99999, budget=520, stacked=False) == 520
+    assert clamp_overview_pair_height(99999, budget=None, stacked=False) == 99999
+
+
+def test_publish_stats_card_height_matches_pair_column():
+    assert publish_stats_card_height(400) == 400
 
 
 def test_build_overview_platform_rows_collapses_extra(qapp):

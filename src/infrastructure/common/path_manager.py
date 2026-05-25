@@ -120,6 +120,23 @@ class PathManager:
         return dir_path
 
     @classmethod
+    def get_debug_diagnostics_root(cls) -> Path:
+        """Return the root directory for publish failure diagnostic bundles."""
+        dir_path = cls.get_app_data_dir() / "debug" / "diagnostics"
+        dir_path.mkdir(parents=True, exist_ok=True)
+        return dir_path
+
+    @classmethod
+    def get_debug_diagnostics_dir(cls, platform: str) -> Path:
+        """Return the platform directory for publish failure diagnostic bundles."""
+        pid = (platform or "").strip()
+        if not pid:
+            raise ValueError("platform is required for debug diagnostics directory")
+        dir_path = cls.get_debug_diagnostics_root() / pid
+        dir_path.mkdir(parents=True, exist_ok=True)
+        return dir_path
+
+    @classmethod
     def get_platform_account_dir(
         cls,
         platform: str,

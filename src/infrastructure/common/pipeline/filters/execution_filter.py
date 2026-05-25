@@ -62,9 +62,11 @@ class PublishExecutionFilter(BaseFilter):
             
             if result.success:
                 context.publish_url = result.publish_url
+                context.diagnostic_path = getattr(result, "diagnostic_path", None)
                 logger.info("ExecutionFilter: 发布成功")
                 return True
             else:
+                context.diagnostic_path = getattr(result, "diagnostic_path", None)
                 self.set_error(result.error_message)
                 logger.error(f"ExecutionFilter: 发布失败 - {result.error_message}")
                 return False

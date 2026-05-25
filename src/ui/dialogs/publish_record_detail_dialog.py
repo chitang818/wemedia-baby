@@ -117,6 +117,8 @@ class PublishRecordDetailDialog(AppMessageBoxBase if FLUENT_WIDGETS_AVAILABLE el
             result_items.append(("发布链接", self.record.get('publish_url')))
         if self.record.get('error_message'):
             result_items.append(("错误信息", self.record.get('error_message')))
+        if self.record.get('diagnostic_path'):
+            result_items.append(("诊断目录", self.record.get('diagnostic_path')))
         
         if result_items:
             self._add_section(scroll_layout, scroll_content, "发布结果", result_items)

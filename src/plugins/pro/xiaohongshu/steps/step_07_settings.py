@@ -11,19 +11,24 @@
 
 字段依赖：
   - metadata['file_type']: "video" / "image"
-  - metadata['privacy_settings']: privacy ("public"/"private")；
+  - metadata['privacy_settings']: privacy ("public"/"private"/"friend")；
     图文 xiaohongshu_allow_co_create / xiaohongshu_allow_copy_content（bool，缺省为 True）
   - metadata['schedule_time'] / metadata['scheduled_publish_time']: 定时发布时间
 """
+from __future__ import annotations
+
 import json
 import logging
-from typing import Any, Callable, Dict, List, Optional, Sequence
+import re
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from playwright.async_api import Locator, Page
 
 from src.plugins.core.interfaces.publish_plugin import PublishResult
+from src.plugins.core.wait_helper import PluginWaitHelper
 from ._base import BasePublishStep, StepOutcome
 from ..selectors import Selectors
+from .step_06A_original_declaration import _scroll_locator_to_center
 
 logger = logging.getLogger(__name__)
 USER_LOG = logging.getLogger("publish.user_log")
@@ -31,9 +36,43 @@ USER_LOG = logging.getLogger("publish.user_log")
 KEY_XHS_ALLOW_CO_CREATE = "xiaohongshu_allow_co_create"
 KEY_XHS_ALLOW_COPY_CONTENT = "xiaohongshu_allow_copy_content"
 
+# 定时发布 switch 交互（对齐 step_06A）
+_SCHEDULE_SWITCH_RESPONSE_WAIT_MS = 2500
+_SCHEDULE_SWITCH_POLL_MS = 200
+_SCHEDULE_SWITCH_CLICK_MAX_ATTEMPTS = 3
+_SCHEDULE_POST_CLICK_SETTLE_MS = 300
+
+_PRIVACY_TO_XHS_LABEL: Dict[str, str] = {
+    "public": "公开可见",
+    "private": "仅自己可见",
+    "friend": "仅互关好友可见",
+}
+
+
+def privacy_to_xhs_label(privacy: str) -> Optional[str]:
+    """任务 privacy 字段 → 小红书可见范围下拉选项文案。"""
+    return _PRIVACY_TO_XHS_LABEL.get((privacy or "").strip().lower())
+
+
+def parse_schedule_st_str(st_str: str) -> Optional[Tuple[int, int, int, int, int]]:
+    """解析 YYYY-MM-DD HH:mm 为 (year, month, day, hour, minute)。"""
+    s = (st_str or "").strip()
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$", s)
+    if not m:
+        return None
+    return (
+        int(m.group(1)),
+        int(m.group(2)),
+        int(m.group(3)),
+        int(m.group(4)),
+        int(m.group(5)),
+    )
+
 
 class PublishSettingsStep(BasePublishStep):
     """发布设置：视频/图文按类型应用可见性、定时及图文专属开关。"""
+
+    _FAILED_STEP = "PublishSettingsStep"
 
     async def execute(self, page: Page, file_path: str, metadata: Dict[str, Any]) -> StepOutcome:
         await self._await_pause(metadata)
@@ -82,9 +121,33 @@ class PublishSettingsStep(BasePublishStep):
             privacy_settings = {}
         return privacy_settings
 
+    def _more_settings_root(self, page: Page) -> Locator:
+        for sel in Selectors.SETTINGS.get("MORE_SETTINGS_SECTION", []):
+            return page.locator(sel).first
+        return page.locator(".publish-page-content-settings").first
+
     async def _scroll_to_settings_area(
         self, page: Page, wait_ms: Callable[[int], int],
     ) -> None:
+        try:
+            root = self._more_settings_root(page)
+            if await root.count() > 0:
+                await _scroll_locator_to_center(page, root, wait_ms=wait_ms(350))
+                logger.debug("已滚入更多设置区")
+                return
+        except Exception:
+            pass
+
+        for hint in ("更多设置", "定时发布", "公开可见"):
+            try:
+                loc = page.locator("div").filter(has_text=hint).first
+                if await loc.count() > 0:
+                    await _scroll_locator_to_center(page, loc, wait_ms=wait_ms(350))
+                    logger.debug("已滚入设置锚点: %s", hint)
+                    return
+            except Exception:
+                continue
+
         try:
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             await page.wait_for_timeout(wait_ms(300))
@@ -135,6 +198,80 @@ class PublishSettingsStep(BasePublishStep):
                 target,
             )
 
+    async def _find_permission_select(self, page: Page) -> Optional[Locator]:
+        root = self._more_settings_root(page)
+        try:
+            if await root.count() > 0:
+                loc = root.locator(".permission-card-select").first
+                if await loc.count() > 0:
+                    return loc
+        except Exception:
+            pass
+
+        for sel in Selectors.SETTINGS.get("PERMISSION_SELECT", []):
+            try:
+                loc = page.locator(sel).first
+                if await loc.count() > 0 and await loc.is_visible():
+                    return loc
+            except Exception:
+                continue
+        return None
+
+    async def _wait_permission_dropdown(self, page: Page, *, timeout_ms: int = 5000) -> Optional[Locator]:
+        anchors = Selectors.SETTINGS.get("PERMISSION_DROPDOWN_ANCHOR", ["仅自己可见"])
+        anchor = anchors[0] if anchors else "仅自己可见"
+        for sel in Selectors.SETTINGS.get("PERMISSION_DROPDOWN", []):
+            try:
+                loc = page.locator(sel).first
+                await loc.wait_for(state="visible", timeout=timeout_ms)
+                if await loc.count() > 0:
+                    return loc
+            except Exception:
+                continue
+        try:
+            loc = (
+                page.locator("body > .d-popover.custom-dropdown-44")
+                .filter(has_text=anchor)
+                .first
+            )
+            await loc.wait_for(state="visible", timeout=timeout_ms)
+            if await loc.count() > 0:
+                return loc
+        except Exception as e:
+            logger.debug("等待权限浮层失败: %s", e)
+        return None
+
+    async def _apply_visibility_fallback_radio(
+        self,
+        page: Page,
+        privacy: str,
+        metadata: Dict[str, Any],
+        config: Dict[str, Any],
+        wait_ms: Callable[[int], int],
+    ) -> bool:
+        """图文旧版 radio 兜底。"""
+        from src.infrastructure.anti_risk.delays import random_delay
+        from src.infrastructure.anti_risk.human_like import human_click
+
+        privacy_selectors = list(Selectors.SETTINGS.get("PRIVACY_PUBLIC", []))
+        if privacy == "private":
+            privacy_selectors = list(Selectors.SETTINGS.get("PRIVACY_PRIVATE", []))
+
+        for sel in privacy_selectors:
+            try:
+                loc = page.locator(sel).first
+                if await loc.count() > 0 and await loc.is_visible():
+                    await loc.scroll_into_view_if_needed()
+                    try:
+                        await human_click(page, loc, metadata, config)
+                    except Exception:
+                        await loc.click()
+                    await random_delay(page, wait_ms(500), metadata, config)
+                    return True
+            except Exception:
+                continue
+        return False
+
     async def _apply_visibility(
         self,
         page: Page,
@@ -143,41 +280,603 @@ class PublishSettingsStep(BasePublishStep):
         config: Dict[str, Any],
         wait_ms: Callable[[int], int],
     ) -> None:
-        privacy = privacy_settings.get("privacy", "public")
+        privacy = (privacy_settings.get("privacy") or "public").strip().lower()
+        target_label = privacy_to_xhs_label(privacy)
+        if not target_label:
+            USER_LOG.warning(
+                "[步骤7 发布设置] ▷ 未知可见性配置「%s」，跳过自动设置",
+                privacy,
+            )
+            return
+
         try:
-            privacy_selectors = list(Selectors.SETTINGS.get("PRIVACY_PUBLIC", []))
-            if privacy == "private":
-                privacy_selectors = list(Selectors.SETTINGS.get("PRIVACY_PRIVATE", []))
+            entry = await self._find_permission_select(page)
+            if entry is None:
+                if await self._apply_visibility_fallback_radio(
+                    page, privacy, metadata, config, wait_ms,
+                ):
+                    USER_LOG.info("[步骤7 发布设置] ▶ 已设置可见性（旧版控件）: %s", target_label)
+                    return
+                USER_LOG.warning("[步骤7 发布设置] ▷ 未找到可见性下拉，请人工核对")
+                return
 
-            for sel in privacy_selectors:
-                try:
-                    loc = page.locator(sel).first
-                    if await loc.count() > 0 and await loc.is_visible():
-                        try:
-                            await loc.scroll_into_view_if_needed()
-                        except Exception:
-                            pass
-                        try:
-                            from src.infrastructure.anti_risk.human_like import human_click
-                            await human_click(page, loc, metadata, config)
-                        except Exception:
-                            await loc.click()
+            await _scroll_locator_to_center(page, entry, wait_ms=wait_ms(200))
+            try:
+                entry_text = (await entry.inner_text() or "").strip()
+            except Exception:
+                entry_text = ""
+            if target_label in entry_text:
+                USER_LOG.info("[步骤7 发布设置] ▶ 可见性已是: %s", target_label)
+                logger.info("可见性无需变更: %s", target_label)
+                return
 
-                        try:
-                            from src.infrastructure.anti_risk.delays import random_delay
-                            await random_delay(page, wait_ms(500), metadata, config)
-                        except Exception:
-                            await page.wait_for_timeout(wait_ms(500))
+            from src.infrastructure.anti_risk.delays import random_delay
+            from src.infrastructure.anti_risk.human_like import human_click
 
-                        label = "私密" if privacy == "private" else "公开可见"
-                        USER_LOG.info(f"[步骤7 发布设置] ▶ 已设置可见性: {label}")
-                        logger.info("已设置可见性: %s", privacy)
-                        return
-                except Exception:
-                    continue
-            USER_LOG.warning("[步骤7 发布设置] ▷ 未找到可见性选项，请人工核对")
+            try:
+                await human_click(page, entry, metadata, config)
+            except Exception:
+                await entry.click()
+            await random_delay(page, wait_ms(400), metadata, config)
+
+            panel = await self._wait_permission_dropdown(page, timeout_ms=5000)
+            if panel is None:
+                USER_LOG.warning("[步骤7 发布设置] ▷ 可见性浮层未出现，请人工核对")
+                return
+
+            option = panel.get_by_text(target_label, exact=True).first
+            if await option.count() == 0:
+                option = panel.locator(f"div:has-text('{target_label}')").first
+            if await option.count() == 0:
+                USER_LOG.warning(
+                    "[步骤7 发布设置] ▷ 浮层中未找到「%s」，请人工核对",
+                    target_label,
+                )
+                return
+
+            try:
+                await human_click(page, option, metadata, config)
+            except Exception:
+                await option.click()
+            await random_delay(page, wait_ms(400), metadata, config)
+            await page.wait_for_timeout(wait_ms(200))
+
+            USER_LOG.info("[步骤7 发布设置] ▶ 已设置可见性: %s", target_label)
+            logger.info("已设置可见性: %s", target_label)
         except Exception as e:
             logger.warning("设置可见性异常: %s", e)
+            USER_LOG.warning("[步骤7 发布设置] ▷ 设置可见性异常，请人工核对")
+
+    def _schedule_wrapper(self, page: Page) -> Locator:
+        """限定「更多设置」内带「定时发布」文案的卡片，避免误点其他 switch。"""
+        for sel in Selectors.SETTINGS.get("SCHEDULE_WRAPPER", []):
+            return page.locator(sel).filter(has_text="定时发布").first
+        return page.locator(
+            ".publish-page-content-settings .post-time-wrapper"
+        ).filter(has_text="定时发布").first
+
+    async def _scroll_to_schedule_area(
+        self, page: Page, wait_ms: Callable[[int], int],
+    ) -> None:
+        """滚入定时发布区域（比整段更多设置更精确）。"""
+        try:
+            wrapper = self._schedule_wrapper(page)
+            if await wrapper.count() > 0:
+                await _scroll_locator_to_center(page, wrapper, wait_ms=wait_ms(350))
+                logger.debug("已滚入定时发布区")
+                return
+        except Exception:
+            pass
+        for hint in ("定时发布", "更多设置"):
+            try:
+                loc = page.locator("div").filter(has_text=hint).first
+                if await loc.count() > 0:
+                    await _scroll_locator_to_center(page, loc, wait_ms=wait_ms(350))
+                    return
+            except Exception:
+                continue
+
+    async def _ensure_schedule_area_visible(
+        self, page: Page, wait_ms: Callable[[int], int],
+    ) -> None:
+        await self._scroll_to_schedule_area(page, wait_ms)
+        wrapper = self._schedule_wrapper(page)
+        try:
+            if await wrapper.count() > 0 and await wrapper.is_visible():
+                return
+        except Exception:
+            pass
+        try:
+            root = self._more_settings_root(page)
+            header = root.get_by_text("更多设置", exact=True).first
+            if await header.count() > 0:
+                await header.click()
+                await page.wait_for_timeout(wait_ms(300))
+                await self._scroll_to_schedule_area(page, wait_ms)
+        except Exception as e:
+            logger.debug("展开更多设置区失败: %s", e)
+
+    async def _read_schedule_checkbox_state(self, checkbox: Locator) -> bool:
+        try:
+            return await checkbox.is_checked()
+        except Exception:
+            return False
+
+    async def _read_schedule_switch_visual_on(self, wrapper: Locator) -> bool:
+        """d-switch-simulator 无 unchecked 或含 checked 表示定时开关视觉为 ON。"""
+        try:
+            if await wrapper.count() == 0:
+                return False
+            sim = wrapper.locator(".d-switch-simulator").first
+            if await sim.count() == 0:
+                return False
+            cls = (await sim.get_attribute("class")) or ""
+            tokens = cls.split()
+            if "unchecked" in tokens:
+                return False
+            if "checked" in tokens:
+                return True
+            box = wrapper.locator("input[type='checkbox']").first
+            if await box.count() > 0:
+                return await self._read_schedule_checkbox_state(box)
+            return True
+        except Exception:
+            return False
+
+    async def _schedule_switch_enabled(
+        self,
+        page: Page,
+        wrapper: Locator,
+        checkbox: Optional[Locator],
+    ) -> bool:
+        """视觉 ON、checkbox 勾选或时间输入框可见，任一即视为开关已开。"""
+        if await self._read_schedule_switch_visual_on(wrapper):
+            return True
+        if checkbox is not None:
+            if await self._read_schedule_checkbox_state(checkbox):
+                return True
+        display = await self._find_schedule_time_display(page)
+        if display is not None:
+            try:
+                if await display.count() > 0 and await display.is_visible():
+                    return True
+            except Exception:
+                pass
+        return False
+
+    @staticmethod
+    def _schedule_input_value_matches(val: str, st_str: str) -> bool:
+        v = (val or "").strip()
+        s = (st_str or "").strip()
+        return bool(v and s and (v == s or s in v))
+
+    async def _read_schedule_input_value(self, inp: Locator) -> str:
+        try:
+            return (await inp.input_value() or "").strip()
+        except Exception:
+            return ""
+
+    async def _ensure_schedule_switch_on(
+        self,
+        page: Page,
+        metadata: Dict[str, Any],
+        config: Dict[str, Any],
+        wait_ms: Callable[[int], int],
+    ) -> bool:
+        """选时失败后若开关被误关，仅在其为 OFF 时重新打开（避免重复点击关断）。"""
+        wrapper = self._schedule_wrapper(page)
+        checkbox = await self._find_schedule_checkbox(page)
+        if await self._read_schedule_switch_visual_on(wrapper):
+            return True
+        if checkbox is not None and await self._read_schedule_checkbox_state(checkbox):
+            return True
+        logger.info("定时发布开关已关闭，尝试重新打开")
+        USER_LOG.info("[步骤7 发布设置] ▶ 定时开关已关闭，正在重新打开")
+        return await self._click_schedule_switch_to_open(page, metadata, config, wait_ms)
+
+    async def _click_picker_item(
+        self,
+        page: Page,
+        item: Locator,
+        wait_ms: Callable[[int], int],
+    ) -> bool:
+        """仅在浮层子元素上点击，避免 human_click 偏移点到开关区域。"""
+        try:
+            if await item.count() == 0:
+                return False
+            await item.scroll_into_view_if_needed(timeout=4000)
+            await page.wait_for_timeout(wait_ms(80))
+            if await self._mouse_click_locator_center(page, item):
+                return True
+            await item.click(timeout=4000)
+            return True
+        except Exception as e:
+            logger.debug("浮层内点击失败: %s", e)
+            return False
+
+    async def _set_schedule_time_via_input(
+        self,
+        page: Page,
+        inp: Locator,
+        st_str: str,
+        wait_ms: Callable[[int], int],
+        speed_rate: float,
+    ) -> bool:
+        """优先用输入框写入（减少在日历上的误点导致开关被关）。"""
+        try:
+            handle = await inp.element_handle()
+            if handle is not None:
+                await page.evaluate(
+                    """([el, v]) => {
+                        if (!el) return;
+                        el.focus();
+                        el.value = v;
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    }""",
+                    [handle, st_str],
+                )
+                await page.wait_for_timeout(wait_ms(250))
+                if self._schedule_input_value_matches(
+                    await self._read_schedule_input_value(inp), st_str
+                ):
+                    return True
+        except Exception as e:
+            logger.debug("JS 写入定时输入失败: %s", e)
+
+        try:
+            await self._mouse_click_locator_center(page, inp)
+            await page.wait_for_timeout(wait_ms(100))
+            await inp.fill(st_str)
+            await page.wait_for_timeout(wait_ms(150))
+            if self._schedule_input_value_matches(
+                await self._read_schedule_input_value(inp), st_str
+            ):
+                return True
+            await inp.press("Control+A")
+            await inp.press("Backspace")
+            await inp.type(st_str, delay=max(10, int(30 * speed_rate)))
+            await page.wait_for_timeout(wait_ms(200))
+            return self._schedule_input_value_matches(
+                await self._read_schedule_input_value(inp), st_str
+            )
+        except Exception as e:
+            logger.debug("键盘写入定时输入失败: %s", e)
+            return False
+
+    async def _mouse_click_locator_center(self, page: Page, locator: Locator) -> bool:
+        try:
+            box = await locator.bounding_box()
+            if not box or box.get("width", 0) < 2 or box.get("height", 0) < 2:
+                return False
+            x = box["x"] + box["width"] / 2
+            y = box["y"] + box["height"] / 2
+            await page.mouse.click(x, y)
+            return True
+        except Exception as e:
+            logger.debug("定时发布 mouse.click 中心失败: %s", e)
+            return False
+
+    async def _try_click_schedule_switch_target(
+        self,
+        page: Page,
+        target: Locator,
+        metadata: Dict[str, Any],
+        config: Dict[str, Any],
+        wait_ms: Callable[[int], int],
+    ) -> None:
+        from src.infrastructure.anti_risk.human_like import human_click
+
+        await _scroll_locator_to_center(page, target, wait_ms=wait_ms(200))
+        if await self._mouse_click_locator_center(page, target):
+            return
+        try:
+            await target.click(timeout=4000, force=True)
+            return
+        except Exception as e:
+            logger.debug("定时 switch locator.click(force) 失败: %s", e)
+        await human_click(
+            page,
+            target,
+            metadata,
+            config,
+            use_operation_delay=False,
+        )
+
+    @staticmethod
+    def _schedule_sel_within_wrapper(selector: str) -> str:
+        """将全局选择器转为 post-time-wrapper 内相对路径。"""
+        for prefix in (
+            ".publish-page-content-settings .post-time-wrapper ",
+            ".post-time-wrapper ",
+            ".post-time-switch-container ",
+        ):
+            if selector.startswith(prefix):
+                return selector[len(prefix):]
+        return selector
+
+    async def _collect_schedule_switch_targets(self, wrapper: Locator) -> List[Locator]:
+        ordered = (
+            ".d-switch-simulator",
+            ".d-clickable.d-switch",
+            ".post-time-switch-container",
+            ".custom-switch-card",
+            ".custom-switch-wrapper",
+        )
+        targets: List[Locator] = []
+        seen: set[str] = set()
+        try:
+            if await wrapper.count() == 0:
+                return targets
+            for sel in ordered:
+                if sel in seen:
+                    continue
+                seen.add(sel)
+                loc = wrapper.locator(sel).first
+                if await loc.count() > 0:
+                    targets.append(loc)
+            for sel in Selectors.SETTINGS.get("SCHEDULE_SWITCH", []):
+                rel = self._schedule_sel_within_wrapper(sel)
+                if rel in seen:
+                    continue
+                seen.add(rel)
+                loc = wrapper.locator(rel).first
+                if await loc.count() > 0:
+                    targets.append(loc)
+        except Exception as e:
+            logger.debug("收集定时 switch 目标失败: %s", e)
+        return targets
+
+    async def _wait_schedule_switch_response(
+        self,
+        page: Page,
+        wrapper: Locator,
+        checkbox: Optional[Locator],
+        *,
+        timeout_ms: int = _SCHEDULE_SWITCH_RESPONSE_WAIT_MS,
+    ) -> bool:
+        elapsed = 0
+        while elapsed < timeout_ms:
+            if await self._schedule_switch_enabled(page, wrapper, checkbox):
+                return True
+            await page.wait_for_timeout(_SCHEDULE_SWITCH_POLL_MS)
+            elapsed += _SCHEDULE_SWITCH_POLL_MS
+        return await self._schedule_switch_enabled(page, wrapper, checkbox)
+
+    async def _find_schedule_checkbox_via_label(self, page: Page) -> Optional[Locator]:
+        try:
+            label = page.get_by_text("定时发布", exact=True).first
+            if await label.count() == 0:
+                return None
+            for depth in range(1, 12):
+                parent = label.locator(f"xpath=ancestor::div[{depth}]")
+                box = parent.locator("input[type='checkbox']").first
+                if await box.count() > 0:
+                    return box
+        except Exception:
+            pass
+        return None
+
+    async def _click_schedule_switch_to_open(
+        self,
+        page: Page,
+        metadata: Dict[str, Any],
+        config: Dict[str, Any],
+        wait_ms: Callable[[int], int],
+    ) -> bool:
+        """打开定时发布 switch（对齐 06A：多目标点击 + 轮询 + 视觉/时间框判定）。"""
+        await self._ensure_schedule_area_visible(page, wait_ms)
+
+        wrapper = self._schedule_wrapper(page)
+        checkbox = await self._find_schedule_checkbox(page)
+        if checkbox is None:
+            checkbox = await self._find_schedule_checkbox_via_label(page)
+
+        if await self._read_schedule_switch_visual_on(wrapper):
+            logger.info("定时发布开关已为开启状态（视觉 ON）")
+            USER_LOG.info("[步骤7 发布设置] ▶ 定时发布开关已开启")
+            return True
+        if await self._schedule_switch_enabled(page, wrapper, checkbox):
+            logger.info("定时发布开关已为开启状态")
+            USER_LOG.info("[步骤7 发布设置] ▶ 定时发布开关已开启")
+            return True
+
+        targets = await self._collect_schedule_switch_targets(wrapper)
+        if not targets:
+            logger.warning("定时发布：未找到可点击的 switch 元素")
+            return False
+
+        for attempt in range(1, _SCHEDULE_SWITCH_CLICK_MAX_ATTEMPTS + 1):
+            if await self._schedule_switch_enabled(page, wrapper, checkbox):
+                return True
+
+            for target in targets:
+                try:
+                    await self._try_click_schedule_switch_target(
+                        page, target, metadata, config, wait_ms,
+                    )
+                    await page.wait_for_timeout(wait_ms(_SCHEDULE_POST_CLICK_SETTLE_MS))
+                    if await self._wait_schedule_switch_response(page, wrapper, checkbox):
+                        logger.info("定时发布开关点击有效（第 %s 次）", attempt)
+                        USER_LOG.info("[步骤7 发布设置] ▶ 已打开定时发布开关")
+                        return True
+                except Exception as e:
+                    logger.debug("定时 switch 点击失败 attempt=%s: %s", attempt, e)
+                    continue
+
+            logger.debug("定时发布：第 %s 次点击后无响应，准备重试", attempt)
+            await page.wait_for_timeout(wait_ms(350))
+
+        if checkbox is not None:
+            try:
+                await checkbox.check(force=True)
+                await page.wait_for_timeout(wait_ms(200))
+            except Exception as e:
+                logger.debug("定时发布 checkbox.check 兜底失败: %s", e)
+
+        enabled = await self._schedule_switch_enabled(page, wrapper, checkbox)
+        if enabled:
+            USER_LOG.info("[步骤7 发布设置] ▶ 已打开定时发布开关")
+        return enabled
+
+    @staticmethod
+    def _schedule_time_display_selectors() -> List[str]:
+        keys = ("SCHEDULE_TIME_DISPLAY", "SCHEDULE_TIME_INPUT", "SCHEDULE_INPUT")
+        seen: set[str] = set()
+        out: List[str] = []
+        for key in keys:
+            for sel in Selectors.SETTINGS.get(key, []):
+                if sel and sel not in seen:
+                    seen.add(sel)
+                    out.append(sel)
+        return out
+
+    async def _find_schedule_time_display(self, page: Page) -> Optional[Locator]:
+        """在定时发布区域内定位时间显示框（开关打开后出现，点击后呼出浮层）。"""
+        wrapper = self._schedule_wrapper(page)
+        scoped = (
+            "input[type='text']",
+            "input.d-text",
+            ".d-datepicker-input input",
+            ".d-datepicker-input",
+        )
+        try:
+            if await wrapper.count() > 0:
+                for sel in scoped:
+                    loc = wrapper.locator(sel).first
+                    if await loc.count() > 0:
+                        return loc
+        except Exception:
+            pass
+
+        for sel in self._schedule_time_display_selectors():
+            try:
+                loc = page.locator(sel).first
+                if await loc.count() > 0:
+                    return loc
+            except Exception:
+                continue
+        return None
+
+    async def _click_schedule_time_display(
+        self,
+        page: Page,
+        display: Locator,
+        metadata: Dict[str, Any],
+        config: Dict[str, Any],
+        wait_ms: Callable[[int], int],
+    ) -> bool:
+        """点击时间显示框，呼出 body 级日期时间选择浮层。"""
+        from src.infrastructure.anti_risk.delays import random_delay
+        from src.infrastructure.anti_risk.human_like import human_click
+
+        picker_selectors = list(Selectors.SETTINGS.get("SCHEDULE_DATE_PICKER", []))
+        if await PluginWaitHelper.first_visible_selector(page, picker_selectors):
+            logger.info("日期时间浮层已打开，跳过重复点击时间框")
+            return True
+
+        await _scroll_locator_to_center(page, display, wait_ms=wait_ms(200))
+
+        for attempt in range(1, 4):
+            if await self._mouse_click_locator_center(page, display):
+                pass
+            else:
+                try:
+                    await human_click(page, display, metadata, config)
+                except Exception:
+                    try:
+                        await display.click(force=True)
+                    except Exception as e:
+                        logger.debug("点击时间显示框失败 attempt=%s: %s", attempt, e)
+                        continue
+            await random_delay(page, wait_ms(300), metadata, config)
+            matched = await PluginWaitHelper.first_visible_selector(page, picker_selectors)
+            if matched:
+                logger.info("定时时间浮层已打开（第 %s 次点击时间显示框）", attempt)
+                USER_LOG.info("[步骤7 发布设置] ▶ 已点击时间显示框，日期时间选择器已打开")
+                return True
+            await page.wait_for_timeout(wait_ms(200))
+        return False
+
+    async def _find_schedule_checkbox(self, page: Page) -> Optional[Locator]:
+        wrapper = self._schedule_wrapper(page)
+        try:
+            if await wrapper.count() > 0:
+                box = wrapper.locator("input[type='checkbox']").first
+                if await box.count() > 0:
+                    return box
+        except Exception:
+            pass
+        for sel in Selectors.SETTINGS.get("SCHEDULE_CHECKBOX", []):
+            try:
+                loc = page.locator(sel).first
+                if await loc.count() > 0:
+                    return loc
+            except Exception:
+                continue
+        return None
+
+    async def _pick_schedule_in_date_picker(
+        self,
+        page: Page,
+        picker: Locator,
+        parts: Tuple[int, int, int, int, int],
+        metadata: Dict[str, Any],
+        config: Dict[str, Any],
+        wait_ms: Callable[[int], int],
+    ) -> bool:
+        """在日期时间浮层内选择日、时、分（限定浮层作用域 + 中心点击，避免误触开关）。"""
+        _year, _month, day, hour, minute = parts
+        day_s = str(day)
+        hour_s = f"{hour:02d}"
+        minute_s = f"{minute:02d}"
+
+        try:
+            calendar = picker.locator(".d-datepicker-calendar").first
+            if await calendar.count() > 0:
+                day_cell = calendar.locator(
+                    ".d-datepicker-cell:not(.disabled)"
+                ).get_by_text(day_s, exact=True).first
+                await self._click_picker_item(page, day_cell, wait_ms)
+                await page.wait_for_timeout(wait_ms(150))
+        except Exception as e:
+            logger.debug("选择日期格失败: %s", e)
+
+        minute_clicked = False
+        try:
+            time_body = picker.locator(".d-timepicker-body").first
+            if await time_body.count() > 0:
+                bars = time_body.locator(".d-timepicker-timebar")
+                if await bars.count() >= 1:
+                    hour_item = bars.nth(0).locator(".d-timepicker-time").get_by_text(
+                        hour_s, exact=True
+                    ).first
+                    await self._click_picker_item(page, hour_item, wait_ms)
+                    await page.wait_for_timeout(wait_ms(120))
+                if await bars.count() >= 2:
+                    minute_item = bars.nth(1).locator(".d-timepicker-time").get_by_text(
+                        minute_s, exact=True
+                    ).first
+                    minute_clicked = await self._click_picker_item(
+                        page, minute_item, wait_ms
+                    )
+                    await page.wait_for_timeout(wait_ms(250))
+        except Exception as e:
+            logger.debug("选择时分失败: %s", e)
+
+        return minute_clicked
+
+    async def _fill_schedule_input_fallback(
+        self,
+        page: Page,
+        inp: Locator,
+        st_str: str,
+        wait_ms: Callable[[int], int],
+        speed_rate: float,
+    ) -> bool:
+        return await self._set_schedule_time_via_input(
+            page, inp, st_str, wait_ms, speed_rate,
+        )
 
     async def _apply_scheduled_publish(
         self,
@@ -195,66 +894,139 @@ class PublishSettingsStep(BasePublishStep):
                 return None
 
             from src.utils.date_utils import format_schedule_time_st_str
+
             st_str = format_schedule_time_st_str(schedule_time) or ""
+            if not st_str:
+                return PublishResult(
+                    success=False,
+                    error_message="定时发布时间格式无效",
+                    failed_step=self._FAILED_STEP,
+                )
+
+            parts = parse_schedule_st_str(st_str)
+            if parts is None:
+                return PublishResult(
+                    success=False,
+                    error_message=f"定时发布时间格式无效: {st_str}",
+                    failed_step=self._FAILED_STEP,
+                )
 
             logger.info("检测到定时发布时间: %s", st_str)
-            USER_LOG.info(f"[步骤7 发布设置] ▶ 尝试设置定时: {st_str}")
+            USER_LOG.info("[步骤7 发布设置] ▶ 尝试设置定时: %s", st_str)
 
-            schedule_selectors = Selectors.SETTINGS.get("PUBLISH_SCHEDULE", [])
-            clicked = False
-            for sel in schedule_selectors:
-                try:
-                    loc = page.locator(sel).first
-                    if await loc.count() > 0 and await loc.is_visible():
-                        try:
-                            await loc.scroll_into_view_if_needed()
-                        except Exception:
-                            pass
-                        try:
-                            from src.infrastructure.anti_risk.human_like import human_click
-                            await human_click(page, loc, metadata, config)
-                        except Exception:
-                            await loc.click()
-                        clicked = True
-                        try:
-                            from src.infrastructure.anti_risk.delays import random_delay
-                            await random_delay(page, wait_ms(500), metadata, config)
-                        except Exception:
-                            await page.wait_for_timeout(wait_ms(500))
-                        break
-                except Exception:
-                    continue
+            await self._ensure_schedule_area_visible(page, wait_ms)
 
-            if not clicked:
-                logger.warning("未找到定时发布选项")
+            wrapper = self._schedule_wrapper(page)
+            if await wrapper.count() == 0:
+                logger.warning("未找到定时发布区域")
                 USER_LOG.warning("[步骤7 发布设置] ✗ 未找到定时发布选项")
                 return PublishResult(
                     success=False,
                     error_message="未找到定时发布选项，定时发布设置失败",
-                    failed_step="PublishSettingsStep",
+                    failed_step=self._FAILED_STEP,
                 )
 
-            time_input_selectors = Selectors.SETTINGS.get("SCHEDULE_INPUT", [])
-            for sel in time_input_selectors:
+            ok_switch = await self._click_schedule_switch_to_open(
+                page, metadata, config, wait_ms,
+            )
+            if not ok_switch:
+                logger.warning("未能打开定时发布开关")
+                USER_LOG.warning("[步骤7 发布设置] ✗ 未能打开定时发布开关")
+                return PublishResult(
+                    success=False,
+                    error_message="未能打开定时发布开关",
+                    failed_step=self._FAILED_STEP,
+                )
+
+            await page.wait_for_timeout(wait_ms(400))
+
+            display_selectors = self._schedule_time_display_selectors()
+            matched_sel = await PluginWaitHelper.wait_for_any_attached(
+                page,
+                display_selectors,
+                timeout_ms=10000,
+                poll_interval_ms=250,
+                pause_callback=lambda: self._await_pause(metadata),
+            )
+            inp = await self._find_schedule_time_display(page)
+            if inp is None and matched_sel:
+                inp = page.locator(matched_sel).first
+            if inp is None:
+                logger.warning("选中定时发布后，时间显示框未出现在 DOM 中")
+                USER_LOG.warning("[步骤7 发布设置] ✗ 时间显示框未出现")
+                return PublishResult(
+                    success=False,
+                    error_message="选中定时发布后未出现时间显示框",
+                    failed_step=self._FAILED_STEP,
+                )
+
+            picker_opened = await self._click_schedule_time_display(
+                page, inp, metadata, config, wait_ms,
+            )
+            if not picker_opened:
+                logger.warning("已打开定时发布，但点击时间显示框后日期时间浮层未出现")
+                USER_LOG.warning("[步骤7 发布设置] ✗ 点击时间显示框后选择器未打开")
+                return PublishResult(
+                    success=False,
+                    error_message="点击时间显示框后未出现日期时间选择器",
+                    failed_step=self._FAILED_STEP,
+                )
+
+            picker = None
+            for sel in Selectors.SETTINGS.get("SCHEDULE_DATE_PICKER", []):
                 try:
-                    inp = page.locator(sel).first
-                    if await inp.count() > 0 and await inp.is_visible():
-                        await inp.click()
-                        await page.keyboard.press("Control+A")
-                        await page.keyboard.press("Backspace")
-                        await inp.type(st_str, delay=max(10, int(30 * speed_rate)))
-                        logger.info("已设置定时时间: %s", st_str)
-                        USER_LOG.info(f"[步骤7 发布设置] ▶ 已设置定时: {st_str}")
-                        return None
+                    loc = page.locator(sel).first
+                    await loc.wait_for(state="visible", timeout=5000)
+                    if await loc.count() > 0:
+                        picker = loc
+                        break
                 except Exception:
                     continue
 
-            logger.warning("未找到时间输入框")
-            USER_LOG.warning("[步骤7 发布设置] ✗ 未找到时间输入框")
+            filled = await self._set_schedule_time_via_input(
+                page, inp, st_str, wait_ms, speed_rate,
+            )
+            if not filled and picker is not None:
+                filled = await self._pick_schedule_in_date_picker(
+                    page, picker, parts, metadata, config, wait_ms,
+                )
+                await page.wait_for_timeout(wait_ms(300))
+                filled = self._schedule_input_value_matches(
+                    await self._read_schedule_input_value(inp), st_str
+                )
+
+            if not filled:
+                filled = await self._fill_schedule_input_fallback(
+                    page, inp, st_str, wait_ms, speed_rate,
+                )
+
+            if filled:
+                await self._ensure_schedule_switch_on(
+                    page, metadata, config, wait_ms,
+                )
+                if not await self._read_schedule_switch_visual_on(
+                    self._schedule_wrapper(page)
+                ):
+                    logger.warning("定时时间已写入但开关仍为关闭")
+                    USER_LOG.warning(
+                        "[步骤7 发布设置] ✗ 定时时间已填但开关被关闭，请人工核对"
+                    )
+                    return PublishResult(
+                        success=False,
+                        error_message="定时时间已设置但定时发布开关被关闭",
+                        failed_step=self._FAILED_STEP,
+                    )
+                logger.info("已设置定时时间: %s", st_str)
+                USER_LOG.info("[步骤7 发布设置] ▶ 已设置定时: %s", st_str)
+                return None
+
+            await self._ensure_schedule_switch_on(page, metadata, config, wait_ms)
+            logger.warning("定时时间设置失败")
+            USER_LOG.warning("[步骤7 发布设置] ✗ 定时时间设置失败")
             return PublishResult(
                 success=False,
-                error_message="定时发布时间设置失败，未找到时间输入框",
-                failed_step="PublishSettingsStep",
+                error_message="定时发布时间设置失败",
+                failed_step=self._FAILED_STEP,
             )
         except Exception as e:
             logger.warning("定时/立即发布设置异常: %s", e)
@@ -262,7 +1034,7 @@ class PublishSettingsStep(BasePublishStep):
                 return PublishResult(
                     success=False,
                     error_message=f"定时发布设置异常: {e}",
-                    failed_step="PublishSettingsStep",
+                    failed_step=self._FAILED_STEP,
                 )
         return None
 
@@ -280,7 +1052,7 @@ class PublishSettingsStep(BasePublishStep):
         from src.infrastructure.anti_risk.delays import random_delay
         from src.infrastructure.anti_risk.human_like import human_click
 
-        sw: Optional[Locator] = None
+        checkbox: Optional[Locator] = None
         try:
             for hint in label_hints:
                 if not hint:
@@ -293,14 +1065,18 @@ class PublishSettingsStep(BasePublishStep):
                         await box.scroll_into_view_if_needed()
                     except Exception:
                         pass
+                    trial = box.locator("input[type='checkbox']").first
+                    if await trial.count() > 0:
+                        checkbox = trial
+                        break
                     trial = box.locator('[role="switch"]').first
                     if await trial.count() > 0 and await trial.is_visible():
-                        sw = trial
+                        checkbox = trial
                         break
-                if sw is not None:
+                if checkbox is not None:
                     break
 
-            if sw is None:
+            if checkbox is None:
                 for sel in anchor_selectors:
                     try:
                         anchor = page.locator(sel).first
@@ -308,20 +1084,41 @@ class PublishSettingsStep(BasePublishStep):
                             await anchor.scroll_into_view_if_needed()
                             await random_delay(page, wait_ms(150), metadata, config)
                             parent = anchor.locator("xpath=ancestor::div[position()<=14]")
+                            trial = parent.locator("input[type='checkbox']").first
+                            if await trial.count() > 0:
+                                checkbox = trial
+                                break
                             trial = parent.locator('[role="switch"]').first
                             if await trial.count() > 0:
-                                sw = trial
+                                checkbox = trial
                                 break
                     except Exception:
                         continue
 
-            if sw is None:
+            if checkbox is None:
                 return False
 
-            cur = (await sw.get_attribute("aria-checked") or "").strip().lower()
+            try:
+                tag = await checkbox.evaluate("el => el.tagName && el.tagName.toLowerCase()")
+            except Exception:
+                tag = ""
+            if tag == "input":
+                try:
+                    is_on = await checkbox.is_checked()
+                except Exception:
+                    is_on = False
+                if is_on != want_on:
+                    if want_on:
+                        await checkbox.check(force=True)
+                    else:
+                        await checkbox.uncheck(force=True)
+                    await random_delay(page, wait_ms(280), metadata, config)
+                return True
+
+            cur = (await checkbox.get_attribute("aria-checked") or "").strip().lower()
             is_on = cur == "true"
             if is_on != want_on:
-                await human_click(page, sw, metadata, config)
+                await human_click(page, checkbox, metadata, config)
                 await random_delay(page, wait_ms(280), metadata, config)
             return True
         except Exception as e:

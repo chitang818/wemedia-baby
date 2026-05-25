@@ -170,20 +170,20 @@ class DashboardService:
                 "finished_7d": 0,
             }
 
-    async def get_online_account_publish_reminders(
+    async def get_account_publish_reminders(
         self,
         accounts: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
-        """在线账号发布提醒（可复用已拉取的账号列表）。"""
+        """全部账号发布提醒（含离线；可复用已拉取的账号列表）。"""
         try:
             if accounts is None:
                 accounts = await self.fetch_accounts()
-            online = [a for a in (accounts or []) if a.get("login_status") == "online"]
-            if not online:
+            account_list = list(accounts or [])
+            if not account_list:
                 return []
 
             account_ids: List[int] = []
-            for a in online:
+            for a in account_list:
                 aid = a.get("id")
                 if aid is not None:
                     try:
@@ -198,7 +198,7 @@ class DashboardService:
                 )
 
             rows: List[Dict[str, Any]] = []
-            for a in online:
+            for a in account_list:
                 aid = a.get("id")
                 if aid is None:
                     continue
@@ -207,24 +207,36 @@ class DashboardService:
                 except (TypeError, ValueError):
                     continue
 
+                is_online = a.get("login_status") == "online"
                 account_name = (
                     (a.get("platform_username") or a.get("account_name") or "").strip()
                     or "未命名"
                 )
                 latest_raw = latest_map.get(aid_int)
                 latest_publish_time = latest_raw if latest_raw else "-"
-                remaining_days = compute_publish_reminder_days(latest_publish_time)
+                if is_online:
+                    remaining_days = compute_publish_reminder_days(latest_publish_time)
+                    reminder_text = format_publish_reminder_text(remaining_days)
+                    is_overdue = is_latest_publish_overdue(latest_publish_time)
+                else:
+                    remaining_days = None
+                    reminder_text = "账号离线"
+                    is_overdue = False
+
                 rows.append({
                     "account_id": aid_int,
                     "account_name": account_name,
                     "latest_publish_time": latest_publish_time,
                     "remaining_days": remaining_days,
-                    "reminder_text": format_publish_reminder_text(remaining_days),
-                    "is_overdue": is_latest_publish_overdue(latest_publish_time),
+                    "reminder_text": reminder_text,
+                    "is_overdue": is_overdue,
+                    "is_online": is_online,
+                    "login_status": "online" if is_online else "offline",
                 })
 
             rows.sort(
                 key=lambda r: (
+                    not r["is_online"],
                     r["remaining_days"] is None,
                     r["remaining_days"] if r["remaining_days"] is not None else 0,
                     r["account_name"],
@@ -232,8 +244,15 @@ class DashboardService:
             )
             return rows
         except Exception as e:
-            self.logger.error("获取在线账号发布提醒失败: %s", e, exc_info=True)
+            self.logger.error("获取账号发布提醒失败: %s", e, exc_info=True)
             return []
+
+    async def get_online_account_publish_reminders(
+        self,
+        accounts: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """兼容旧名：返回全部账号发布提醒。"""
+        return await self.get_account_publish_reminders(accounts=accounts)
 
     async def load_fast(self) -> tuple[DashboardSnapshot, List[Dict[str, Any]]]:
         """快路径：账号 + 任务（一次账号查询）。"""
@@ -256,7 +275,7 @@ class DashboardService:
         """慢路径：发布 SQL 聚合 + 最近发布提醒。"""
         publish_stats, reminders = await asyncio.gather(
             self.get_publish_statistics(),
-            self.get_online_account_publish_reminders(accounts=accounts),
+            self.get_account_publish_reminders(accounts=accounts),
         )
         account_stats = build_account_statistics(accounts)
         return DashboardSnapshot(

@@ -16,6 +16,9 @@ from src.infrastructure.storage.orm_models.batch_task_execution import BatchTask
 from src.infrastructure.storage.orm_models.batch_task_checkpoint import BatchTaskCheckpoint
 from src.infrastructure.storage.orm_models.copywriting_item import CopywritingItem
 from src.infrastructure.storage.orm_models.cart_promotion_item import CartPromotionItem
+from src.infrastructure.storage.orm_models.location_promotion_item import (
+    LocationPromotionItem,
+)
 from src.infrastructure.storage.orm_models.random_copywriting import (
     RandomCopywritingCategory,
     RandomCopywritingItem,
@@ -34,6 +37,7 @@ __all__ = [
     "BatchTaskCheckpoint",
     "CopywritingItem",
     "CartPromotionItem",
+    "LocationPromotionItem",
     "RandomCopywritingCategory",
     "RandomCopywritingItem",
 ]

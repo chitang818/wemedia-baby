@@ -8,8 +8,22 @@ from typing import Tuple
 from .constants import LOCATION_MODE_CHOICES_SET
 
 
+def parse_location_short_name_from_storage(raw: str) -> str:
+    """从 poi_info 解析位置推广库简称（无则返回空串）。"""
+    s = (raw or "").strip()
+    if not s.startswith("{"):
+        return ""
+    try:
+        d = json.loads(s)
+        if isinstance(d, dict):
+            return (d.get("location_short_name") or "").strip()
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return ""
+
+
 def parse_poi_info_storage(raw: str) -> Tuple[str, str]:
-    """从 poi_info 解析 (地点文案, 打卡/带货模式)。"""
+    """从 poi_info 解析 (地点文案或位置简称, 打卡/带货模式)。"""
     s = (raw or "").strip()
     if not s:
         return "", ""
@@ -17,6 +31,15 @@ def parse_poi_info_storage(raw: str) -> Tuple[str, str]:
         try:
             d = json.loads(s)
             if isinstance(d, dict):
+                short_name = (d.get("location_short_name") or "").strip()
+                if short_name:
+                    mode = d.get("location_mode") or d.get("tuan_mode") or ""
+                    if not isinstance(mode, str):
+                        mode = str(mode) if mode is not None else ""
+                    mode = mode.strip()
+                    if mode and mode not in LOCATION_MODE_CHOICES_SET:
+                        mode = ""
+                    return short_name, mode
                 main = (
                     d.get("poi")
                     or d.get("location")
@@ -51,3 +74,35 @@ def format_poi_info_storage(poi: str, location_mode: str = "") -> str:
         {"poi": poi, "location_mode": mode},
         ensure_ascii=False,
     )
+
+
+def format_poi_info_from_short_name(short_name: str, location_mode: str = "") -> str:
+    """写入 poi_info：引用位置推广库简称（可选打卡/带货模式）。"""
+    short_name = (short_name or "").strip()
+    mode = (location_mode or "").strip()
+    if mode not in LOCATION_MODE_CHOICES_SET:
+        mode = ""
+    if not short_name:
+        return ""
+    if not mode:
+        return json.dumps(
+            {"location_short_name": short_name},
+            ensure_ascii=False,
+        )
+    return json.dumps(
+        {"location_short_name": short_name, "location_mode": mode},
+        ensure_ascii=False,
+    )
+
+
+def location_preview_display(poi_info_raw: str) -> str:
+    """从 poi_info 解析位置推广简称，供列表/预览展示。"""
+    sn = parse_location_short_name_from_storage(poi_info_raw or "")
+    if sn:
+        return sn
+    text, mode = parse_poi_info_storage(poi_info_raw or "")
+    if not text:
+        return ""
+    if mode:
+        return f"{text}（{mode}）"
+    return text

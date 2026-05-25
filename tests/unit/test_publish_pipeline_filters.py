@@ -170,3 +170,52 @@ class TestPipelineFactoryAsync:
             PublishExecutionFilter,
             RecordSaveFilterAsync,
         ]
+
+
+def _publish_context(**kwargs) -> PublishContext:
+    base = dict(
+        user_id=1,
+        account_name="tester",
+        platform="xiaohongshu",
+        file_path="video.mp4",
+    )
+    base.update(kwargs)
+    return PublishContext(**base)
+
+
+class TestRecordSaveFilterAsync:
+    @pytest.mark.asyncio
+    async def test_updates_existing_record_on_failure_instead_of_create(self):
+        repo = MagicMock()
+        repo.create = AsyncMock()
+        repo.update_status = AsyncMock(return_value=True)
+        filt = RecordSaveFilterAsync(publish_record_repository=repo)
+        ctx = _publish_context(publish_record_id=679, error_message="步骤失败")
+
+        ok = await filt.process(ctx)
+
+        assert ok is True
+        repo.create.assert_not_called()
+        repo.update_status.assert_awaited_once_with(
+            record_id=679,
+            status="failed",
+            error_message="步骤失败",
+        )
+
+    @pytest.mark.asyncio
+    async def test_creates_new_record_when_no_publish_record_id(self):
+        repo = MagicMock()
+        repo.create = AsyncMock(return_value=683)
+        repo.update_status = AsyncMock(return_value=True)
+        filt = RecordSaveFilterAsync(publish_record_repository=repo)
+        ctx = _publish_context(error_message="步骤失败")
+
+        ok = await filt.process(ctx)
+
+        assert ok is True
+        repo.create.assert_awaited_once()
+        repo.update_status.assert_awaited_once_with(
+            record_id=683,
+            status="failed",
+            error_message="步骤失败",
+        )

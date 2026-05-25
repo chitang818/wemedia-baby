@@ -39,10 +39,7 @@ async def initialize_services_async() -> bool:
             PublishRecordRepositoryAsync,
             BatchTaskRepositoryAsync,
         )
-        from src.infrastructure.common.pipeline.filters.execution_filter import PublishExecutionFilter
         from src.services.account.account_manager_async import AccountManagerAsync
-        from src.services.subscription.permission_controller_async import PermissionControllerAsync as PermissionController
-        from src.services.publish.pipeline.filters.permission_check_filter_async import PermissionCheckFilterAsync
 
         # 0. 数据迁移 (已移除)
         
@@ -84,8 +81,8 @@ async def initialize_services_async() -> bool:
 
         def _cleanup_debug_screenshots_bg() -> None:
             try:
-                from src.utils.debug_screenshots_cleanup import cleanup_debug_screenshots_older_than
-                n = cleanup_debug_screenshots_older_than(days=7)
+                from src.utils.debug_screenshots_cleanup import cleanup_debug_artifacts_older_than
+                n = cleanup_debug_artifacts_older_than(days=14)
                 if n:
                     logging.getLogger("main").info("已清理超过 7 天的诊断截图: %s 个文件", n)
             except Exception as e:
@@ -138,26 +135,49 @@ async def initialize_services_async() -> bool:
         encryption_manager = EncryptionManager()
         service_locator.register(EncryptionManager, encryption_manager, scope=Scope.SINGLETON)
         
-        # 管道并发上限与执行器层 PublishExecutor 的 max_concurrent=3 对齐，
-        # 避免管道槽(5)多于执行器槽(3)导致批量场景下槽位空占浪费
-        publish_pipeline = PublishPipeline(max_concurrent=3)
         browser_account_manager = AccountManagerAsync(user_id=1, event_bus=event_bus)
-        permission_controller = PermissionController(
-            user_repo=service_locator.get(UserRepositoryAsync),
-            sub_repo=service_locator.get(SubscriptionRepositoryAsync),
-        )
-        from src.services.common.media_validator import MediaValidator
-        from src.services.publish.pipeline.filters.media_validate_filter_async import MediaValidateFilterAsync
-        from src.services.publish.pipeline.filters.account_load_filter_async import AccountLoadFilterAsync
-        from src.services.publish.pipeline.filters.record_save_filter_async import RecordSaveFilterAsync
+        service_locator.register(AccountManagerAsync, browser_account_manager, scope=Scope.SINGLETON)
 
-        publish_pipeline.add_filter(PermissionCheckFilterAsync(permission_controller))
-        publish_pipeline.add_filter(MediaValidateFilterAsync(MediaValidator()))
-        publish_pipeline.add_filter(AccountLoadFilterAsync(browser_account_manager))
-        publish_pipeline.add_filter(PublishExecutionFilter())
-        publish_pipeline.add_filter(RecordSaveFilterAsync(publish_record_repo))
-        service_locator.register(PublishPipeline, publish_pipeline, scope=Scope.SINGLETON)
-        
+        def _create_publish_pipeline():
+            from src.infrastructure.common.pipeline.publish_pipeline import PublishPipeline
+            from src.infrastructure.common.pipeline.filters.execution_filter import PublishExecutionFilter
+            from src.services.subscription.permission_controller_async import (
+                PermissionControllerAsync as PermissionController,
+            )
+            from src.services.publish.pipeline.filters.permission_check_filter_async import (
+                PermissionCheckFilterAsync,
+            )
+            from src.services.common.media_validator import MediaValidator
+            from src.services.publish.pipeline.filters.media_validate_filter_async import (
+                MediaValidateFilterAsync,
+            )
+            from src.services.publish.pipeline.filters.account_load_filter_async import (
+                AccountLoadFilterAsync,
+            )
+            from src.services.publish.pipeline.filters.record_save_filter_async import (
+                RecordSaveFilterAsync,
+            )
+
+            permission_controller = PermissionController(
+                user_repo=service_locator.get(UserRepositoryAsync),
+                sub_repo=service_locator.get(SubscriptionRepositoryAsync),
+            )
+            publish_pipeline = PublishPipeline(max_concurrent=3)
+            publish_pipeline.add_filter(PermissionCheckFilterAsync(permission_controller))
+            publish_pipeline.add_filter(MediaValidateFilterAsync(MediaValidator()))
+            publish_pipeline.add_filter(AccountLoadFilterAsync(browser_account_manager))
+            publish_pipeline.add_filter(PublishExecutionFilter())
+            publish_pipeline.add_filter(RecordSaveFilterAsync(publish_record_repo))
+            return publish_pipeline
+
+        from src.infrastructure.common.pipeline.publish_pipeline import PublishPipeline
+
+        service_locator.register_factory(
+            PublishPipeline,
+            _create_publish_pipeline,
+            scope=Scope.SINGLETON,
+        )
+
         publish_service = PublishService()
         service_locator.register(PublishService, publish_service, scope=Scope.SINGLETON)
         

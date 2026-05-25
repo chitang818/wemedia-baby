@@ -61,6 +61,7 @@ class PublishService:
         anchor_info: Optional[str] = None,
         micro_app_info: Optional[str] = None,
         music_info: Optional[str] = None,
+        publish_record_id: Optional[int] = None,
     ) -> PublishResult:
         """发布单个文件（异步）
         
@@ -105,6 +106,7 @@ class PublishService:
             anchor_info=anchor_info,
             micro_app_info=micro_app_info,
             music_info=music_info,
+            publish_record_id=publish_record_id,
         )
         
         # 记录服务调用日志，明确输出发布类型是视频还是图文

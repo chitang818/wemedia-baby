@@ -20,7 +20,7 @@ from PySide6.QtGui import QDesktopServices, QShowEvent
 from qfluentwidgets import (
     FluentIcon, InfoBar,
     ScrollArea, ExpandLayout, SettingCardGroup,
-    SwitchSettingCard, OptionsSettingCard, PushSettingCard, PrimaryPushSettingCard,
+    SwitchSettingCard, PushSettingCard, PrimaryPushSettingCard,
     CustomColorSettingCard, HyperlinkCard,
     SettingCard, ComboBox, SwitchButton, InfoBarPosition, PushButton,
     BodyLabel,
@@ -258,6 +258,31 @@ class SettingsPage(BasePage):
             _pa_switch.checkedChanged.connect(self._on_page_animation_reduced_changed)
 
         self.theme_group.addSettingCard(self.page_animation_reduced_card)
+
+        from src.infrastructure.common.config.app_config_keys import UI_STARTUP_PRELOADS
+        from src.infrastructure.common.startup_prefs import normalize_startup_preload_mode
+
+        _sp_raw = "off"
+        if _cc is not None:
+            _ui_sp = _cc.get_app_config().get(KEY_UI) or {}
+            _sp_raw = normalize_startup_preload_mode(str(_ui_sp.get(UI_STARTUP_PRELOADS, "off")))
+        _sp_index = {"off": 0, "minimal": 1, "full": 2}.get(_sp_raw, 0)
+
+        self.startup_preloads_card = SettingCard(
+            FluentIcon.SPEED_HIGH,
+            "启动预加载",
+            "关闭可加快启动；精简/完整会在启动后后台预建常用页面（占用内存与 CPU）",
+            parent=self.theme_group,
+        )
+        self.startup_preloads_combo = ComboBox(self.startup_preloads_card)
+        self.startup_preloads_combo.addItems(["关闭", "精简", "完整"])
+        self.startup_preloads_combo.setMinimumWidth(120)
+        self.startup_preloads_combo.setCurrentIndex(_sp_index)
+        self.startup_preloads_combo.currentIndexChanged.connect(self._on_startup_preloads_changed)
+        self.startup_preloads_card.hBoxLayout.addWidget(self.startup_preloads_combo, 0, Qt.AlignRight)
+        self.startup_preloads_card.hBoxLayout.addSpacing(16)
+        self.theme_group.addSettingCard(self.startup_preloads_card)
+
         self.expand_layout.addWidget(self.theme_group)
         
     def _create_browser_group(self):
@@ -1115,6 +1140,36 @@ class SettingsPage(BasePage):
             self.show_success("设置已保存", "页面切换动画已按您的选择更新，无需重启")
         except Exception as e:
             logger.error("保存页面动画偏好失败: %s", e, exc_info=True)
+            self.show_error("错误", "保存设置失败，请重试")
+
+    def _on_startup_preloads_changed(self, _item=None) -> None:
+        """持久化启动预加载模式（下次冷启动生效）。"""
+        from src.infrastructure.common.config.app_config_keys import KEY_UI, UI_STARTUP_PRELOADS
+        from src.infrastructure.common.config.app_config_merge import merge_app_config
+        from src.infrastructure.common.startup_prefs import normalize_startup_preload_mode
+
+        labels = ("off", "minimal", "full")
+        try:
+            index = int(self.startup_preloads_combo.currentIndex())
+        except Exception:
+            index = 0
+        mode = labels[min(max(index, 0), 2)]
+        mode = normalize_startup_preload_mode(mode)
+
+        async def _save() -> None:
+            cc = get_registered_config_center()
+            if cc is None:
+                return
+            ui = dict(cc.get_app_config().get(KEY_UI) or {})
+            ui[UI_STARTUP_PRELOADS] = mode
+            await merge_app_config(cc, {KEY_UI: ui})
+
+        try:
+            run_async_from_ui(_save)
+            hint = {"off": "关闭", "minimal": "精简", "full": "完整"}.get(mode, mode)
+            self.show_success("设置已保存", f"启动预加载已设为「{hint}」，下次启动软件后生效")
+        except Exception as e:
+            logger.error("保存启动预加载偏好失败: %s", e, exc_info=True)
             self.show_error("错误", "保存设置失败，请重试")
 
     def _on_theme_changed(self, index: int):

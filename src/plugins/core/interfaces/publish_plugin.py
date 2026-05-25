@@ -21,6 +21,7 @@ class PublishResult:
     publish_url: Optional[str] = None
     error_message: Optional[str] = None
     failed_step: Optional[str] = None  # 失败时所在步骤名，便于主程序/UI 单独展示
+    diagnostic_path: Optional[str] = None
 
 class PublishPluginInterface(ABC):
     """发布插件抽象接口"""

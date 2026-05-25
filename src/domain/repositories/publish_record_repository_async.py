@@ -63,6 +63,7 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
         platform_account_id: Optional[int] = None,
         task_source: Optional[str] = None,
         group_id: Optional[int] = None,
+        diagnostic_path: Optional[str] = None,
     ) -> int:
         """创建发布记录
 
@@ -102,6 +103,7 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
                 privacy_settings=privacy_settings,
                 scheduled_publish_time=scheduled_publish_time,
                 task_source=task_source,
+                diagnostic_path=diagnostic_path,
                 status="pending",
             )
             return record.id
@@ -116,6 +118,7 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
         status: str,
         publish_url: Optional[str] = None,
         error_message: Optional[str] = None,
+        diagnostic_path: Optional[str] = None,
     ) -> bool:
         """更新发布记录状态
 
@@ -134,6 +137,8 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
                 update_data["publish_url"] = publish_url
             if error_message is not None:
                 update_data["error_message"] = error_message
+            if diagnostic_path is not None:
+                update_data["diagnostic_path"] = diagnostic_path
 
             updated = await PublishRecord.filter(id=record_id).update(**update_data)
             return updated > 0
@@ -768,6 +773,7 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
             "scheduled_publish_time": format_schedule_time_st_str(record.scheduled_publish_time),
             "status": record.status,
             "error_message": record.error_message,
+            "diagnostic_path": getattr(record, "diagnostic_path", None),
             "publish_url": record.publish_url,
             "created_at": record.created_at.isoformat() if record.created_at else None,
             "updated_at": record.updated_at.isoformat() if record.updated_at else None,

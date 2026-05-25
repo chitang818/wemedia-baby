@@ -36,7 +36,7 @@ USER_LOG = logging.getLogger("publish.user_log")
 _DEFAULT_LIMITS = {
     "title_max_length": 20,
     "description_max_length": 1000,
-    "max_topics": 1,
+    "max_topics": 10,
 }
 
 

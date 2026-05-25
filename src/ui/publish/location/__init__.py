@@ -3,9 +3,11 @@
 from .wechat_empty_location_widget import WechatVideoLocationOption
 from .batch_location_dialog import BatchLocationDialog
 from .location_intent_widget import LocationIntentRowWidget
+from .location_selector_widget import LocationSelectorWidget
 
 __all__ = [
     "WechatVideoLocationOption",
     "BatchLocationDialog",
     "LocationIntentRowWidget",
+    "LocationSelectorWidget",
 ]

@@ -144,6 +144,7 @@ class PublishPipeline:
                 anchor_info=getattr(request, 'anchor_info', None),
                 micro_app_info=getattr(request, 'micro_app_info', None),
                 music_info=getattr(request, 'music_info', None),
+                publish_record_id=getattr(request, 'publish_record_id', None),
             )
             
             try:
@@ -162,6 +163,7 @@ class PublishPipeline:
                         return [PipelineResult(
                             success=False,
                             error_message=error,
+                            diagnostic_path=getattr(context, "diagnostic_path", None),
                             execution_time=time.time() - start_time
                         )]
                 
@@ -169,6 +171,7 @@ class PublishPipeline:
                 return [PipelineResult(
                     success=True,
                     publish_url=context.publish_url if hasattr(context, 'publish_url') else None,
+                    diagnostic_path=getattr(context, "diagnostic_path", None),
                     execution_time=execution_time
                 )]
             

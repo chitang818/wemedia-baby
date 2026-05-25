@@ -29,12 +29,14 @@ def test_workspace_page_lazy_widgets_not_created_in_constructor(qapp, monkeypatc
 
     page = WorkspacePage()
     try:
+        assert not page._full_content_ready
+        assert not page._secondary_widgets_created
+        assert hasattr(page, "_light_placeholder")
+        assert not hasattr(page, "account_platform_card")
+        page._ensure_full_content()
+        assert page._full_content_ready
         assert hasattr(page, "account_platform_card")
-        assert not hasattr(page, "trend_chart")
-        assert page._announcement_created is True
-        assert page._secondary_widgets_created is False
-        assert page._recent_activity_created is False
-        assert not hasattr(page, "recent_activity")
+        assert hasattr(page, "recent_activity")
     finally:
         page.deleteLater()
         qapp.processEvents()
@@ -52,11 +54,8 @@ def test_noncritical_first_paint_schedules_staggered_tasks(qapp, monkeypatch):
     )
     try:
         page.schedule_noncritical_first_paint()
-        assert [call[0] for call in calls] == [
-            "workspace_recent_activity_create",
-            "workspace_account_platform_prewarm",
-        ]
-        assert [call[1] for call in calls] == [0, 80]
+        assert [call[0] for call in calls] == ["workspace_account_platform_prewarm"]
+        assert [call[1] for call in calls] == [80]
     finally:
         page.deleteLater()
         qapp.processEvents()
@@ -105,8 +104,8 @@ def test_recent_activity_consumes_cached_reminders(qapp, monkeypatch):
         }
     ]
     try:
-        page.set_cached_reminders(reminders)
-        page.ensure_recent_activity_created()
+        page._ensure_full_content()
+        page.reveal_publish_reminders(reminders, animate_entry=False)
         assert hasattr(page, "recent_activity")
         assert len(page.recent_activity._reminder_rows) == 1
     finally:
@@ -169,7 +168,7 @@ def test_cached_first_paint_requires_dashboard_and_media(monkeypatch):
     orchestrator = WorkspaceLoadOrchestrator(FakePage(snapshot))
 
     assert orchestrator.apply_cached_first_paint() is True
-    assert calls == [(snapshot, media, {"animate_entry": False, "reminders": False})]
+    assert calls == [(snapshot, media, {"animate_entry": False, "reminders": True})]
     assert orchestrator.get_latest_snapshot() is snapshot
 
     calls.clear()

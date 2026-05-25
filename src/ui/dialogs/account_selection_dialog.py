@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QStackedWidget, QAbstractItemView, QApplication, QTableWidgetItem, QHeaderView, QGridLayout,
     QScrollArea, QFrame
 )
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from PySide6.QtGui import QBrush, QColor
 from qfluentwidgets import (
     BodyLabel, IconWidget, FluentIcon, ComboBox,
@@ -19,6 +19,7 @@ from qfluentwidgets import (
 
 from src.ui.components.base_dialog import AppMessageBoxBase
 from src.ui.utils.fluent_tooltips import ToolTipPosition, apply_instructional_tooltip
+from src.ui.utils.table_cell_center_host import _TableCellCenterHost
 from src.infrastructure.common.async_task_registry import get_async_task_registry
 from src.services.material.media_library_stats_cache import get_media_library_stats_cache
 from src.services.material.media_library_stats_service import get_media_library_stats_service
@@ -44,6 +45,20 @@ class AccountSelectionDialog(AppMessageBoxBase):
         # 左侧标签按钮引用：用于稳定同步选中态（避免布局遍历找不到控件）
         self._tag_buttons = {}  # tag_id -> TogglePushButton
         self._active_tag_id = None  # 单选高亮：记录最近一次点击的标签 id
+        # 渲染缓存与防抖（避免重复整表/整标签重建）
+        self._account_table_schema_ready = False
+        self._group_table_schema_ready = False
+        self._rendered_account_ids: Optional[tuple] = None
+        self._rendered_group_ids: Optional[tuple] = None
+        self._tags_visible_key: Optional[tuple] = None
+        self._pivot_segment_items: list = []
+        self._group_name_by_id: dict = {}
+        self._platform_filter_timer = QTimer(self)
+        self._platform_filter_timer.setSingleShot(True)
+        self._platform_filter_timer.timeout.connect(self._apply_account_filter)
+        self._tags_ui_timer = QTimer(self)
+        self._tags_ui_timer.setSingleShot(True)
+        self._tags_ui_timer.timeout.connect(self._update_tags_ui)
         try:
             self._media_stats_cache.statsUpdated.connect(self._on_media_stats_updated)
         except Exception:
@@ -357,6 +372,139 @@ class AccountSelectionDialog(AppMessageBoxBase):
             return int(v)
         except Exception:
             return None
+
+    def _rebuild_group_name_map(self) -> None:
+        """账号组 id -> 组名，渲染账号行时 O(1) 查找。"""
+        out = {}
+        for g in self.groups or []:
+            gid = g.get("id")
+            if gid is not None:
+                out[gid] = g.get("group_name", "") or ""
+        self._group_name_by_id = out
+
+    def _account_rows_key(self) -> tuple:
+        accounts = (
+            self._filtered_accounts
+            if getattr(self, "_filtered_accounts", None) is not None
+            else (self.all_accounts or [])
+        )
+        return tuple(a.get("id") for a in accounts)
+
+    def _group_rows_key(self) -> tuple:
+        return tuple(g.get("id") for g in self._groups_for_table())
+
+    def _compute_tags_visible_key(self) -> tuple:
+        plat_acc = getattr(self, "_accounts_after_platform", None)
+        if plat_acc is None:
+            plat_acc = self._filtered_accounts or []
+        visible_acc_ids = frozenset(
+            a.get("id") for a in plat_acc if a.get("id") is not None
+        )
+        visible_grp_ids = frozenset(
+            g.get("id") for g in (self.groups or []) if g.get("id") is not None
+        )
+        return (visible_acc_ids, visible_grp_ids, len(getattr(self, "_all_tags", None) or []))
+
+    def _collect_pivot_segment_items(self) -> None:
+        items = []
+        pivot = getattr(self, "_pivot", None)
+        if pivot is not None:
+            for child in pivot.findChildren(QWidget):
+                if type(child).__name__ == "SegmentedItem":
+                    items.append(child)
+        self._pivot_segment_items = items
+
+    def _schedule_update_tags_ui(self) -> None:
+        self._tags_ui_timer.stop()
+        self._tags_ui_timer.start(0)
+
+    def _invalidate_table_render_cache(self) -> None:
+        self._rendered_account_ids = None
+        self._rendered_group_ids = None
+
+    def _ensure_account_table_schema(self) -> None:
+        if getattr(self, "_account_table_schema_ready", False):
+            return
+        t = self.account_table
+        t.setColumnCount(8)
+        t.setHorizontalHeaderLabels(
+            ["序号", "平台", "平台昵称", "账号组", "账号标签", "视频库", "图片库", ""]
+        )
+        header = t.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(True)
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+        t.setColumnWidth(0, 52)
+        t.setColumnWidth(1, 96)
+        t.setColumnWidth(3, 80)
+        t.setColumnWidth(4, 110)
+        t.setColumnWidth(5, 90)
+        t.setColumnWidth(6, 90)
+        t.setColumnWidth(7, 40)
+        t.verticalHeader().setVisible(False)
+        t.setWordWrap(False)
+        t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._col_tags = 4
+        self._col_video_count = 5
+        self._col_image_count = 6
+        self._col_check = 7
+        self._account_table_schema_ready = True
+
+    def _ensure_group_table_schema(self) -> None:
+        if getattr(self, "_group_table_schema_ready", False):
+            return
+        t = self.group_table
+        t.setColumnCount(7)
+        t.setHorizontalHeaderLabels(["序号", "账号组", "平台", "账号数", "视频库", "图片库", ""])
+        header = t.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+        t.setColumnWidth(0, 52)
+        t.setColumnWidth(2, 170)
+        t.setColumnWidth(3, 70)
+        t.setColumnWidth(4, 96)
+        t.setColumnWidth(5, 96)
+        t.setColumnWidth(6, 44)
+        t.verticalHeader().setVisible(False)
+        t.setWordWrap(False)
+        t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._col_group_video_count = 4
+        self._col_group_image_count = 5
+        self._col_group_check = 6
+        self._group_table_schema_ready = True
+
+    def _render_accounts_if_needed(self, *, force: bool = False) -> None:
+        key = self._account_rows_key()
+        if (
+            not force
+            and key == getattr(self, "_rendered_account_ids", None)
+            and self.account_table.rowCount() == len(key)
+        ):
+            return
+        self._render_accounts(force=True)
+
+    def _render_groups_if_needed(self, *, force: bool = False) -> None:
+        key = self._group_rows_key()
+        if (
+            not force
+            and key == getattr(self, "_rendered_group_ids", None)
+            and self.group_table.rowCount() == len(key)
+        ):
+            return
+        self._render_groups(force=True)
+
+    def _render_tags_if_needed(self, *, force: bool = False) -> None:
+        key = self._compute_tags_visible_key()
+        if not force and key == getattr(self, "_tags_visible_key", None):
+            self._schedule_update_tags_ui()
+            return
+        self._render_tags()
+        self._tags_visible_key = key
         
     def _set_list_style(self, list_widget):
         list_widget.setStyleSheet("""
@@ -425,12 +573,11 @@ class AccountSelectionDialog(AppMessageBoxBase):
             current_key = get_current() if callable(get_current) else "accounts"
         except Exception:
             current_key = "accounts"
-        for child in self._pivot.findChildren(QWidget):
-            if type(child).__name__ == "SegmentedItem":
-                key = child.property("routeKey") or ""
-                child.setProperty("isSelected", key == current_key)
-                child.style().unpolish(child)
-                child.style().polish(child)
+        for child in getattr(self, "_pivot_segment_items", None) or []:
+            key = child.property("routeKey") or ""
+            child.setProperty("isSelected", key == current_key)
+            child.style().unpolish(child)
+            child.style().polish(child)
 
     def set_data(
         self,
@@ -465,6 +612,9 @@ class AccountSelectionDialog(AppMessageBoxBase):
         self._tags_filter_only = bool(tags_filter_only) and (not multi_select)
         self._tag_filter_account_ids = None
         self._tag_filter_group_ids = None
+        self._rebuild_group_name_map()
+        self._invalidate_table_render_cache()
+        self._tags_visible_key = None
         
         # 账号列表选择模式：多选时用 NoSelection + 行内复选框；否则支持单选或 Ctrl 多选
         if multi_select:
@@ -499,9 +649,10 @@ class AccountSelectionDialog(AppMessageBoxBase):
         
         # 渲染内容
         self._setup_platform_filter_options()
+        self._collect_pivot_segment_items()
         self._apply_account_filter()
         if show_group_nav:
-            self._render_groups()
+            self._render_groups_if_needed(force=True)
 
         # 多选模式：初始化确定按钮与已选数量提示
         if multi_select:
@@ -521,6 +672,10 @@ class AccountSelectionDialog(AppMessageBoxBase):
 
         # 异步拉取所有标签数据供快捷选择
         self._load_tags_async()
+        try:
+            self._refresh_media_stats_async()
+        except Exception:
+            pass
 
     def _reset_pivot_items(self, show_group_tab: bool) -> None:
         """清空并重建顶部 Tab，兼容不同版本的 qfluentwidgets SegmentedWidget API。"""
@@ -533,6 +688,7 @@ class AccountSelectionDialog(AppMessageBoxBase):
         if callable(clear_fn):
             try:
                 clear_fn()
+                self._collect_pivot_segment_items()
                 return
             except Exception:
                 pass
@@ -568,6 +724,7 @@ class AccountSelectionDialog(AppMessageBoxBase):
             self._pivot.currentItemChanged.connect(self._sync_pivot_selection)
         except Exception:
             pass
+        self._collect_pivot_segment_items()
 
     def _set_current_page(self, page_index: int, clear_tag_filter_on_pivot: bool = True) -> None:
         """切换账号列表/账号组页面（由顶部 Tab 或标签逻辑触发）。"""
@@ -609,8 +766,8 @@ class AccountSelectionDialog(AppMessageBoxBase):
         self._on_page_changed(actual_index)
         if getattr(self, "_tags_filter_only", False):
             self._recompute_filtered_accounts()
-            self._render_accounts()
-            self._render_groups()
+            self._render_accounts_if_needed(force=True)
+            self._render_groups_if_needed(force=True)
 
     def _recompute_filtered_accounts(self) -> None:
         """在平台筛选结果上叠加「标签筛选」（仅 tags_filter_only 时生效）。"""
@@ -644,7 +801,8 @@ class AccountSelectionDialog(AppMessageBoxBase):
                 try:
                     tags = await tag_service.get_tags()
                     self._all_tags = tags
-                    self._render_tags()
+                    self._tags_visible_key = None
+                    self._render_tags_if_needed(force=True)
                     self._rebuild_account_tags_cache()
                     self._refresh_account_tags_column()
                 except Exception as e:
@@ -692,7 +850,8 @@ class AccountSelectionDialog(AppMessageBoxBase):
             self._tag_filter_group_ids = None
             self._active_tag_id = None
             self._clear_tags_highlight()
-        self._apply_account_filter()
+        self._platform_filter_timer.stop()
+        self._platform_filter_timer.start(50)
 
     def _apply_account_filter(self):
         """根据平台筛选重渲染账号表格（并可叠加标签筛选）"""
@@ -705,13 +864,13 @@ class AccountSelectionDialog(AppMessageBoxBase):
             pid = next((k for k, v in platform_name_map.items() if v == wanted), wanted)
             self._accounts_after_platform = [a for a in (self.all_accounts or []) if a.get("platform") == pid]
         self._recompute_filtered_accounts()
-        self._render_accounts()
+        self._render_accounts_if_needed()
         self._update_select_all_state()
-        self._render_tags()
+        self._render_tags_if_needed()
         self._refresh_account_tags_column()
         self._refresh_media_stats_from_cache()
         if getattr(self, "_tags_filter_only", False):
-            self._render_groups()
+            self._render_groups_if_needed()
 
     def _update_select_all_state(self):
         """根据当前筛选结果更新全选状态（两态）"""
@@ -752,41 +911,21 @@ class AccountSelectionDialog(AppMessageBoxBase):
         """兼容旧接口"""
         self.set_data(accounts, show_group_nav=False)
         
-    def _render_accounts(self):
-        """渲染账号列表"""
+    def _render_accounts(self, *, force: bool = False):
+        """渲染账号列表（force=True 或列表变化时整表重建）。"""
+        key = self._account_rows_key()
+        if (
+            not force
+            and key == getattr(self, "_rendered_account_ids", None)
+            and self.account_table.rowCount() == len(key)
+        ):
+            return
+
+        self._ensure_account_table_schema()
         self.account_table.setUpdatesEnabled(False)
         self.account_table.setSortingEnabled(False)
-        self.account_table.clear()
+        # 勿用 clear()：会一并清除表头，重渲染后标题会变成 1、2、3…
         self.account_table.setRowCount(0)
-        # 列：序号 / 平台 / 平台昵称 / 账号组 / 账号标签 / 视频库 / 图片库 / 勾选
-        self.account_table.setColumnCount(8)
-        self.account_table.setHorizontalHeaderLabels(["序号", "平台", "平台昵称", "账号组", "账号标签", "视频库", "图片库", ""])
-
-        header = self.account_table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)  # 平台昵称
-        header.setSectionsClickable(True)
-        header.setSortIndicatorShown(True)
-        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-
-        self.account_table.setColumnWidth(0, 52)   # 序号
-        self.account_table.setColumnWidth(1, 96)   # 平台（略收窄，给昵称列让空间）
-        # 固定列尽量紧凑，把空间留给「平台昵称」（Stretch）
-        self.account_table.setColumnWidth(3, 80)   # 账号组（收窄）
-        self.account_table.setColumnWidth(4, 110)  # 账号标签（收窄）
-        # 统计列显示“总/占用/未占用”，64 会被省略成 0/...，因此加宽
-        self.account_table.setColumnWidth(5, 90)   # 视频库
-        self.account_table.setColumnWidth(6, 90)   # 图片库
-        self.account_table.setColumnWidth(7, 40)   # 勾选框
-        self.account_table.verticalHeader().setVisible(False)
-        self.account_table.setWordWrap(False)
-        self.account_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.account_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.account_table.setSortingEnabled(True)
-        self._col_tags = 4
-        self._col_video_count = 5
-        self._col_image_count = 6
-        self._col_check = 7
 
         platform_icon_map = {
             'douyin': FluentIcon.VIDEO,
@@ -807,10 +946,8 @@ class AccountSelectionDialog(AppMessageBoxBase):
             
             username = account.get('platform_username') or account.get('account_name', '未命名')
             acc_id = self._norm_int_id(account.get("id"))
-            g_name = ""
-            if account.get('group_id'):
-                g_name = next((g['group_name'] for g in self.groups if g['id'] == account['group_id']), "")
-            
+            gid = account.get("group_id")
+            g_name = self._group_name_by_id.get(gid, "") if gid else ""
             display_group = g_name if g_name and g_name != "未分类" else ""
 
             # 序号
@@ -913,13 +1050,9 @@ class AccountSelectionDialog(AppMessageBoxBase):
                     self._on_multi_select_changed()
 
                 cb.stateChanged.connect(_on_cb_changed)
-                w = QWidget(self.account_table)
-                lay = QHBoxLayout(w)
-                lay.setContentsMargins(0, 0, 0, 0)
-                lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                lay.addWidget(cb, 0, Qt.AlignmentFlag.AlignCenter)
-                w._account_checkbox = cb
-                self.account_table.setCellWidget(row, self._col_check, w)
+                host = _TableCellCenterHost(cb, self.account_table, row, self._col_check)
+                host._account_checkbox = cb
+                self.account_table.setCellWidget(row, self._col_check, host)
             else:
                 _empty = QTableWidgetItem("")
                 _empty.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
@@ -927,9 +1060,9 @@ class AccountSelectionDialog(AppMessageBoxBase):
 
         self.account_table.setUpdatesEnabled(True)
         self.account_table.setSortingEnabled(True)
+        self._rendered_account_ids = key
         self._refresh_account_tags_column()
         self._refresh_media_stats_from_cache()
-        self._refresh_media_stats_async()
 
     def _rebuild_account_tags_cache(self) -> None:
         """根据 _all_tags 重建 account_id -> 标签文案 的缓存。"""
@@ -1078,44 +1211,25 @@ class AccountSelectionDialog(AppMessageBoxBase):
                 iti.setText(f"{ic.total}/{ic.used}/{ic.unused}")
                 iti.setToolTip(f"图片库：总 {ic.total}，已占用 {ic.used}，未占用 {ic.unused}\n显示格式：总/占用/未占用")
             
-    def _render_groups(self):
-        """渲染账号组表格（信息密度更高）"""
+    def _render_groups(self, *, force: bool = False):
+        """渲染账号组表格（force=True 或列表变化时整表重建）。"""
         if not hasattr(self, "group_table") or self.group_table is None:
             return
 
+        key = self._group_rows_key()
         t = self.group_table
+        if (
+            not force
+            and key == getattr(self, "_rendered_group_ids", None)
+            and t.rowCount() == len(key)
+        ):
+            return
+
+        self._ensure_group_table_schema()
         t.setUpdatesEnabled(False)
         t.setSortingEnabled(False)
-        t.clear()
+        # 勿用 clear()：会一并清除表头，重渲染后标题会变成 1、2、3…
         t.setRowCount(0)
-
-        # 列：序号 / 账号组 / 平台 / 账号数 / 视频库 / 图片库 / 勾选
-        t.setColumnCount(7)
-        t.setHorizontalHeaderLabels(["序号", "账号组", "平台", "账号数", "视频库", "图片库", ""])
-
-        header = t.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)  # 账号组名
-        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-
-        # 列宽：整体更紧凑，且数字列统一
-        t.setColumnWidth(0, 52)   # 序号
-        t.setColumnWidth(2, 170)  # 平台
-        t.setColumnWidth(3, 70)   # 账号数
-        # 统计列显示“总/占用/未占用”，64 会被省略成 0/...，因此加宽
-        t.setColumnWidth(4, 96)   # 视频库
-        t.setColumnWidth(5, 96)   # 图片库
-        t.setColumnWidth(6, 44)   # 勾选
-        t.verticalHeader().setVisible(False)
-        t.setWordWrap(False)
-        t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        t.setSortingEnabled(True)
-
-        # 记录列索引，供其它逻辑使用
-        self._col_group_video_count = 4
-        self._col_group_image_count = 5
-        self._col_group_check = 6
 
         from src.utils.platform_names import get_platform_display_name
 
@@ -1199,13 +1313,9 @@ class AccountSelectionDialog(AppMessageBoxBase):
                     self._on_multi_select_changed()
 
                 cb.stateChanged.connect(_on_cb_changed)
-                w = QWidget(t)
-                lay = QHBoxLayout(w)
-                lay.setContentsMargins(0, 0, 0, 0)
-                lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                lay.addWidget(cb, 0, Qt.AlignmentFlag.AlignCenter)
-                w._group_checkbox = cb
-                t.setCellWidget(row, self._col_group_check, w)
+                host = _TableCellCenterHost(cb, t, row, self._col_group_check)
+                host._group_checkbox = cb
+                t.setCellWidget(row, self._col_group_check, host)
             else:
                 _empty = QTableWidgetItem("")
                 _empty.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
@@ -1213,7 +1323,7 @@ class AccountSelectionDialog(AppMessageBoxBase):
 
         t.setUpdatesEnabled(True)
         t.setSortingEnabled(True)
-        # 渲染完成后，立即尝试从缓存刷新汇总媒体库数量
+        self._rendered_group_ids = key
         try:
             self._refresh_group_media_stats_from_cache()
         except Exception:
@@ -1251,7 +1361,7 @@ class AccountSelectionDialog(AppMessageBoxBase):
                 self._refresh_group_media_stats_from_cache()
             except Exception:
                 pass
-        self._render_tags()
+        self._schedule_update_tags_ui()
 
     def _on_toggle_select_all_groups(self, state: int):
         """账号组列表：全选/取消全选"""
@@ -1373,8 +1483,8 @@ class AccountSelectionDialog(AppMessageBoxBase):
         # 同步“全选账号”复选框状态（仅账号页，由 _update_select_all_state 统一管理两态）
         if self._multi_select and (self.content_stack.currentIndex() == 0):
             self._update_select_all_state()
-            
-        self._update_tags_ui()
+
+        self._schedule_update_tags_ui()
 
     # 旧：表头内全选复选框已移除，改为红框工具条展示
 
@@ -1704,9 +1814,9 @@ class AccountSelectionDialog(AppMessageBoxBase):
                 self._active_tag_id = None
                 self._clear_tags_highlight()
                 self._recompute_filtered_accounts()
-                self._render_accounts()
-                self._render_groups()
-                self._render_tags()
+                self._render_accounts_if_needed(force=True)
+                self._render_groups_if_needed(force=True)
+                self._render_tags_if_needed(force=True)
                 self.account_table.scrollToTop()
                 return
             if valid_grps:
@@ -1736,38 +1846,39 @@ class AccountSelectionDialog(AppMessageBoxBase):
                     self._set_current_page(0)
             except Exception:
                 pass
-            # 单选模式：点击新标签时，彻底清空之前所有的选择状态（内存+UI）并恢复原始排序
             self._clear_account_checks()
             self._clear_group_checks()
-            self._apply_account_filter() # 恢复原始顺序
-            
+            if getattr(self, "_accounts_after_platform", None) is None:
+                self._accounts_after_platform = list(self.all_accounts or [])
+            self._recompute_filtered_accounts()
+
             if valid_grps:
                 for gid in valid_grps:
                     self._group_checked_ids.add(gid)
-            else:
+                self._render_groups_if_needed(force=True)
+            elif valid_accs:
                 for aid in valid_accs:
                     self._account_checked_ids.add(aid)
-                
-                # 置顶显示选中的账号：对 visible 列表重新排序，将已选中的排在前面
                 if valid_accs and hasattr(self, "_filtered_accounts"):
-                    # 稳定排序：已选在前，未选在后
-                    self._filtered_accounts.sort(key=lambda a: a.get("id") not in self._account_checked_ids)
-                    # 重新渲染表格
-                    self._render_accounts()
-                    # 滚动到顶部
+                    self._filtered_accounts.sort(
+                        key=lambda a: a.get("id") not in self._account_checked_ids
+                    )
+                    self._render_accounts_if_needed(force=True)
                     self.account_table.scrollToTop()
         else:
             if valid_grps:
                 for gid in valid_grps:
                     self._group_checked_ids.discard(gid)
+                self._render_groups_if_needed(force=True)
             if valid_accs:
                 for aid in valid_accs:
                     self._account_checked_ids.discard(aid)
-                
-                # 取消选择标签时，恢复账号列表的原始排序（重新触发筛选过滤即可）
-                self._apply_account_filter()
+                if getattr(self, "_accounts_after_platform", None) is None:
+                    self._accounts_after_platform = list(self.all_accounts or [])
+                self._recompute_filtered_accounts()
+                self._render_accounts_if_needed(force=True)
                 self.account_table.scrollToTop()
-                
+
         self._update_ui_checkboxes()
         self._on_multi_select_changed()
     

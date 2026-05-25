@@ -148,7 +148,7 @@ class Selectors:
             "div[class*='drag-over']",
             "div[class*='upload']",
         ],
-        # 上传成功标识
+        # 上传成功标识（保留给图文/历史兜底使用；视频完成态不要依赖这些宽泛 class）
         "UPLOAD_SUCCESS_MARKER": [
             "div[class*='success']",
             "div[class*='preview']",
@@ -158,6 +158,29 @@ class Selectors:
         "UPLOAD_PROGRESS": [
             "div[class*='progress']",
             "span[class*='progress']",
+        ],
+        # 发布页 SPA 骨架屏（加载中灰色占位块）；步骤3 需在其消退后再操作/判定完成
+        "PUBLISH_FORM_LOADING": [
+            "[class*='skeleton']",
+            ".el-skeleton",
+            ".el-skeleton__item",
+            "[class*='Skeleton']",
+        ],
+        # 发布表单就绪：上传区文案已渲染（区别于仅存在 input[type=file]）
+        "PUBLISH_FORM_READY": [
+            "xpath=//*[normalize-space()='视频文件']",
+            "text=视频文件",
+            ".creator-tab.active:has-text('上传视频')",
+            "div:has-text('上传视频'):has-text('视频格式')",
+        ],
+        # 视频上传成功判定：视频文件卡片右上角出现「重新上传」按钮即表示上传完成。
+        # 优先用「视频文件」区域约束，避免 preview/thumbnail/file-item 提前出现造成误判。
+        "VIDEO_UPLOAD_SUCCESS_MARKER": [
+            "xpath=//*[normalize-space()='视频文件']/ancestor::*[contains(@class,'card') or contains(@class,'upload') or contains(@class,'video') or contains(@class,'section') or contains(@class,'container')][1]//*[normalize-space()='重新上传']",
+            "xpath=//*[normalize-space()='视频文件']/ancestor::*[self::div or self::section][1]//*[normalize-space()='重新上传']",
+            "div:has-text('视频文件') button:has-text('重新上传')",
+            "div:has-text('视频文件') span:has-text('重新上传')",
+            "div:has-text('视频文件') :has-text('重新上传')",
         ],
         "REUPLOAD_BTN": [
             "div:has-text('重新上传')",
@@ -177,7 +200,7 @@ class Selectors:
             "input[class*='title']",
             "div[class*='title'] input",
         ],
-        # ⏳ 描述/正文编辑器
+        # 描述/正文编辑器（优先带 placeholder 的发布描述区）
         "DESC_EDITOR": [
             "div[contenteditable='true'][data-placeholder*='描述']",
             "div[contenteditable='true'][data-placeholder*='正文']",
@@ -190,10 +213,38 @@ class Selectors:
             "div[class*='topic'] input",
             "div[class*='hashtag'] input",
         ],
+        # 描述区工具条「# 话题」（勿用宽泛 button:has-text('话题')，易误点侧栏）
+        "TOPIC_ENTRY_BTN": [
+            "span:has-text('# 话题')",
+            "div:has-text('# 话题')",
+            "button:has-text('# 话题')",
+            "[class*='toolbar'] :text('# 话题')",
+            "[class*='editor'] :text('# 话题')",
+        ],
+        "TOPIC_DROPDOWN": [
+            "[role='listbox']",
+            "div[class*='dropdown']",
+            "div[class*='popover']",
+            "div[class*='suggest']",
+            "div[class*='mention']",
+            "div[class*='selector']",
+        ],
         "TOPIC_SUGGESTION": [
+            "[role='listbox'] [role='option']",
+            "[role='listbox'] li",
             "div[class*='topic-item']",
             "div[class*='suggest-item']",
             "li[class*='topic']",
+            "div[class*='dropdown'] div[class*='item']",
+        ],
+        # 已收成的话题芯片（用于计数后验）
+        "TOPIC_CHIP": [
+            "a[class*='tag']",
+            "span[class*='tag']",
+            "[class*='topic-tag']",
+            "[class*='hashtag']",
+            "[class*='topic-item']",
+            "a[data-topic]",
         ],
         "AT_INPUT": ["input[placeholder*='@']"],
 
@@ -226,11 +277,19 @@ class Selectors:
             "div[class*='cover-dialog'] img",
         ],
 
-        # 步骤8：发布按钮
+        # 步骤8：发布按钮（优先限定主表单区，避免误点预览区）
         "SUBMIT_BTN": [
+            ".publish-page-content button:has-text('发布')",
+            "#publish-container button:has-text('发布')",
+            ".publish-page-container button:has-text('发布')",
             "button:has-text('发布')",
             "button[class*='submit']",
             "button[class*='publish']",
+        ],
+        "SUBMIT_SCOPE": [
+            ".publish-page-content",
+            "#publish-container",
+            ".publish-page-container",
         ],
     }
 
@@ -279,6 +338,56 @@ class Selectors:
     # 6. 发布设置 (Settings)
     # ==========================================
     SETTINGS = {
+        # 步骤7：更多设置区（20260525 DOM 报告）
+        "MORE_SETTINGS_SECTION": [
+            ".publish-page-content-settings",
+        ],
+        "PERMISSION_SELECT": [
+            ".publish-page-content-settings .permission-card-select",
+            ".permission-card-select",
+        ],
+        "PERMISSION_DROPDOWN": [
+            "body > .d-popover.custom-dropdown-44:has-text('仅自己可见')",
+            "body > .d-popover.d-dropdown.custom-dropdown-44:has-text('仅自己可见')",
+        ],
+        "PERMISSION_DROPDOWN_ANCHOR": [
+            "仅自己可见",
+        ],
+        "SCHEDULE_WRAPPER": [
+            ".publish-page-content-settings .post-time-wrapper",
+            ".post-time-wrapper",
+        ],
+        "SCHEDULE_LABEL": [
+            "text=定时发布",
+        ],
+        "SCHEDULE_CHECKBOX": [
+            ".publish-page-content-settings .post-time-wrapper input[type='checkbox']",
+            ".post-time-wrapper input[type='checkbox']",
+        ],
+        "SCHEDULE_SWITCH": [
+            ".post-time-switch-container .d-switch-simulator",
+            ".post-time-switch-container .d-clickable.d-switch",
+            ".post-time-wrapper .d-switch-simulator",
+            ".post-time-wrapper .d-clickable.d-switch",
+            ".post-time-wrapper .custom-switch-card",
+            ".post-time-wrapper .custom-switch-wrapper",
+        ],
+        "SCHEDULE_TIME_INPUT": [
+            ".post-time-wrapper input[type='text']",
+            ".post-time-wrapper input.d-text",
+        ],
+        # 定时开关打开后的时间显示框（须点击才呼出日期时间浮层）
+        "SCHEDULE_TIME_DISPLAY": [
+            ".post-time-wrapper input[type='text']",
+            ".post-time-wrapper input.d-text",
+            ".post-time-wrapper .d-datepicker-input input",
+            ".post-time-wrapper .d-datepicker-input",
+        ],
+        "SCHEDULE_DATE_PICKER": [
+            "body > .post-time-date-picker-popover-class",
+            ".post-time-date-picker-popover-class",
+        ],
+        # 图文旧版 / fallback
         "PRIVACY_PUBLIC": [
             "label:has-text('公开')",
             "div[class*='radio']:has-text('公开')",
@@ -288,11 +397,14 @@ class Selectors:
             "div[class*='radio']:has-text('私密')",
         ],
         "PUBLISH_SCHEDULE": [
+            ".post-time-wrapper",
+            ".post-time-wrapper .custom-switch-card",
             "label:has-text('定时发布')",
             "div[class*='radio']:has-text('定时发布')",
             "input[type='checkbox'][class*='schedule']",
         ],
         "SCHEDULE_INPUT": [
+            ".post-time-wrapper input[type='text']",
             "input[placeholder*='日期']",
             "input[placeholder*='时间']",
             "input[type='datetime-local']",
@@ -313,13 +425,87 @@ class Selectors:
             "input[placeholder*='地点']",
             "div[class*='location'] input",
         ],
-        # ⏳ 作品申明 / 内容属性（DOM 随创作者后台改版，步骤内另有文本定位兜底）
+        # 步骤6A/6B：视频发布「内容设置」区（20260525 DOM 报告）
+        "CONTENT_SETTINGS_SECTION": [
+            ".publish-page-content-content-extra",
+        ],
         "WORK_ORIGINAL_LABEL": [
+            ".original-wrapper",
+            ".original-wrapper .custom-switch-text-content",
             "text=原创声明",
             "*:has-text('原创声明')",
+        ],
+        "ORIGINAL_DECLARATION_CHECKBOX": [
+            ".publish-page-content-content-extra .original-wrapper input[type='checkbox']",
+            ".original-wrapper input[type='checkbox']",
+            "xpath=//*[normalize-space()='原创声明']/ancestor::div[1]//input[@type='checkbox']",
+            "xpath=//*[normalize-space()='原创声明']/ancestor::div[2]//input[@type='checkbox']",
+            "xpath=//*[normalize-space()='原创声明']/ancestor::div[3]//input[@type='checkbox']",
+            "xpath=//*[normalize-space()='原创声明']/ancestor::div[4]//input[@type='checkbox']",
+            "text=原创声明 >> xpath=../..//input[@type='checkbox']",
+        ],
+        "ORIGINAL_DECLARATION_SWITCH": [
+            ".original-wrapper .d-switch-simulator",
+            ".original-wrapper .d-clickable.d-switch",
+            ".original-wrapper .custom-switch-card",
+        ],
+        # 步骤6A：开启原创声明时的权益确认弹窗（需勾选协议后点确认）
+        "ORIGINAL_DECLARATION_DIALOG": [
+            "div[role='dialog']:has-text('笔记完成原创声明后')",
+            "div.d-modal:has-text('笔记完成原创声明后')",
+            "div.d-modal-wrapper:has-text('笔记完成原创声明后')",
+            "div:has-text('笔记完成原创声明后'):has(button:has-text('声明原创'))",
+            "div:has-text('笔记完成原创声明后'):has(button:has-text('申明原创'))",
+            "div:has-text('获得原创笔记标记'):has(button)",
+            "div:has-text('原创声明须知'):has(button:has-text('声明原创'))",
+            "div:has-text('原创声明须知'):has(button:has-text('申明原创'))",
+        ],
+        "ORIGINAL_DECLARATION_AGREEMENT": [
+            "label:has-text('我已阅读并同意')",
+            "div:has-text('我已阅读并同意') input[type='checkbox']",
+            "div[role='dialog'] label:has-text('我已阅读并同意')",
+            "div.d-modal label:has-text('我已阅读并同意')",
+            "div:has-text('笔记完成原创声明后') label:has-text('我已阅读并同意')",
+            "div:has-text('原创声明须知') >> xpath=..//label[contains(.,'我已阅读')]",
+        ],
+        "ORIGINAL_DECLARATION_CONFIRM_BTN": [
+            "button:has-text('声明原创')",
+            "button:has-text('申明原创')",
+            "div[role='dialog'] button:has-text('声明原创')",
+            "div[role='dialog'] button:has-text('申明原创')",
+            "div.d-modal button:has-text('声明原创')",
+            "div.d-modal button:has-text('申明原创')",
+        ],
+        "CONTENT_TYPE_DECLARATION_ENTRY": [
+            ".publish-page-content-content-extra .d-select-wrapper:has-text('添加内容类型声明')",
+            ".publish-page-content-content-extra .d-select-wrapper >> text=添加内容类型声明",
+            "text=添加内容类型声明",
+            "div:has-text('添加内容类型声明')",
+            "span:has-text('添加内容类型声明')",
+        ],
+        "CONTENT_TYPE_DECLARATION_PANEL": [
+            "body > .d-popover.d-dropdown:has-text('虚构演绎，仅供娱乐')",
+            "body > .d-popover.d-dropdown >> text=虚构演绎，仅供娱乐",
+            "div[role='dialog']:has-text('内容类型声明')",
+            "div[role='dialog']:has-text('添加内容类型声明')",
+            "div[class*='modal']:has-text('内容类型声明')",
+            "div[class*='dialog']:has-text('内容类型声明')",
+            "div[class*='popover']:has-text('内容类型声明')",
+            "div[class*='dropdown']:has-text('虚构演绎')",
+        ],
+        "CONTENT_TYPE_DECLARATION_PANEL_ANCHOR": [
+            "虚构演绎，仅供娱乐",
+        ],
+        "CONTENT_TYPE_DECLARATION_CONFIRM": [
+            "button:has-text('确定')",
+            "button:has-text('完成')",
+            "button:has-text('确认')",
+            "div:has-text('确定')",
         ],
         "WORK_CONTENT_ATTR_HINT": [
             "text=内容属性",
             "text=笔记类型",
+            "text=内容类型声明",
+            "text=添加内容类型声明",
         ],
     }

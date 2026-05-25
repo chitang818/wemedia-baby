@@ -11,7 +11,11 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from src.domain.publish.location_settings import parse_poi_info_storage
+from src.domain.publish.location_settings import (
+    location_preview_display,
+    parse_location_short_name_from_storage,
+    parse_poi_info_storage,
+)
 from src.ui.pages.publish.task_field_display import TASK_FIELD_EMPTY_DISPLAY
 
 # 视频号空 POI 时在列表/预览中的可读文案（与单条「默认城市定位」复选框、批量弹窗语义一致）
@@ -30,6 +34,14 @@ def format_poi_table_cell_display(
     有地点文案：带模式后缀。无文案且为视频号：按 wx 标志显示默认城市/不展示位置。
     其它空文案：—。
     """
+    preview = location_preview_display(raw or "")
+    if preview:
+        if parse_location_short_name_from_storage(raw or ""):
+            _, mode = parse_poi_info_storage(raw or "")
+            if mode:
+                return f"{preview}（{mode}）"
+        return preview
+
     poi_text, mode = parse_poi_info_storage(raw or "")
     if poi_text:
         if mode:

@@ -291,6 +291,10 @@ class PublishExecutor:
                 "cover_path": getattr(context, "cover_path", None),
                 "scheduled_publish_time": st_str,
                 "privacy_settings": getattr(context, "privacy_settings", None),
+                "_diagnostic_context": {
+                    "account_name": context.account_name,
+                    "file_path": context.file_path,
+                },
             }
             from src.domain.publish.location_settings import LocationPublishFields
 
@@ -300,6 +304,27 @@ class PublishExecutor:
                     context, "wechat_empty_location_open_picker", None
                 ),
             ).apply_to_plugin_metadata(metadata)
+
+            _poi_for_resolve = (metadata.get("poi_info") or "").strip()
+            if _poi_for_resolve:
+                from src.domain.publish.location_settings import (
+                    LocationPromotionPublishFields,
+                    parse_location_short_name_from_storage,
+                )
+
+                if parse_location_short_name_from_storage(_poi_for_resolve):
+                    try:
+                        resolved_poi = (
+                            await LocationPromotionPublishFields.resolve_poi_info_for_platform(
+                                _poi_for_resolve, platform
+                            )
+                        )
+                        if resolved_poi:
+                            metadata["poi_info"] = resolved_poi
+                    except Exception as _loc_err:
+                        logger.warning(
+                            "位置推广库解析失败（不阻断发布）: %s", _loc_err
+                        )
 
             # 带货推广：优先处理含 cart_short_name（或旧键 yellow_cart_short_name）的 cart_info
             # 按简称查库，注入各平台链接/名称。cart_short_title 仅属购物车挂载数据，此处不参与查询。

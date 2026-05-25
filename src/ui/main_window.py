@@ -58,36 +58,21 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_startup_preload_mode(mode: str | None) -> str:
-    mode = (mode or "minimal").strip().lower()
-    if mode in {"0", "false", "no", "off", "none", "disabled"}:
-        return "off"
-    if mode in {"1", "true", "yes", "full", "all"}:
-        return "full"
-    return "minimal"
+    from src.infrastructure.common.startup_prefs import normalize_startup_preload_mode
+
+    return normalize_startup_preload_mode(mode)
 
 
 def _startup_preload_mode() -> str:
-    return _normalize_startup_preload_mode(
-        os.environ.get("WEMEDIABABY_STARTUP_PRELOADS", "minimal")
-    )
+    from src.infrastructure.common.startup_prefs import resolve_startup_preload_mode
+
+    return resolve_startup_preload_mode()
 
 
 def _startup_preload_timing() -> tuple[int, int]:
-    def _env_int(name: str, default: int) -> int:
-        raw = os.environ.get(name)
-        if raw is None:
-            return default
-        try:
-            return max(0, int(raw.strip()))
-        except (TypeError, ValueError):
-            return default
+    from src.infrastructure.common.startup_prefs import startup_preload_timing
 
-    # Keep first paint responsive: preloading heavy table pages competes with
-    # startup checks and first user navigation if it starts too early.
-    return (
-        _env_int("WEMEDIABABY_STARTUP_PRELOAD_BASE_MS", 5000),
-        _env_int("WEMEDIABABY_STARTUP_PRELOAD_STEP_MS", 500),
-    )
+    return startup_preload_timing()
 
 
 def get_startup_preload_page_names(
@@ -139,6 +124,9 @@ class MainWindow(FluentWindow):
         # 初始化页面工厂
         self.page_factory = PageFactory()
         self._scheduled_timers: dict[str, QTimer] = {}
+        from src.infrastructure.common.startup_scheduler import StartupScheduler
+
+        self._startup_scheduler = StartupScheduler(self)
 
         # 设置窗口图标 (使用 PathManager 统一路径，兼容打包环境)
         from src.infrastructure.common.path_manager import PathManager
@@ -241,8 +229,12 @@ class MainWindow(FluentWindow):
     def _schedule_page_preload(self, page_name: str, delay_ms: int) -> None:
         if hasattr(self, page_name):
             return
+        if getattr(self, "_startup_scheduler", None) and not self._startup_scheduler.should_run_preload():
+            return
 
         def _preload():
+            if getattr(self, "_startup_scheduler", None) and not self._startup_scheduler.should_run_preload():
+                return
             if not self.isVisible():
                 logger.debug("窗口隐藏，跳过预加载页面: %s", page_name)
                 return
@@ -277,6 +269,8 @@ class MainWindow(FluentWindow):
         )
 
     def _schedule_startup_preloads(self) -> None:
+        if _startup_preload_mode() == "off":
+            return
         base_ms, step_ms = _startup_preload_timing()
         missing_pages = [
             page_name
@@ -293,9 +287,12 @@ class MainWindow(FluentWindow):
             )
 
     def _schedule_account_list_prewarm(self) -> None:
+        from src.infrastructure.common.startup_prefs import startup_scheduler_delays_ms
+
+        delay = startup_scheduler_delays_ms()["account_list_prewarm"]
         self._schedule_single_shot(
             "startup.account_list_prewarm",
-            4500,
+            delay,
             self._run_account_list_prewarm,
         )
 
@@ -438,18 +435,29 @@ class MainWindow(FluentWindow):
         # 浏览器页已从导航移除，不再延迟初始化
         # 强制更新：打开软件立即检测，有新版本则弹窗并退出，旧版本不可用
         # 52POJIE 特别版不检测软件更新
+        from src.infrastructure.common.startup_prefs import startup_scheduler_delays_ms
+
+        delays = startup_scheduler_delays_ms()
         if not FeatureFlags.is_52pojie() and not getattr(self, "_update_check_startup_done", False):
             self._update_check_startup_done = True
-            self._schedule_single_shot("startup.update_check", 5000, self._run_startup_update_check)
-        # Chrome 检测：启动后约 2 秒检测一次，未安装时提示前往设置安装（仅提示一次）
+            self._schedule_single_shot(
+                "startup.update_check",
+                delays["update_check"],
+                self._run_startup_update_check,
+            )
+        # Chrome 检测：启动后延迟检测，未安装时提示前往设置安装（仅提示一次）
         if not getattr(self, "_chrome_check_done", False):
-            self._schedule_single_shot("startup.chrome_check", 2000, self._run_chrome_check)
+            self._schedule_single_shot(
+                "startup.chrome_check",
+                delays["chrome_check"],
+                self._run_chrome_check,
+            )
         # 媒体库：未配置根路径时弹窗引导前往设置（已配置则静默，仅检测一次）
         if not getattr(self, "_material_library_check_scheduled", False):
             self._material_library_check_scheduled = True
             self._schedule_single_shot(
                 "startup.material_library_check",
-                1200,
+                delays["material_library_check"],
                 self._run_material_library_startup_check,
             )
         # 空闲预加载高频页面：错开时间片，避免同一时刻多页 import/__init__ 抢满 UI 线程
@@ -1602,6 +1610,8 @@ class MainWindow(FluentWindow):
             open_add_account: 为 True 时进入账号管理页后自动打开添加平台弹窗
         """
         try:
+            if page_name != "workspace_page" and getattr(self, "_startup_scheduler", None):
+                self._startup_scheduler.pause_preloads(f"navigate:{page_name}")
             # 1. 尝试获取或创建页面
             page = self._get_or_create_page(page_name)
 

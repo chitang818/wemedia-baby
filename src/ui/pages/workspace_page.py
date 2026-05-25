@@ -55,6 +55,9 @@ class WorkspacePage(BasePage):
     # 顶部 KPI：四卡单行所需宽度（4×160 + 间距），与下方图表堆叠断点分开
     _stats_compact_width = 520
     _compact_width = 760
+    _OVERVIEW_SYNC_DEBOUNCE_MS = 48
+    _OVERVIEW_SYNC_POST_ANIMATION_MS = 120
+    _OVERVIEW_EVENT_FILTER_DELAY_MS = 150
 
     refreshRequested = Signal()
     refreshWelcomeRequested = Signal()
@@ -70,6 +73,7 @@ class WorkspacePage(BasePage):
         self.dashboard_service = None
         self._orchestrator: Optional[WorkspaceLoadOrchestrator] = None
         self._stats_first_reveal_done = False
+        self._full_content_ready = False
         self._secondary_widgets_created = False
         self._announcement_created = False
         self._recent_activity_created = False
@@ -79,11 +83,22 @@ class WorkspacePage(BasePage):
         self._last_stats_width = 0
         self._quick_action_grid_columns = 6
         self._overview_stacked = False
+        self._overview_pair_host_height: Optional[int] = None
+        self._last_overview_maximized: Optional[bool] = None
+        self._win_state_filter_installed = False
+        self._overview_above_height_cache: Optional[int] = None
+        self._overview_above_height_signature: Optional[tuple] = None
+        self._last_responsive_width: int = 0
 
         self.refreshRequested.connect(self._on_refresh_requested)
         self.refreshWelcomeRequested.connect(self.refresh_welcome_display)
         self._init_services()
-        self._setup_content()
+        self._setup_light_shell()
+        self._schedule_base_page_timer(
+            "workspace_full_content",
+            0,
+            self._ensure_full_content,
+        )
         self._setup_refresh_timer()
         self._orchestrator = WorkspaceLoadOrchestrator(self)
 
@@ -92,11 +107,6 @@ class WorkspacePage(BasePage):
             self._stats_cache.statsUpdated.connect(self._on_media_stats_updated)
         except Exception:
             pass
-        cached_applied = self._orchestrator.apply_cached_first_paint()
-        if cached_applied:
-            self._stats_first_reveal_done = True
-        else:
-            self.begin_stats_loading(top=True, media=True)
 
     def _init_services(self) -> None:
         try:
@@ -177,7 +187,6 @@ class WorkspacePage(BasePage):
         if self._orchestrator:
             self._orchestrator.cancel_pending()
         self._cancel_base_page_timer("workspace_secondary_widgets")
-        self._cancel_base_page_timer("workspace_recent_activity_create")
         self._cancel_base_page_timer("workspace_account_platform_prewarm")
         super().hideEvent(event)
 
@@ -196,6 +205,12 @@ class WorkspacePage(BasePage):
             if overview is not None:
                 try:
                     overview.show_loading()
+                except Exception:
+                    pass
+            recent = getattr(self, "recent_activity", None)
+            if recent is not None:
+                try:
+                    recent.show_loading()
                 except Exception:
                     pass
             for card in (
@@ -236,17 +251,15 @@ class WorkspacePage(BasePage):
                 card.cancel_pending_reveal()
             except Exception:
                 pass
+        recent = getattr(self, "recent_activity", None)
+        if recent is not None:
+            try:
+                recent.cancel_pending_reveal()
+            except Exception:
+                pass
 
-    def _setup_content(self) -> None:
-        from ..components.statistics_card import StatisticsCard
-        from ..components.quick_action_card import QuickActionCard
-        from ..components.account_platform_overview_card import (
-            AccountPlatformOverviewCard,
-            OVERVIEW_PAIR_HEIGHT,
-        )
-        from ..components.media_library_combined_card import MediaLibraryCombinedCard
-        from ..components.collapsible_announcement_panel import CollapsibleAnnouncementPanel
-
+    def _setup_light_shell(self) -> None:
+        """首屏轻壳：仅滚动区与顶栏，重组件在下一事件循环帧构建。"""
         scroll_area = create_workspace_scroll_area(self)
         self._workspace_scroll_area = scroll_area
 
@@ -254,7 +267,7 @@ class WorkspacePage(BasePage):
         scroll_content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         self._scroll_content = scroll_content
         scroll_layout = QVBoxLayout(scroll_content)
-        # 外边距由 BasePage.main_layout(24,16,24,16) 统一控制，与账号库等页面一致
+        self._scroll_layout = scroll_layout
         scroll_layout.setContentsMargins(0, 0, 0, 0)
         scroll_layout.setSpacing(12)
         scroll_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -278,12 +291,66 @@ class WorkspacePage(BasePage):
         header_layout.addWidget(self.welcome_line, 1, Qt.AlignmentFlag.AlignVCenter)
 
         self._welcome_meta_label = CaptionLabel("", self._header_card)
-        self._welcome_meta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._welcome_meta_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         header_layout.addWidget(self._welcome_meta_label, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._apply_welcome_line_style()
         self._update_welcome_text(date_str)
         scroll_layout.addWidget(self._header_card)
+
+        self._light_placeholder = self._make_panel_placeholder("工作台")
+        scroll_layout.addWidget(self._light_placeholder)
+
+        set_workspace_scroll_content(scroll_area, scroll_content)
+        self.content_layout.addWidget(scroll_area)
+
+    def _ensure_full_content(self) -> None:
+        if self._full_content_ready:
+            return
+        self._full_content_ready = True
+        placeholder = getattr(self, "_light_placeholder", None)
+        if placeholder is not None and self._scroll_layout is not None:
+            self._scroll_layout.removeWidget(placeholder)
+            placeholder.deleteLater()
+            self._light_placeholder = None
+        self._setup_content()
+        self._secondary_widgets_created = True
+        self._announcement_created = True
+        self._recent_activity_created = True
+        if self._orchestrator:
+            cached_applied = self._orchestrator.apply_cached_first_paint()
+            if cached_applied:
+                self._stats_first_reveal_done = True
+            else:
+                self.begin_stats_loading(top=True, media=True)
+
+    def _setup_content(self) -> None:
+        if getattr(self, "_full_content_ready", False) and hasattr(self, "publish_card"):
+            return
+        from ..components.statistics_card import StatisticsCard
+        from ..components.quick_action_card import QuickActionCard
+        from ..components.account_platform_overview_card import AccountPlatformOverviewCard
+        from ..components.media_library_combined_card import MediaLibraryCombinedCard
+        from ..components.collapsible_announcement_panel import CollapsibleAnnouncementPanel
+        from ..components.recent_activity_widget import RecentActivityWidget
+
+        scroll_area = getattr(self, "_workspace_scroll_area", None)
+        if scroll_area is None:
+            scroll_area = create_workspace_scroll_area(self)
+            self._workspace_scroll_area = scroll_area
+            scroll_content = QWidget()
+            scroll_content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+            self._scroll_content = scroll_content
+            scroll_layout = QVBoxLayout(scroll_content)
+            self._scroll_layout = scroll_layout
+            scroll_layout.setContentsMargins(0, 0, 0, 0)
+            scroll_layout.setSpacing(12)
+            scroll_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+            set_workspace_scroll_content(scroll_area, scroll_content)
+            self.content_layout.addWidget(scroll_area)
+        scroll_layout = self._scroll_layout
 
         self._stats_cards = []
         self._stats_grid_columns = 4
@@ -348,38 +415,50 @@ class WorkspacePage(BasePage):
 
         self.account_platform_card = AccountPlatformOverviewCard(self, half_column=True)
         self.account_platform_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.account_platform_card.setMinimumHeight(OVERVIEW_PAIR_HEIGHT)
-        self.account_platform_card.setMaximumHeight(OVERVIEW_PAIR_HEIGHT)
 
         self._overview_pair_host = QWidget(self)
         self._overview_pair_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self._overview_pair_host.setFixedHeight(OVERVIEW_PAIR_HEIGHT)
         overview_pair_layout = QGridLayout(self._overview_pair_host)
         overview_pair_layout.setContentsMargins(0, 0, 0, 0)
         overview_pair_layout.setHorizontalSpacing(12)
         overview_pair_layout.setVerticalSpacing(10)
         self._overview_pair_layout = overview_pair_layout
 
-        self._recent_activity_placeholder = self._make_panel_placeholder("发布统计")
-        self._recent_activity_placeholder.setMinimumHeight(OVERVIEW_PAIR_HEIGHT)
-        self._recent_activity_placeholder.setMaximumHeight(OVERVIEW_PAIR_HEIGHT)
-        self._recent_activity_placeholder.setSizePolicy(
-            QSizePolicy.Expanding, QSizePolicy.Fixed
-        )
+        self.recent_activity = RecentActivityWidget(self)
+        self.recent_activity.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.recent_activity.set_narrow_column(True)
 
         overview_pair_layout.addWidget(self.account_platform_card, 0, 0)
-        overview_pair_layout.addWidget(self._recent_activity_placeholder, 0, 1)
+        overview_pair_layout.addWidget(self.recent_activity, 0, 1)
         overview_pair_layout.setColumnStretch(0, 1)
         overview_pair_layout.setColumnStretch(1, 1)
+        overview_pair_layout.setRowStretch(0, 1)
+        overview_pair_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         scroll_layout.addWidget(self._overview_pair_host)
+        self._sync_overview_pair_layout()
 
-        set_workspace_scroll_content(scroll_area, scroll_content)
-        self.content_layout.addWidget(scroll_area)
         self._sync_responsive_layout()
 
     def _make_panel_placeholder(self, title: str) -> CardWidget:
         card = CardWidget(self)
         card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        dark = isDarkTheme()
+        if dark:
+            card.setStyleSheet(
+                "CardWidget {"
+                "background: rgba(255, 255, 255, 0.04);"
+                "border: 1px solid rgba(255, 255, 255, 0.08);"
+                "border-radius: 8px;"
+                "}"
+            )
+        else:
+            card.setStyleSheet(
+                "CardWidget {"
+                "background: #FFFFFF;"
+                "border: 1px solid #EBEEF2;"
+                "border-radius: 8px;"
+                "}"
+            )
         layout = QVBoxLayout(card)
         layout.setContentsMargins(12, 10, 12, 10)
         title_lbl = SubtitleLabel(title, card)
@@ -396,63 +475,34 @@ class WorkspacePage(BasePage):
         return card
 
     def ensure_secondary_widgets_created(self) -> None:
-        self.ensure_recent_activity_created()
+        self._ensure_full_content()
 
     def ensure_announcement_created(self) -> None:
         """公告已在构造期以可折叠面板创建。"""
         return
 
     def ensure_recent_activity_created(self, reminders=None) -> None:
-        if self._recent_activity_created:
-            if reminders is not None:
-                self.set_cached_reminders(reminders)
-            return
-        try:
-            from ..components.recent_activity_widget import RecentActivityWidget
-
-            placeholder = getattr(self, "_recent_activity_placeholder", None)
-            if placeholder is not None:
-                parent = placeholder.parentWidget()
-                parent_layout = parent.layout() if parent is not None else None
-                if parent_layout is not None:
-                    parent_layout.removeWidget(placeholder)
-                placeholder.hide()
-                placeholder.setParent(None)
-                placeholder.deleteLater()
-                self._recent_activity_placeholder = None
-
-                self.recent_activity = RecentActivityWidget(parent or self)
-                self.recent_activity.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                from ..components.account_platform_overview_card import OVERVIEW_PAIR_HEIGHT
-
-                self.recent_activity.setMinimumHeight(OVERVIEW_PAIR_HEIGHT)
-                self.recent_activity.setMaximumHeight(OVERVIEW_PAIR_HEIGHT)
-                if hasattr(self.recent_activity, "set_narrow_column"):
-                    self.recent_activity.set_narrow_column(True)
-                if parent_layout is not None and not isinstance(parent_layout, QGridLayout):
-                    parent_layout.addWidget(self.recent_activity)
-
-            self._recent_activity_created = True
-            self._secondary_widgets_created = self._recent_activity_created
-
-            rows = self._cached_reminders if reminders is None else reminders
-            self.set_cached_reminders(rows or [])
-            self._sync_overview_pair_layout()
-            self._sync_recent_activity_layout()
-        except Exception as e:
-            logger.debug("工作台最近发布创建失败（可忽略）: %s", e)
+        """发布统计卡已在构造期创建；仅用于兼容旧调用路径。"""
+        if reminders is not None:
+            self.reveal_publish_reminders(reminders, animate_entry=False)
 
     def set_cached_reminders(self, reminders) -> None:
         self._cached_reminders = list(reminders or [])
-        if hasattr(self, "recent_activity") and self.recent_activity is not None:
-            self.recent_activity.set_account_reminders(self._cached_reminders)
+
+    def reveal_publish_reminders(
+        self,
+        reminders,
+        *,
+        animate_entry: bool = False,
+    ) -> None:
+        rows = list(reminders or [])
+        self._cached_reminders = rows
+        recent = getattr(self, "recent_activity", None)
+        if recent is None:
+            return
+        recent.reveal_reminders(rows, animate=animate_entry)
 
     def schedule_noncritical_first_paint(self) -> None:
-        self._schedule_base_page_timer(
-            "workspace_recent_activity_create",
-            0,
-            self.ensure_recent_activity_created,
-        )
         self._schedule_base_page_timer(
             "workspace_account_platform_prewarm",
             80,
@@ -568,42 +618,307 @@ class WorkspacePage(BasePage):
         for c in range(4):
             self._stats_grid.setColumnStretch(c, 1 if c < columns else 0)
 
+    def _is_overview_maximized(self) -> bool:
+        """FluentWindow 自定义最大化时 isMaximized() 可能为 False，需多重判断。"""
+        win = self.window()
+        if win is None:
+            return False
+        try:
+            if win.windowState() & Qt.WindowState.WindowMaximized:
+                return True
+        except Exception:
+            pass
+        if win.isMaximized():
+            return True
+        screen = win.screen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            if win.width() >= avail.width() - 80 and win.height() >= avail.height() - 80:
+                return True
+        return False
+
+    def _overview_pair_widgets(self) -> list[QWidget]:
+        widgets: list[QWidget] = []
+        account_card = getattr(self, "account_platform_card", None)
+        if account_card is not None:
+            widgets.append(account_card)
+        recent = getattr(self, "recent_activity", None)
+        if recent is not None:
+            widgets.append(recent)
+        return widgets
+
+    def _workspace_scroll_viewport_height(self) -> int:
+        scroll = getattr(self, "_workspace_scroll_area", None)
+        if scroll is None:
+            return 0
+        try:
+            vp = scroll.viewport()
+            if vp is not None:
+                return max(0, int(vp.height()))
+        except Exception:
+            pass
+        return 0
+
+    def _invalidate_overview_above_cache(self) -> None:
+        self._overview_above_height_cache = None
+        self._overview_above_height_signature = None
+
+    def _overview_above_layout_signature(self) -> tuple:
+        ann = getattr(self, "_announcement_panel", None)
+        ann_collapsed = bool(getattr(ann, "is_collapsed", False)) if ann is not None else False
+        return (
+            self._workspace_scroll_viewport_height(),
+            self._content_available_width(),
+            ann_collapsed,
+        )
+
+    def _scroll_sections_height_before_overview(self) -> int:
+        """双列概览区上方各块占位（含块间距），用于计算剩余可视高度。"""
+        sig = self._overview_above_layout_signature()
+        cached = getattr(self, "_overview_above_height_cache", None)
+        if (
+            cached is not None
+            and getattr(self, "_overview_above_height_signature", None) == sig
+        ):
+            return int(cached)
+
+        layout = getattr(self, "_scroll_layout", None)
+        host = getattr(self, "_overview_pair_host", None)
+        if layout is None or host is None:
+            return 0
+        spacing = int(layout.spacing()) if layout.spacing() >= 0 else 12
+        total = 0
+        seen_host = False
+        for index in range(layout.count()):
+            item = layout.itemAt(index)
+            widget = item.widget() if item is not None else None
+            if widget is None:
+                continue
+            if widget is host:
+                seen_host = True
+                break
+            if not widget.isVisible():
+                continue
+            h = max(int(widget.height()), int(widget.sizeHint().height()))
+            total += max(0, h)
+            total += spacing
+        if seen_host and total > 0:
+            total -= spacing
+        self._overview_above_height_cache = total
+        self._overview_above_height_signature = sig
+        return total
+
+    def _overview_pair_height_budget(self, *, stacked: bool) -> Optional[int]:
+        """双列区在滚动视口内的可用高度（上方区块占位之后的剩余空间）。"""
+        from ..components.account_platform_overview_card import (
+            OVERVIEW_PAIR_HEIGHT_MIN,
+            OVERVIEW_PAIR_STACKED_GAP,
+            OVERVIEW_VIEWPORT_SAFETY,
+        )
+
+        viewport_h = self._workspace_scroll_viewport_height()
+        if viewport_h < 240:
+            return None
+        layout = getattr(self, "_scroll_layout", None)
+        spacing = int(layout.spacing()) if layout is not None and layout.spacing() >= 0 else 12
+        above = self._scroll_sections_height_before_overview()
+        # 概览区与上方最后一块之间还有一次 layout spacing
+        remaining = viewport_h - above - spacing - OVERVIEW_VIEWPORT_SAFETY
+        if stacked:
+            min_host = OVERVIEW_PAIR_HEIGHT_MIN * 2 + OVERVIEW_PAIR_STACKED_GAP
+            return max(min_host, remaining)
+        return max(OVERVIEW_PAIR_HEIGHT_MIN, remaining)
+
+    def _overview_pair_host_min_height(self, *, stacked: bool) -> int:
+        from ..components.account_platform_overview_card import (
+            OVERVIEW_PAIR_HEIGHT_MIN,
+            OVERVIEW_PAIR_STACKED_GAP,
+        )
+
+        if stacked:
+            return OVERVIEW_PAIR_HEIGHT_MIN * 2 + OVERVIEW_PAIR_STACKED_GAP
+        return OVERVIEW_PAIR_HEIGHT_MIN
+
+    def _scroll_content_height(self) -> int:
+        content = getattr(self, "_scroll_content", None)
+        if content is None:
+            return 0
+        try:
+            return max(int(content.sizeHint().height()), int(content.height()))
+        except Exception:
+            return int(content.sizeHint().height())
+
+    def _overview_layout_spacing(self) -> int:
+        layout = getattr(self, "_scroll_layout", None)
+        if layout is not None and layout.spacing() >= 0:
+            return int(layout.spacing())
+        return 12
+
+    def _overview_total_scroll_height(self, host_height: int) -> int:
+        """按布局公式计算滚动内容总高，避免还原后 content.height() 滞后导致过度收紧。"""
+        return (
+            self._scroll_sections_height_before_overview()
+            + self._overview_layout_spacing()
+            + max(0, int(host_height))
+        )
+
+    def _clamp_overview_pair_to_viewport(self, host_height: int, *, stacked: bool) -> int:
+        """budget 已按视口与上方区块算出剩余高度，与 candidate 取交集即可（O(1)）。"""
+        budget = self._overview_pair_height_budget(stacked=stacked)
+        if budget is None:
+            return host_height
+        min_host = self._overview_pair_host_min_height(stacked=stacked)
+        return max(min_host, min(host_height, budget))
+
+    def _resolve_effective_overview_pair_height(self, *, stacked: bool, maximized: bool) -> int:
+        from ..components.account_platform_overview_card import (
+            clamp_overview_pair_height,
+            resolve_overview_pair_height,
+        )
+
+        preferred = resolve_overview_pair_height(maximized=maximized, stacked=stacked)
+        budget = self._overview_pair_height_budget(stacked=stacked)
+        # 最大化：在视口预算内尽量撑满；默认：不超过 preferred
+        height_cap = 99999 if maximized else preferred
+        candidate = clamp_overview_pair_height(height_cap, budget=budget, stacked=stacked)
+        return self._clamp_overview_pair_to_viewport(candidate, stacked=stacked)
+
+    def _apply_overview_pair_heights(self, host_height: int, *, stacked: bool) -> None:
+        from ..components.account_platform_overview_card import (
+            overview_pair_card_height,
+            publish_stats_card_height,
+        )
+
+        host = getattr(self, "_overview_pair_host", None)
+        if host is not None:
+            host.setFixedHeight(host_height)
+        card_h = overview_pair_card_height(host_height, stacked=stacked)
+        publish_h = publish_stats_card_height(card_h)
+        account_card = getattr(self, "account_platform_card", None)
+        if account_card is not None:
+            account_card.setMinimumHeight(card_h)
+            account_card.setMaximumHeight(card_h)
+        recent = getattr(self, "recent_activity", None)
+        if recent is not None:
+            recent.setMinimumHeight(publish_h)
+            recent.setMaximumHeight(publish_h)
+
+    def _sync_workspace_page_scroll_policy(self) -> None:
+        scroll = getattr(self, "_workspace_scroll_area", None)
+        if scroll is None:
+            return
+        viewport_h = self._workspace_scroll_viewport_height()
+        if viewport_h <= 0:
+            return
+        cached_host_h = getattr(self, "_overview_pair_host_height", None)
+        if cached_host_h is not None and cached_host_h > 0:
+            content_h = self._overview_total_scroll_height(int(cached_host_h))
+        else:
+            content_h = self._scroll_content_height()
+        if content_h <= viewport_h + 2:
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        else:
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+    def _ensure_main_window_state_filter(self) -> None:
+        win = self.window()
+        if win is None or self._win_state_filter_installed:
+            return
+        win.installEventFilter(self)
+        self._win_state_filter_installed = True
+
+    def _schedule_deferred_overview_sync(self, *, post_animation: bool = False) -> None:
+        self._schedule_base_page_timer(
+            "workspace_overview_layout_debounced",
+            self._OVERVIEW_SYNC_DEBOUNCE_MS,
+            self._run_deferred_overview_sync_light,
+        )
+        if post_animation:
+            self._schedule_base_page_timer(
+                "workspace_overview_layout_post_animation",
+                self._OVERVIEW_SYNC_POST_ANIMATION_MS,
+                self._run_deferred_overview_sync,
+            )
+
+    def _run_deferred_overview_sync_light(self) -> None:
+        """防抖：宽度未变时仅同步双列区，避免最大化过渡帧反复重排 KPI。"""
+        self._invalidate_overview_above_cache()
+        width = self._content_available_width()
+        last_width = getattr(self, "_last_responsive_width", 0)
+        if abs(width - last_width) >= 8:
+            self._last_responsive_width = width
+            self._sync_responsive_layout()
+        else:
+            self._sync_overview_pair_layout(width)
+        self._sync_recent_activity_layout()
+
+    def _run_deferred_overview_sync(self) -> None:
+        self._invalidate_overview_above_cache()
+        self._sync_responsive_layout()
+        self._sync_recent_activity_layout()
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self.window():
+            if event.type() == QEvent.Type.WindowStateChange:
+                self._invalidate_overview_above_cache()
+                self._schedule_deferred_overview_sync(post_animation=True)
+            elif event.type() == QEvent.Type.Resize:
+                self._schedule_deferred_overview_sync(post_animation=False)
+        return super().eventFilter(obj, event)
+
     def _sync_overview_pair_layout(self, width: Optional[int] = None) -> None:
         layout = getattr(self, "_overview_pair_layout", None)
         if layout is None:
             return
         content_width = self._content_available_width() if width is None else width
         stacked = content_width < self._compact_width
-        if stacked == self._overview_stacked and layout.count() >= 2:
+        maximized = self._is_overview_maximized()
+        maximized_changed = (
+            self._last_overview_maximized is not None
+            and self._last_overview_maximized != maximized
+        )
+        self._last_overview_maximized = maximized
+        pair_height = self._resolve_effective_overview_pair_height(
+            stacked=stacked,
+            maximized=maximized,
+        )
+        layout_changed = stacked != self._overview_stacked or layout.count() < 2
+        height_changed = getattr(self, "_overview_pair_host_height", None) != pair_height
+        if not layout_changed and not height_changed and not maximized_changed:
+            self._sync_workspace_page_scroll_policy()
             return
-        self._overview_stacked = stacked
 
-        widgets = [
-            getattr(self, "account_platform_card", None),
-            getattr(self, "recent_activity", None)
-            or getattr(self, "_recent_activity_placeholder", None),
-        ]
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget() if item is not None else None
-            if widget is not None:
-                widget.setParent(self._overview_pair_host)
-        if stacked:
-            self._overview_pair_host.setFixedHeight(300 * 2 + 10)
-            for row, widget in enumerate(w for w in widgets if w is not None):
-                layout.addWidget(widget, row, 0)
-            layout.setColumnStretch(0, 1)
-            layout.setColumnStretch(1, 0)
-        else:
-            self._overview_pair_host.setFixedHeight(300)
-            for col, widget in enumerate(w for w in widgets if w is not None):
-                layout.addWidget(widget, 0, col)
-            layout.setColumnStretch(0, 1)
-            layout.setColumnStretch(1, 1)
+        self._overview_stacked = stacked
+        self._overview_pair_host_height = pair_height
+
+        if layout_changed:
+            widgets = self._overview_pair_widgets()
+            while layout.count():
+                item = layout.takeAt(0)
+                widget = item.widget() if item is not None else None
+                if widget is not None:
+                    widget.setParent(self._overview_pair_host)
+            if stacked:
+                for row, widget in enumerate(widgets):
+                    layout.addWidget(widget, row, 0)
+                layout.setColumnStretch(0, 1)
+                layout.setColumnStretch(1, 0)
+            else:
+                for col, widget in enumerate(widgets):
+                    layout.addWidget(widget, 0, col)
+                layout.setColumnStretch(0, 1)
+                layout.setColumnStretch(1, 1)
+        self.setUpdatesEnabled(False)
+        try:
+            self._apply_overview_pair_heights(pair_height, stacked=stacked)
+        finally:
+            self.setUpdatesEnabled(True)
+        self._sync_workspace_page_scroll_policy()
         self._sync_recent_activity_layout()
 
     def _sync_responsive_layout(self) -> None:
         width = self._content_available_width()
+        self._last_responsive_width = width
         self._relayout_stats_cards()
         self._relayout_quick_actions(width)
         self._sync_overview_pair_layout(width)
@@ -651,7 +966,7 @@ class WorkspacePage(BasePage):
 
             reminder_rows = data.get("account_publish_reminders", []) if reminders else []
             if reminders:
-                self.set_cached_reminders(reminder_rows)
+                self.reveal_publish_reminders(reminder_rows, animate_entry=animate_entry)
         except Exception as e:
             logger.error("应用工作台快照失败: %s", e, exc_info=True)
 
@@ -824,6 +1139,7 @@ class WorkspacePage(BasePage):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        self._ensure_full_content()
         if hasattr(self, "refresh_timer") and self.refresh_timer and not self.refresh_timer.isActive():
             self.refresh_timer.start()
         self.refresh_welcome_display()
@@ -836,22 +1152,34 @@ class WorkspacePage(BasePage):
             lambda: self._relayout_stats_cards(force=True),
         )
         self._relayout_quick_actions()
-        self._sync_overview_pair_layout()
-        self._sync_recent_activity_layout()
+        self._last_responsive_width = self._content_available_width()
+        if self._workspace_scroll_viewport_height() < 240:
+            self._schedule_base_page_timer(
+                "workspace_overview_layout_initial",
+                0,
+                self._sync_overview_pair_layout,
+            )
+        else:
+            self._sync_overview_pair_layout()
+        self._schedule_base_page_timer(
+            "workspace_overview_event_filter_install",
+            self._OVERVIEW_EVENT_FILTER_DELAY_MS,
+            self._ensure_main_window_state_filter,
+        )
         self.schedule_noncritical_first_paint()
         if self._orchestrator:
             self._orchestrator.schedule_startup_refresh()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
-        self._sync_responsive_layout()
-        self._sync_recent_activity_layout()
+        if getattr(self, "_win_state_filter_installed", False):
+            self._schedule_deferred_overview_sync(post_animation=False)
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange:
-            self._sync_responsive_layout()
-            self._sync_recent_activity_layout()
+            self._invalidate_overview_above_cache()
+            self._schedule_deferred_overview_sync(post_animation=True)
 
     def _sync_recent_activity_layout(self) -> None:
         if hasattr(self, "recent_activity") and self.recent_activity is not None:

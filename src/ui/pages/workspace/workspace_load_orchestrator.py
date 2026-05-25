@@ -56,13 +56,11 @@ class WorkspaceLoadOrchestrator:
         if dashboard_snapshot is None or media_stats is None:
             return False
         self._latest_snapshot = dashboard_snapshot
-        if hasattr(self._page, "set_cached_reminders"):
-            self._page.set_cached_reminders(dashboard_snapshot.reminders)
         self._page.apply_stats_batch(
             dashboard_snapshot,
             media_stats,
             animate_entry=False,
-            reminders=False,
+            reminders=True,
         )
         self._cached_snapshot_applied = True
         return True
@@ -135,7 +133,6 @@ class WorkspaceLoadOrchestrator:
         self._page._cancel_chart_pending_reveals()
         self._page._cancel_stats_pending_reveals()
         self._page._cancel_base_page_timer("workspace_orchestrator_start")
-        self._page._cancel_base_page_timer("workspace_recent_activity_create")
         self._page._cancel_base_page_timer("workspace_account_platform_prewarm")
         if self._debounce_timer is not None:
             try:
@@ -179,24 +176,14 @@ class WorkspaceLoadOrchestrator:
 
             fast, accounts = fast_result
             self._accounts_cache = accounts
-            self._page._apply_snapshot(
-                fast,
-                animate_entry=use_stats_animation,
-            )
 
-            if fast.account:
-                self._page.reveal_account_platform(
-                    fast.account,
-                    animate_entry=use_stats_animation,
-                )
-
-            reminders = await svc.get_online_account_publish_reminders(accounts=accounts)
+            reminders = await svc.get_account_publish_reminders(accounts=accounts)
             if generation != self._generation:
                 return
 
             full = DashboardSnapshot(
                 account=fast.account,
-                publish=publish_stats,
+                publish=publish_stats or {},
                 task=fast.task,
                 reminders=reminders,
                 loaded_at=monotonic(),
@@ -205,14 +192,11 @@ class WorkspaceLoadOrchestrator:
             self._latest_snapshot = full
             svc.cache_snapshot(full)
 
-            if publish_stats:
-                self._page._apply_publish_stats(
-                    publish_stats,
-                    animate_entry=use_stats_animation,
-                )
-
-            if hasattr(self._page, "set_cached_reminders"):
-                self._page.set_cached_reminders(reminders)
+            self._page._apply_snapshot(
+                full,
+                animate_entry=use_stats_animation,
+                reminders=True,
+            )
 
             self._page._stats_first_reveal_done = True
         except asyncio.CancelledError:
@@ -245,42 +229,15 @@ class WorkspaceLoadOrchestrator:
                 return
             fast, accounts = fast_result
             self._accounts_cache = accounts
-            self._page._apply_snapshot(
-                fast,
-                animate_entry=use_stats_animation,
-            )
-            if publish_stats:
-                self._page._apply_publish_stats(
-                    publish_stats,
-                    animate_entry=use_stats_animation,
-                )
-            held_media_stats = self._page.take_held_media_stats()
-            self._page.set_media_stats_update_hold(False)
-            self._page._on_media_stats_updated(
-                held_media_stats or media_stats,
-                animate_entry=use_stats_animation,
-            )
 
-            interim = DashboardSnapshot(
-                account=fast.account,
-                publish=publish_stats,
-                task=fast.task,
-                reminders=getattr(self._page, "_cached_reminders", []),
-                loaded_at=monotonic(),
-                partial=True,
-            )
-            self._latest_snapshot = interim
-
-            if fast.account:
-                self._page.apply_account_platform_cache_if_available()
-
-            reminders = await svc.get_online_account_publish_reminders(accounts=accounts)
+            reminders = await svc.get_account_publish_reminders(accounts=accounts)
             if generation != self._generation:
+                self._page.set_media_stats_update_hold(False)
                 return
 
             full = DashboardSnapshot(
                 account=fast.account,
-                publish=publish_stats,
+                publish=publish_stats or {},
                 task=fast.task,
                 reminders=reminders,
                 loaded_at=monotonic(),
@@ -288,8 +245,22 @@ class WorkspaceLoadOrchestrator:
             )
             self._latest_snapshot = full
             svc.cache_snapshot(full)
-            if hasattr(self._page, "set_cached_reminders"):
-                self._page.set_cached_reminders(reminders)
+
+            self._page._apply_snapshot(
+                full,
+                animate_entry=use_stats_animation,
+                reminders=True,
+            )
+
+            held_media_stats = self._page.take_held_media_stats()
+            self._page.set_media_stats_update_hold(False)
+            self._page._on_media_stats_updated(
+                held_media_stats or media_stats,
+                animate_entry=use_stats_animation,
+            )
+
+            if fast.account:
+                self._page.apply_account_platform_cache_if_available()
 
             self._cached_snapshot_applied = True
             self._page._stats_first_reveal_done = True

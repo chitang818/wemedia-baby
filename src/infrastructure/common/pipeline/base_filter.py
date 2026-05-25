@@ -30,6 +30,7 @@ class PublishContext:
     speed_rate: float = 1.0  # 发布速度倍率 (1.0=正常, >1.0=慢速)
     pause_event: Any = None  # 暂停控制事件 (asyncio.Event)
     error_message: Optional[str] = None
+    diagnostic_path: Optional[str] = None
     cover_type: Optional[str] = None  # 封面类型: "first_frame", "custom", "ai"
     cover_path: Optional[str] = None  # 本地封面图片路径（custom 时使用）
     scheduled_publish_time: Optional[Any] = None  # 定时发布时间 (datetime 或 str)
@@ -42,6 +43,8 @@ class PublishContext:
     anchor_info: Optional[str] = None
     micro_app_info: Optional[str] = None
     music_info: Optional[str] = None  # 音乐配置 JSON，含 music_type(random/specific) 和 music_name
+    # 待发布列表已有记录时传入，RecordSave 更新该条而非新建（避免失败后重复一条）
+    publish_record_id: Optional[int] = None
 
 
 @dataclass
@@ -69,6 +72,7 @@ class PublishRequest:
     anchor_info: Optional[str] = None
     micro_app_info: Optional[str] = None
     music_info: Optional[str] = None  # 音乐配置 JSON，含 music_type(random/specific) 和 music_name
+    publish_record_id: Optional[int] = None
 
 
 @dataclass
@@ -78,6 +82,7 @@ class PipelineResult:
     task_id: Optional[int] = None
     publish_url: Optional[str] = None
     error_message: Optional[str] = None
+    diagnostic_path: Optional[str] = None
     execution_time: float = 0.0
 
 
@@ -152,4 +157,3 @@ class BaseFilter(ABC):
             error: 错误信息
         """
         self._error = error
-

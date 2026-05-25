@@ -129,6 +129,8 @@ async def _migrate_publish_record_extension_columns(conn: MigrationConn) -> None
         ("wechat_empty_location_open_picker", "INTEGER"),
         ("task_source", "VARCHAR(20)"),
         ("group_id", "INTEGER"),
+        ("diagnostic_path", "TEXT"),
+        ("updated_at", "DATETIME"),
     ]
     for column_name, column_type in columns:
         await _add_column_if_missing(
@@ -146,6 +148,41 @@ async def _migrate_platform_account_profile_folder_name(conn: MigrationConn) -> 
         "profile_folder_name",
         "VARCHAR(200)",
     )
+
+
+async def _migrate_publish_record_diagnostic_path(conn: MigrationConn) -> None:
+    await _add_column_if_missing(
+        conn,
+        "publish_records",
+        "diagnostic_path",
+        "TEXT",
+    )
+
+
+async def _migrate_location_promotion_items_table(conn: MigrationConn) -> None:
+    if await table_exists(conn, "location_promotion_items"):
+        return
+    await conn.execute_query(
+        """
+        CREATE TABLE IF NOT EXISTS location_promotion_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            short_name VARCHAR(500) NOT NULL UNIQUE,
+            douyin_location TEXT,
+            kuaishou_location TEXT,
+            channels_location TEXT,
+            xiaohongshu_location TEXT,
+            created_at TIMESTAMP NOT NULL,
+            updated_at TIMESTAMP
+        )
+        """
+    )
+    await _create_index_if_missing(
+        conn,
+        "idx_location_promotion_items_short_name",
+        "CREATE INDEX IF NOT EXISTS idx_location_promotion_items_short_name "
+        "ON location_promotion_items (short_name)",
+    )
+    logger.info("Schema migration created table location_promotion_items")
 
 
 async def _migrate_publish_record_indexes(conn: MigrationConn) -> None:
@@ -204,6 +241,16 @@ MIGRATION_STEPS: tuple[MigrationStep, ...] = (
         "20260522_005_publish_record_indexes",
         "Add publish_records query indexes",
         _migrate_publish_record_indexes,
+    ),
+    MigrationStep(
+        "20260525_001_publish_record_diagnostic_path",
+        "Add publish_records.diagnostic_path",
+        _migrate_publish_record_diagnostic_path,
+    ),
+    MigrationStep(
+        "20260525_002_location_promotion_items_table",
+        "Create location_promotion_items table",
+        _migrate_location_promotion_items_table,
     ),
 )
 

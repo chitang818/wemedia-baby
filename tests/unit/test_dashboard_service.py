@@ -182,6 +182,40 @@ def test_dashboard_stats_cache_does_not_persist_partial(monkeypatch):
         assert cache.get_persistent(7) is None
 
 
+@pytest.mark.asyncio
+async def test_get_account_publish_reminders_includes_offline_accounts():
+    repo = AsyncMock()
+    repo.get_latest_publish_display_time_by_account_ids = AsyncMock(
+        return_value={1: "2026-05-20", 2: "2026-05-18"}
+    )
+    accounts = [
+        {
+            "id": 1,
+            "platform": "douyin",
+            "login_status": "online",
+            "platform_username": "在线号",
+        },
+        {
+            "id": 2,
+            "platform": "wechat_video",
+            "login_status": "offline",
+            "platform_username": "视频号A",
+        },
+    ]
+    svc = DashboardService(user_id=1, account_manager=MagicMock(), publish_record_repository=repo)
+    rows = await svc.get_account_publish_reminders(accounts=accounts)
+
+    assert len(rows) == 2
+    assert rows[0]["is_online"] is True
+    assert rows[0]["account_name"] == "在线号"
+    assert rows[1]["is_online"] is False
+    assert rows[1]["account_name"] == "视频号A"
+    assert rows[1]["reminder_text"] == "账号离线"
+    repo.get_latest_publish_display_time_by_account_ids.assert_awaited_once()
+    called_ids = set(repo.get_latest_publish_display_time_by_account_ids.await_args.args[0])
+    assert called_ids == {1, 2}
+
+
 def test_snapshot_merge_keeps_fast_task():
     fast = DashboardSnapshot(
         account={"total": 1},

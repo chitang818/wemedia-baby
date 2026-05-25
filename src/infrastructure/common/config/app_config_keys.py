@@ -10,6 +10,14 @@ KEY_BATCH_PUBLISH = "batch_publish"
 KEY_SINGLE_PUBLISH = "single_publish"
 KEY_PUBLISH_LIST = "publish_list"
 KEY_UI = "ui"
+KEY_PUBLISH_DIAGNOSTICS = "publish_diagnostics"
+
+# publish_diagnostics
+PUBLISH_DIAGNOSTICS_ENABLED = "enabled"
+PUBLISH_DIAGNOSTICS_CAPTURE_HTML = "capture_html"
+PUBLISH_DIAGNOSTICS_CAPTURE_DOM_SUMMARY = "capture_dom_summary"
+PUBLISH_DIAGNOSTICS_MAX_HTML_BYTES = "max_html_bytes"
+PUBLISH_DIAGNOSTICS_RETENTION_DAYS = "retention_days"
 
 # batch_publish 子键
 BATCH_DECLARE_ORIGINAL = "declare_original"
@@ -72,3 +80,5 @@ START_IN_TRAY_NEXT_LAUNCH = "start_in_tray_next_launch"
 UI_THEME_MODE = "theme_mode"
 # True：缩短主窗口堆栈切换位移时间并关闭页面淡入，减轻首次进入重型页的卡顿感
 UI_PAGE_ANIMATION_REDUCED = "page_animation_reduced"
+# 启动后页面预加载：off | minimal | full（默认 off，低配更流畅）
+UI_STARTUP_PRELOADS = "startup_preloads"
