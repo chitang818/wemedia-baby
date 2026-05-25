@@ -31,6 +31,7 @@ from qfluentwidgets import (
 )
 
 from src.ui.components.skeleton import SkeletonItem
+from src.ui.utils.fluent_tooltips import ToolTipPosition, install_fluent_tool_tip
 from src.ui.workspace_chart_animation_prefs import STATS_SKELETON_MIN_MS, STATS_VALUE_FADE_MS
 
 BORDER_COLORS = {
@@ -117,6 +118,8 @@ class StatisticsCard(CardWidget):
 
         text_layout.addWidget(self.title_label)
         text_layout.addWidget(self.desc_label)
+        if (desc or "").strip():
+            install_fluent_tool_tip(self.desc_label, position=ToolTipPosition.TOP)
         layout.addWidget(text_container, 1)
 
         self._value_host = QWidget(self)

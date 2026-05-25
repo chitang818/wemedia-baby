@@ -13,7 +13,7 @@ from typing import List, Optional, Tuple, Any
 from src.utils.platform_names import PLATFORM_ID_TO_NAME
 from PySide6.QtWidgets import QWidget, QTextEdit, QVBoxLayout, QHBoxLayout, QLabel, QFrame
 from PySide6.QtCore import Qt, QObject, Signal, Slot, QTimer
-from PySide6.QtGui import QFont, QTextCursor
+from PySide6.QtGui import QFont, QTextBlockFormat, QTextCursor
 
 # 批量刷新间隔（毫秒）：将短时间内的多条日志合并为一次 DOM 操作，减少主线程占用
 _LOG_FLUSH_INTERVAL_MS = 80
@@ -156,8 +156,8 @@ class LogDisplayWidget(QFrame):
     def _setup_ui(self, title_text: str):
         layout = QVBoxLayout(self)
         # 与「任务说明」等底部卡片统一边距与间距
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(4)
 
         # 头部水平布局
         header_layout = QHBoxLayout()
@@ -195,9 +195,14 @@ class LogDisplayWidget(QFrame):
         # 单列：仅显示日志内容（不再显示任务总览等左侧分区）
         self.log_text_edit = QTextEdit(self)
         self.log_text_edit.setReadOnly(True)
-        self.log_text_edit.setMinimumHeight(120)
-        self.log_text_edit.setFont(QFont("Microsoft YaHei", 12))
+        self.log_text_edit.setMinimumHeight(72)
+        self.log_text_edit.setFont(QFont("Microsoft YaHei", 11))
         self.log_text_edit.setObjectName("LogTextEdit")
+        doc = self.log_text_edit.document()
+        doc.setDocumentMargin(2)
+        doc.setDefaultStyleSheet(
+            "p { margin-top: 0; margin-bottom: 1px; line-height: 120%; }"
+        )
         body_layout.addWidget(self.log_text_edit, 1)
 
         layout.addLayout(body_layout)
@@ -251,7 +256,7 @@ class LogDisplayWidget(QFrame):
             icon, msg_color = "▶", "#555"
         else:
             icon, msg_color = "·", "#555"
-        time_span = f'<span style="color:#888;font-size:0.9em;">{time_esc}</span>'
+        time_span = f'<span style="color:#888;font-size:11px;">{time_esc}</span>'
         icon_span = f'<span style="color:{msg_color};font-weight:bold;">{icon}</span>'
         step_span = f'<span style="font-weight:bold;color:#333;">{step_esc}</span>' if step_esc else ""
         msg_span = f'<span style="color:{msg_color};">{msg_esc}</span>' if msg_esc else ""
@@ -260,7 +265,11 @@ class LogDisplayWidget(QFrame):
             parts.append(step_span)
         if msg_span:
             parts.append(msg_span)
-        return " ".join(parts)
+        return (
+            '<div style="margin:0;padding:0;line-height:120%;">'
+            + " ".join(parts)
+            + "</div>"
+        )
 
     @Slot(str, str)
     def append_log(self, msg: str, level: str = "INFO"):
@@ -270,7 +279,7 @@ class LogDisplayWidget(QFrame):
             time_str, body = m.group(1), m.group(2)
             if _PHASE_PREPARE in body or _PHASE_DETECT in body or _PHASE_START in body or _STEP_RE.search(body) or _PHASE_FLOW in body:
                 if _PHASE_PREPARE in body and body.strip().startswith(_PHASE_PREPARE) and self.log_text_edit.toPlainText().strip():
-                    self.append_html('<div style="border-top:1px solid #eee;margin:6px 0 4px 0;"></div>')
+                    self.append_html('<div style="border-top:1px solid #eee;margin:2px 0 1px 0;"></div>')
                 line_html = self._render_user_log_line(time_str, body, level)
                 self.append_html(line_html)
                 self._auto_scroll()
@@ -322,6 +331,10 @@ class LogDisplayWidget(QFrame):
             return
         chunks = self._pending_html_chunks
         self._pending_html_chunks = []
+        tight_block = QTextBlockFormat()
+        tight_block.setTopMargin(0)
+        tight_block.setBottomMargin(1)
+
         cursor = self.log_text_edit.textCursor()
         cursor.movePosition(QTextCursor.End)
         self.log_text_edit.setTextCursor(cursor)
@@ -329,7 +342,10 @@ class LogDisplayWidget(QFrame):
         try:
             for chunk in chunks:
                 self.log_text_edit.insertHtml(chunk)
-                self.log_text_edit.insertPlainText("\n")
+                cursor = self.log_text_edit.textCursor()
+                cursor.movePosition(QTextCursor.End)
+                cursor.insertBlock(tight_block)
+                self.log_text_edit.setTextCursor(cursor)
         finally:
             self.log_text_edit.setUpdatesEnabled(True)
         # 超过最大行数时裁剪旧内容，防止 QTextDocument 无限膨胀

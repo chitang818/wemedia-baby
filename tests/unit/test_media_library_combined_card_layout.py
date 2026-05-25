@@ -53,15 +53,15 @@ def test_text_host_expands_metrics_host_does_not(qapp):
         qapp.processEvents()
 
 
-def test_reveal_sets_desc_and_metric_values(qapp):
+def test_reveal_sets_metric_values_and_tooltips(qapp):
     card = MediaLibraryCombinedCard()
     try:
         card.reveal(75, 12, 63, 3, 1, 2)
-        assert card._desc_label.text() == "已占用 13 | 未占用 65"
         assert card._video_value.text() == "75"
         assert card._image_value.text() == "3"
-        assert "视频素材共 75" in card._video_value.toolTip()
-        assert "图片素材共 3" in card._image_value.toolTip()
+        assert "已占用" in card._video_value.toolTip()
+        assert "未占用" in card._image_value.toolTip()
+        assert not hasattr(card, "_desc_label")
     finally:
         card.deleteLater()
         qapp.processEvents()

@@ -73,8 +73,8 @@ class TaskDescriptionCard(QFrame):
         self.setObjectName("TaskDescriptionCard")
         lay = QVBoxLayout(self)
         # 与 LogDisplayWidget（发布日志）一致
-        lay.setContentsMargins(8, 8, 8, 8)
-        lay.setSpacing(6)
+        lay.setContentsMargins(8, 6, 8, 6)
+        lay.setSpacing(4)
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
@@ -95,7 +95,7 @@ class TaskDescriptionCard(QFrame):
         self._panel = QFrame(self)
         self._panel.setObjectName("TaskDescriptionPanel")
         panel_lay = QVBoxLayout(self._panel)
-        panel_lay.setContentsMargins(10, 10, 10, 10)
+        panel_lay.setContentsMargins(8, 6, 8, 6)
         panel_lay.setSpacing(0)
 
         self._scroll = QScrollArea(self._panel)
@@ -109,13 +109,13 @@ class TaskDescriptionCard(QFrame):
         inner.setObjectName("TaskDescriptionScrollInner")
         inner_lay = QVBoxLayout(inner)
         inner_lay.setContentsMargins(0, 0, 0, 0)
-        inner_lay.setSpacing(4)
+        inner_lay.setSpacing(2)
 
         self._fail_banner = QFrame(inner)
         self._fail_banner.setObjectName("TaskDescriptionFailBanner")
         fail_lay = QHBoxLayout(self._fail_banner)
-        fail_lay.setContentsMargins(12, 10, 12, 10)
-        fail_lay.setSpacing(10)
+        fail_lay.setContentsMargins(8, 6, 8, 6)
+        fail_lay.setSpacing(6)
         self._fail_icon = QLabel(self._fail_banner)
         self._fail_icon.setObjectName("TaskDescriptionFailIcon")
         self._fail_icon.setText("⚠")
@@ -144,10 +144,10 @@ class TaskDescriptionCard(QFrame):
         self._grid_host = QWidget(inner)
         self._grid = QGridLayout(self._grid_host)
         self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setHorizontalSpacing(14)
-        self._grid.setVerticalSpacing(8)
+        self._grid.setHorizontalSpacing(10)
+        self._grid.setVerticalSpacing(3)
         self._grid.setColumnStretch(1, 1)
-        self._grid.setColumnMinimumWidth(0, 72)
+        self._grid.setColumnMinimumWidth(0, 64)
 
         self._content_title = QLabel("内容", inner)
         self._content_title.setObjectName("TaskDescriptionBodyTitle")
@@ -156,8 +156,9 @@ class TaskDescriptionCard(QFrame):
         self._body.setObjectName("TaskDescriptionBody")
         self._body.setReadOnly(True)
         self._body.setPlaceholderText("暂无描述或标题")
-        self._body.setMinimumHeight(72)
-        self._body.setFont(QFont("Microsoft YaHei", 12))
+        self._body.setMinimumHeight(56)
+        self._body.setFont(QFont("Microsoft YaHei", 11))
+        self._body.document().setDocumentMargin(2)
         self._body.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._body.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
 
@@ -170,7 +171,7 @@ class TaskDescriptionCard(QFrame):
         inner_lay.addWidget(self._body, 1)
 
         self._scroll.setWidget(inner)
-        self._scroll.setMinimumHeight(120)
+        self._scroll.setMinimumHeight(72)
         panel_lay.addWidget(self._scroll, 1)
         lay.addWidget(self._panel, 1)
 
@@ -215,11 +216,12 @@ class TaskDescriptionCard(QFrame):
     def _add_grid_row(self, row: int, key: str, value: str) -> None:
         kl = QLabel(key)
         kl.setObjectName("TaskDescriptionKVKey")
-        kl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        kl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         vl = QLabel(value)
         vl.setObjectName("TaskDescriptionKVVal")
         vl.setWordWrap(True)
+        vl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         vl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         self._grid.addWidget(kl, row, 0)

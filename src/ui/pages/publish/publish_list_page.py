@@ -459,7 +459,7 @@ class PublishListPage(PublishRecordsPage):
         self._apply_filters()
 
     def _setup_log_window(self):
-        """底部四卡片：发布设置(1) | 任务统计(1) | 发布日志(3) | 任务说明(3)"""
+        """底部四卡片：发布设置(2) | 任务统计(1) | 发布日志(2) | 任务说明(2)；垂直约 5:2 表格与底栏均衡"""
         self.publish_settings_card = PublishSettingsCard(self)
         self.task_overview_card = TaskOverviewCard(self)
         self.task_description_card = TaskDescriptionCard(self)
@@ -473,25 +473,29 @@ class PublishListPage(PublishRecordsPage):
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.setSpacing(8)
 
-        # 两个小卡片固定最大宽度，确保不超过 1 份
-        for card in (self.publish_settings_card, self.task_overview_card):
-            card.setMinimumWidth(10)
-            card.setMaximumWidth(160)
-            card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        self.publish_settings_card.setMinimumWidth(10)
+        self.publish_settings_card.setMaximumWidth(220)
+        self.publish_settings_card.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+        )
+        self.task_overview_card.setMinimumWidth(10)
+        self.task_overview_card.setMaximumWidth(160)
+        self.task_overview_card.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+        )
 
         for card in (self.log_widget, self.task_description_card):
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        # 比例 1:1:3:3 — 用 stretch 参数直接控制
-        bottom_layout.addWidget(self.publish_settings_card, 1)
+        # 水平 2:1:2:2 — 加宽发布设置，收窄日志与任务说明
+        bottom_layout.addWidget(self.publish_settings_card, 2)
         bottom_layout.addWidget(self.task_overview_card, 1)
-        bottom_layout.addWidget(self.log_widget, 3)
-        bottom_layout.addWidget(self.task_description_card, 3)
+        bottom_layout.addWidget(self.log_widget, 2)
+        bottom_layout.addWidget(self.task_description_card, 2)
 
         self.content_layout.addWidget(bottom_row, 2)
-        self.content_layout.setStretch(0, 4)   # 上方表格
+        self.content_layout.setStretch(0, 5)   # 上方表格
         self.content_layout.setStretch(1, 2)   # 下方一行
-        self.log_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         target_loggers = ["publish.user_log"]
         self.log_widget.start_logging(target_loggers)

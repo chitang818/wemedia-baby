@@ -1,12 +1,12 @@
 """
 发布设置卡片
 文件路径：src/ui/components/publish_settings_card.py
-功能：发布列表底部，参考任务统计卡片样式，竖排 4 个方块展示当前发布设置。
+功能：发布列表底部，参考任务统计卡片样式，双列网格展示当前发布设置。
 """
 
 from typing import Optional
 from PySide6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QWidget, QPushButton,
+    QFrame, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QWidget, QPushButton,
 )
 from PySide6.QtCore import Qt, Signal, QSize
 
@@ -19,7 +19,16 @@ except ImportError:
     _FLUENT = False
 
 
-def _setting_block(key: str, default: str, color: str, bg: str, border: str, parent: QWidget):
+def _setting_block(
+    key: str,
+    default: str,
+    color: str,
+    bg: str,
+    border: str,
+    parent: QWidget,
+    *,
+    label_width: int = 80,
+):
     """一个设置方块：单行「key：val」横排，返回 (容器, val_label)。"""
     block = QFrame(parent)
     block.setObjectName("SettingBlock")
@@ -27,12 +36,12 @@ def _setting_block(key: str, default: str, color: str, bg: str, border: str, par
         f"#SettingBlock {{ background:{bg}; border:1px solid {border}; border-radius:6px; }}"
     )
     h = QHBoxLayout(block)
-    h.setContentsMargins(10, 7, 10, 7)
+    h.setContentsMargins(8, 6, 8, 6)
     h.setSpacing(4)
 
     k_lbl = QLabel(f"{key}：", block)
     k_lbl.setStyleSheet("font-size:12px; color:#888; border:none; background:transparent;")
-    k_lbl.setFixedWidth(80)
+    k_lbl.setFixedWidth(label_width)
 
     v_lbl = QLabel(default, block)
     v_lbl.setWordWrap(False)
@@ -46,7 +55,7 @@ def _setting_block(key: str, default: str, color: str, bg: str, border: str, par
 
 
 class PublishSettingsCard(QFrame):
-    """发布设置摘要卡片：竖排 4 个彩色方块，样式与任务统计卡片一致。"""
+    """发布设置摘要卡片：双列 3 行彩色方块，样式与任务统计卡片一致。"""
 
     open_settings_clicked = Signal()
 
@@ -117,16 +126,25 @@ class PublishSettingsCard(QFrame):
         lay.addWidget(sep)
         lay.addSpacing(6)
 
-        # ── 竖排 6 个方块 ────────────────────────────
-        # 两个「完成后」：前者为发布后文件处理，后者为是否关机（由右侧取值区分）
+        # ── 双列 3 行方块（与任务统计 2×2 网格一致）────────────────
+        # 两个「完成后」：前者为发布后文件处理，后者为是否关机（由取值区分）
         keys = ["列表", "速度", "间隔", "浏览器", "完成后", "完成后"]
         self._val_labels: list[QLabel] = []
-        for key, (color, bg, border) in zip(keys, self._COLORS):
-            block, v_lbl = _setting_block(key, "—", color, bg, border, self)
-            lay.addWidget(block)
-            lay.addSpacing(5)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(6)
+        grid.setContentsMargins(0, 0, 0, 0)
+
+        for i, (key, (color, bg, border)) in enumerate(zip(keys, self._COLORS)):
+            block, v_lbl = _setting_block(
+                key, "—", color, bg, border, self, label_width=52
+            )
+            grid.addWidget(block, i // 2, i % 2)
             self._val_labels.append(v_lbl)
 
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        lay.addLayout(grid)
         lay.addStretch(1)
         self.refresh()
 

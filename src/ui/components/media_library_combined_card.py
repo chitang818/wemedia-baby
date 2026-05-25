@@ -23,6 +23,7 @@ from qfluentwidgets import (
 )
 
 from src.ui.components.skeleton import SkeletonItem
+from src.ui.utils.fluent_tooltips import ToolTipPosition, install_fluent_tool_tip
 from src.ui.workspace_chart_animation_prefs import STATS_SKELETON_MIN_MS
 
 
@@ -54,32 +55,46 @@ class MediaLibraryCombinedCard(CardWidget):
 
         self._movie_icon = IconWidget(FluentIcon.MOVIE, self)
         self._movie_icon.setFixedSize(20, 20)
-        self._main_layout.addWidget(self._movie_icon, 0, Qt.AlignVCenter)
+        self._main_layout.addWidget(self._movie_icon, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._text_host = QWidget(self)
         self._text_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         text_layout = QVBoxLayout(self._text_host)
         text_layout.setContentsMargins(0, 0, 0, 0)
-        text_layout.setSpacing(2)
-        text_layout.setAlignment(Qt.AlignVCenter)
+        text_layout.setSpacing(0)
+        text_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         self._title_label = BodyLabel("素材库", self._text_host)
-        self._desc_label = CaptionLabel("—", self._text_host)
-        self._desc_full_text = "—"
         try:
             self._title_label.setWordWrap(False)
-            self._desc_label.setWordWrap(False)
         except Exception:
             pass
         text_layout.addWidget(self._title_label)
-        text_layout.addWidget(self._desc_label)
         self._main_layout.addWidget(self._text_host, 1)
 
         self._metrics_host = self._build_metrics_host()
-        self._main_layout.addWidget(self._metrics_host, 0, Qt.AlignVCenter)
+        self._main_layout.addWidget(self._metrics_host, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._apply_theme()
-        self._apply_single_line_label_heights()
+        self._apply_title_height()
+        self._install_metric_fluent_tooltips()
+
+    @staticmethod
+    def _bind_fluent_tooltip(
+        widget: QWidget,
+        text: str,
+        *,
+        position: ToolTipPosition = ToolTipPosition.TOP,
+    ) -> None:
+        """Fluent 自绘悬停提示，避免 Windows 原生 QToolTip 黑底深字。"""
+        tip = (text or "").strip()
+        widget.setToolTip(tip)
+        if tip:
+            install_fluent_tool_tip(widget, position=position)
+
+    def _install_metric_fluent_tooltips(self) -> None:
+        for widget in (self._video_value, self._image_value):
+            install_fluent_tool_tip(widget, position=ToolTipPosition.TOP)
 
     def _build_metrics_host(self) -> QWidget:
         host = QWidget(self)
@@ -87,19 +102,19 @@ class MediaLibraryCombinedCard(CardWidget):
         metrics_layout = QHBoxLayout(host)
         metrics_layout.setContentsMargins(0, 0, 0, 0)
         metrics_layout.setSpacing(10)
-        metrics_layout.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        metrics_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         self._video_block = self._make_metric_block("视频", host)
-        metrics_layout.addWidget(self._video_block, 0, Qt.AlignVCenter)
+        metrics_layout.addWidget(self._video_block, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._separator = QFrame(host)
         self._separator.setFrameShape(QFrame.Shape.VLine)
         self._separator.setFrameShadow(QFrame.Shadow.Sunken)
         self._separator.setFixedWidth(1)
-        metrics_layout.addWidget(self._separator, 0, Qt.AlignVCenter)
+        metrics_layout.addWidget(self._separator, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._image_block = self._make_metric_block("图片", host)
-        metrics_layout.addWidget(self._image_block, 0, Qt.AlignVCenter)
+        metrics_layout.addWidget(self._image_block, 0, Qt.AlignmentFlag.AlignVCenter)
 
         return host
 
@@ -108,13 +123,13 @@ class MediaLibraryCombinedCard(CardWidget):
         bl = QVBoxLayout(block)
         bl.setContentsMargins(0, 0, 0, 0)
         bl.setSpacing(2)
-        bl.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+        bl.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
 
         cap = CaptionLabel(kind, block)
-        cap.setAlignment(Qt.AlignHCenter)
+        cap.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         val = TitleLabel("—", block)
         val.setObjectName(f"mediaCombined{kind}Value")
-        val.setAlignment(Qt.AlignHCenter)
+        val.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         bl.addWidget(cap)
         bl.addWidget(val)
         if kind == "视频":
@@ -158,48 +173,19 @@ class MediaLibraryCombinedCard(CardWidget):
         except Exception:
             pass
 
-    def _apply_single_line_label_heights(self) -> None:
+    def _apply_title_height(self) -> None:
         try:
             title_h = int(self._title_label.fontMetrics().height()) + 2
             self._title_label.setFixedHeight(max(18, title_h))
-            self._desc_label.setMinimumHeight(max(14, int(self._desc_label.fontMetrics().height()) + 2))
         except Exception:
             return
-
-    def _text_area_width(self) -> int:
-        margins = self._main_layout.contentsMargins()
-        fixed = (
-            margins.left()
-            + margins.right()
-            + self._movie_icon.width()
-            + self._metrics_host.sizeHint().width()
-            + self._main_layout.spacing() * 2
-            + 8
-        )
-        return max(48, int(self.width()) - fixed)
-
-    def _apply_desc_display(self) -> None:
-        text = self._desc_full_text or "—"
-        avail = self._text_area_width()
-        fm = self._desc_label.fontMetrics()
-        if fm.horizontalAdvance(text) <= avail:
-            shown = text
-        else:
-            shown = fm.elidedText(text, Qt.TextElideMode.ElideRight, avail)
-        self._desc_label.setText(shown)
-        try:
-            self._desc_label.setToolTip(text)
-        except Exception:
-            pass
 
     def _apply_theme(self) -> None:
         dark = isDarkTheme()
         self._value_color = self._resolve_value_color()
 
         title_color = "#E0E0E0" if dark else "#333333"
-        desc_color = "#AAAAAA" if dark else "#757575"
         self._title_label.setStyleSheet(f"color: {title_color}; font-weight: 600; font-size: 13px;")
-        self._desc_label.setStyleSheet(f"color: {desc_color}; font-size: 12px;")
         self._apply_value_style()
 
         sep_color = "rgba(255, 255, 255, 0.15)" if dark else "#E0E0E0"
@@ -224,7 +210,6 @@ class MediaLibraryCombinedCard(CardWidget):
         self.cancel_pending_reveal()
         self._load_state = MediaCombinedLoadState.LOADING
         self._loading_shown_at = time.monotonic()
-        self._desc_label.setText("—")
         self._video_value.setText("—")
         self._image_value.setText("—")
         self._apply_value_style()
@@ -293,18 +278,15 @@ class MediaLibraryCombinedCard(CardWidget):
         self._hide_skeleton()
         self._load_state = MediaCombinedLoadState.READY
 
-        used_total = int(video_used) + int(image_used)
-        unused_total = int(video_unused) + int(image_unused)
-        self._desc_full_text = f"已占用 {used_total} | 未占用 {unused_total}"
-        self._apply_desc_display()
-
         self._video_value.setText(str(video_total))
-        self._video_value.setToolTip(
-            f"视频素材共 {video_total}，已占用 {video_used}，未占用 {video_unused}"
+        self._bind_fluent_tooltip(
+            self._video_value,
+            f"视频素材共 {video_total}，已占用 {video_used}，未占用 {video_unused}",
         )
         self._image_value.setText(str(image_total))
-        self._image_value.setToolTip(
-            f"图片素材共 {image_total}，已占用 {image_used}，未占用 {image_unused}"
+        self._bind_fluent_tooltip(
+            self._image_value,
+            f"图片素材共 {image_total}，已占用 {image_used}，未占用 {image_unused}",
         )
         self._apply_value_style()
 
@@ -324,7 +306,7 @@ class MediaLibraryCombinedCard(CardWidget):
         self._skeleton = sk
         host_layout = self._metrics_host.layout()
         if host_layout is not None:
-            host_layout.addWidget(sk, 0, Qt.AlignRight | Qt.AlignVCenter)
+            host_layout.addWidget(sk, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
     def _hide_skeleton(self) -> None:
         if self._skeleton is not None:
@@ -347,4 +329,3 @@ class MediaLibraryCombinedCard(CardWidget):
         super().resizeEvent(event)
         if self._load_state == MediaCombinedLoadState.READY:
             self._sync_metric_widths()
-            self._apply_desc_display()
