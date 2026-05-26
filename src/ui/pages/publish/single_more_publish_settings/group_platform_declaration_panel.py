@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""账号组（多平台）：右栏按平台展示作品申明 / 原创声明。"""
+"""账号组（多平台）：右栏按「原创声明 / 作品申明」功能分区（与左栏对应）。"""
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set
 
-from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QSpacerItem, QVBoxLayout, QWidget
 
 from qfluentwidgets import BodyLabel, CheckBox, ComboBox
 
@@ -39,22 +40,42 @@ from src.ui.publish.work_description.work_declaration_prefs import (
 from src.ui.utils.fluent_tooltips import ToolTipPosition, apply_instructional_tooltip
 from src.utils.platform_names import get_platform_display_name
 
-from .constants import COMBO_WIDTH, H_GAP, ROW_GAP
+from .constants import (
+    H_GAP,
+    LABEL_WIDTH,
+    RIGHT_DECL_ENABLE_CHECK_LABEL,
+    RIGHT_DECL_XHS_ORIG_LABEL,
+    RIGHT_SECTION_ORIGINAL_TITLE,
+    RIGHT_SECTION_TITLE_STYLE,
+    RIGHT_SECTION_WORK_TITLE,
+    ROW_GAP,
+    RIGHT_WORK_DECL_COMBO_WIDTH,
+    SECTION_EXTRA_GAP,
+    SHARED_ROW_MIN_HEIGHT,
+)
 
-# 右栏多平台申明块展示顺序
-_DECL_PLATFORM_ORDER = ("douyin", "kuaishou", "xiaohongshu", "wechat_video")
+_ORIGINAL_PLATFORMS = ("wechat_video", "xiaohongshu")
+_WORK_PLATFORMS = ("douyin", "kuaishou", "xiaohongshu")
+
+_WORK_ROW_LABELS = {
+    "douyin": "抖音申明",
+    "kuaishou": "快手申明",
+    "xiaohongshu": "小红书",
+}
+_ORIGINAL_ROW_LABELS = {
+    "wechat_video": "视频号",
+    "xiaohongshu": "小红书",
+}
 
 
-def platforms_with_declaration(
-    platform_ids: Set[str], *, is_image_mode: bool
-) -> List[str]:
-    """账号组内需要展示申明控件的平台 id 列表（有序）。"""
+def original_platform_ids(platform_ids: Set[str]) -> List[str]:
+    return [p for p in _ORIGINAL_PLATFORMS if p in platform_ids]
+
+
+def work_platform_ids(platform_ids: Set[str], *, is_image_mode: bool) -> List[str]:
     out: List[str] = []
-    for pid in _DECL_PLATFORM_ORDER:
+    for pid in _WORK_PLATFORMS:
         if pid not in platform_ids:
-            continue
-        if pid == "wechat_video":
-            out.append(pid)
             continue
         cap = capabilities_for_platform(pid, is_image_mode=is_image_mode)
         if cap.show_work_declaration:
@@ -62,8 +83,17 @@ def platforms_with_declaration(
     return out
 
 
+def platforms_with_declaration(
+    platform_ids: Set[str], *, is_image_mode: bool
+) -> List[str]:
+    """任一分区有控件即视为有内容（供 has_content）。"""
+    orig = original_platform_ids(platform_ids)
+    work = work_platform_ids(platform_ids, is_image_mode=is_image_mode)
+    return orig + [p for p in work if p not in orig]
+
+
 class GroupPlatformDeclarationPanel(QWidget):
-    """混平台账号组：每个平台一块，置于右栏抖音位置设置下方。"""
+    """混平台账号组：右栏「原创声明」「作品申明」两个功能分区。"""
 
     def __init__(
         self, parent: Optional[QWidget] = None, *, is_image_mode: bool = False
@@ -72,20 +102,32 @@ class GroupPlatformDeclarationPanel(QWidget):
         self._is_image_mode = is_image_mode
         self._syncing = False
         self._platform_ids: List[str] = []
+        self._original_ids: List[str] = []
+        self._work_ids: List[str] = []
         self._blocks: Dict[str, Dict[str, Any]] = {}
 
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(ROW_GAP)
+        self._layout.setSpacing(0)
         self.hide()
 
     def has_content(self, platform_ids: Set[str]) -> bool:
-        return bool(platforms_with_declaration(platform_ids, is_image_mode=self._is_image_mode))
+        return bool(
+            platforms_with_declaration(
+                platform_ids, is_image_mode=self._is_image_mode
+            )
+        )
 
     def refresh(self, context: str, platform_ids: Set[str]) -> None:
         if context != "mixed":
             self.hide()
             return
+        self._original_ids = original_platform_ids(platform_ids)
+        self._work_ids = work_platform_ids(
+            platform_ids, is_image_mode=self._is_image_mode
+        )
         self._platform_ids = platforms_with_declaration(
             platform_ids, is_image_mode=self._is_image_mode
         )
@@ -120,12 +162,16 @@ class GroupPlatformDeclarationPanel(QWidget):
                     block["orig"].blockSignals(True)
                     block["orig"].setChecked(bool(wd.get(KEY_XHS_ORIGINAL, False)))
                     block["orig"].blockSignals(False)
-                    block["attr_auto"].blockSignals(True)
-                    block["attr_auto"].setChecked(
-                        bool(wd.get(KEY_XHS_CONTENT_ATTR_AUTO, False))
-                    )
-                    block["attr_auto"].blockSignals(False)
-                    self._set_combo_data(block["combo"], wd.get(KEY_XHS_CONTENT_ATTR))
+                    if "attr_auto" in block:
+                        block["attr_auto"].blockSignals(True)
+                        block["attr_auto"].setChecked(
+                            bool(wd.get(KEY_XHS_CONTENT_ATTR_AUTO, False))
+                        )
+                        block["attr_auto"].blockSignals(False)
+                    if "combo" in block:
+                        self._set_combo_data(
+                            block["combo"], wd.get(KEY_XHS_CONTENT_ATTR)
+                        )
                 elif pid == "wechat_video":
                     block["orig"].blockSignals(True)
                     block["orig"].setChecked(load_persisted_single_declare_original())
@@ -165,17 +211,19 @@ class GroupPlatformDeclarationPanel(QWidget):
                     block["orig"].blockSignals(True)
                     block["orig"].setChecked(bool(ps.get(KEY_XHS_ORIGINAL, False)))
                     block["orig"].blockSignals(False)
-                    block["attr_auto"].blockSignals(True)
-                    block["attr_auto"].setChecked(
-                        declaration_auto_apply(ps, KEY_XHS_CONTENT_ATTR_AUTO)
-                    )
-                    block["attr_auto"].blockSignals(False)
-                    self._set_combo_data(
-                        block["combo"],
-                        normalize_xhs_content_attr(
-                            str(ps.get(KEY_XHS_CONTENT_ATTR) or "") or None
-                        ),
-                    )
+                    if "attr_auto" in block:
+                        block["attr_auto"].blockSignals(True)
+                        block["attr_auto"].setChecked(
+                            declaration_auto_apply(ps, KEY_XHS_CONTENT_ATTR_AUTO)
+                        )
+                        block["attr_auto"].blockSignals(False)
+                    if "combo" in block:
+                        self._set_combo_data(
+                            block["combo"],
+                            normalize_xhs_content_attr(
+                                str(ps.get(KEY_XHS_CONTENT_ATTR) or "") or None
+                            ),
+                        )
                 elif pid == "wechat_video":
                     block["orig"].blockSignals(True)
                     block["orig"].setChecked(bool(ps.get(KEY_IS_ORIGINAL, False)))
@@ -201,9 +249,13 @@ class GroupPlatformDeclarationPanel(QWidget):
                 out[KEY_KUAISHOU_AUTO] = bool(block["auto"].isChecked())
             elif pid == "xiaohongshu":
                 out[KEY_XHS_ORIGINAL] = bool(block["orig"].isChecked())
-                raw = self._combo_data(block["combo"])
-                out[KEY_XHS_CONTENT_ATTR] = normalize_xhs_content_attr(str(raw or "") or None)
-                out[KEY_XHS_CONTENT_ATTR_AUTO] = bool(block["attr_auto"].isChecked())
+                if "combo" in block:
+                    raw = self._combo_data(block["combo"])
+                    out[KEY_XHS_CONTENT_ATTR] = normalize_xhs_content_attr(
+                        str(raw or "") or None
+                    )
+                if "attr_auto" in block:
+                    out[KEY_XHS_CONTENT_ATTR_AUTO] = bool(block["attr_auto"].isChecked())
             elif pid == "wechat_video":
                 out[KEY_IS_ORIGINAL] = bool(block["orig"].isChecked())
         return out
@@ -211,6 +263,143 @@ class GroupPlatformDeclarationPanel(QWidget):
     def reset_to_defaults(self) -> None:
         save_persisted_single_declare_original(False)
         self.sync_from_storage()
+
+    @staticmethod
+    def _finalize_row(row_w: QWidget) -> QWidget:
+        row_w.setMinimumHeight(SHARED_ROW_MIN_HEIGHT)
+        lay = row_w.layout()
+        if isinstance(lay, QHBoxLayout):
+            lay.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        return row_w
+
+    @staticmethod
+    def _row_label(text: str, parent: QWidget, *, tooltip: str = "") -> BodyLabel:
+        label = BodyLabel(text, parent)
+        label.setFixedWidth(LABEL_WIDTH)
+        if tooltip:
+            apply_instructional_tooltip(
+                tooltip, label, position=ToolTipPosition.BOTTOM
+            )
+        return label
+
+    @staticmethod
+    def _section_title_row(title: str, parent: QWidget) -> QWidget:
+        row_w = QWidget(parent)
+        row = QHBoxLayout(row_w)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(H_GAP)
+        lb = BodyLabel(title, row_w)
+        lb.setFixedWidth(LABEL_WIDTH)
+        lb.setStyleSheet(RIGHT_SECTION_TITLE_STYLE)
+        row.addWidget(lb)
+        row.addStretch(1)
+        return GroupPlatformDeclarationPanel._finalize_row(row_w)
+
+    @staticmethod
+    def _configure_work_decl_combo(combo: ComboBox) -> None:
+        combo.setFixedWidth(RIGHT_WORK_DECL_COMBO_WIDTH)
+        combo.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+    def _build_original_platform_row(
+        self, pid: str, parent: QWidget, layout: QVBoxLayout
+    ) -> Dict[str, Any]:
+        block: Dict[str, Any] = {"platform": pid}
+        row_label = _ORIGINAL_ROW_LABELS.get(pid) or get_platform_display_name(pid)
+        tip = f"{get_platform_display_name(pid)} · 原创声明"
+
+        row_w = QWidget(parent)
+        row = QHBoxLayout(row_w)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(H_GAP)
+        row.addWidget(self._row_label(row_label, row_w, tooltip=tip))
+        block["orig"] = CheckBox(RIGHT_DECL_XHS_ORIG_LABEL, row_w)
+        if pid == "xiaohongshu":
+            apply_instructional_tooltip(
+                "与「内容属性」无关，可分别设置",
+                block["orig"],
+                position=ToolTipPosition.BOTTOM,
+            )
+            block["orig"].stateChanged.connect(
+                lambda _s, p=pid: self._persist_platform(p)
+            )
+        else:
+            apply_instructional_tooltip(
+                "仅对视频号发布任务生效",
+                block["orig"],
+                position=ToolTipPosition.BOTTOM,
+            )
+            block["orig"].stateChanged.connect(self._on_wechat_original_changed)
+        row.addWidget(block["orig"])
+        row.addStretch(1)
+        layout.addWidget(self._finalize_row(row_w))
+        return block
+
+    def _build_work_auto_combo_row(
+        self, pid: str, parent: QWidget, layout: QVBoxLayout
+    ) -> Dict[str, Any]:
+        block: Dict[str, Any] = {"platform": pid}
+        row_label = _WORK_ROW_LABELS.get(pid) or get_platform_display_name(pid)
+        tip = f"{get_platform_display_name(pid)} · 作品申明"
+
+        row_w = QWidget(parent)
+        row = QHBoxLayout(row_w)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(H_GAP)
+        row.addWidget(self._row_label(row_label, row_w, tooltip=tip))
+        block["auto"] = CheckBox(RIGHT_DECL_ENABLE_CHECK_LABEL, row_w)
+        apply_instructional_tooltip(
+            "发布时自动按右侧选项勾选作品申明",
+            block["auto"],
+            position=ToolTipPosition.BOTTOM,
+        )
+        block["combo"] = ComboBox(row_w)
+        choices = DOUYIN_CHOICES if pid == "douyin" else KUAISHOU_CHOICES
+        for val, text in choices:
+            block["combo"].addItem(text, userData=val)
+        self._configure_work_decl_combo(block["combo"])
+        block["auto"].toggled.connect(lambda _c, p=pid: self._on_auto_toggled(p))
+        block["combo"].currentIndexChanged.connect(
+            lambda _i, p=pid: self._persist_platform(p)
+        )
+        row.addWidget(block["auto"])
+        row.addWidget(block["combo"], 0)
+        row.addStretch(1)
+        layout.addWidget(self._finalize_row(row_w))
+        return block
+
+    def _build_xhs_work_row(
+        self, parent: QWidget, layout: QVBoxLayout, block: Dict[str, Any]
+    ) -> None:
+        """小红书作品申明：与抖音/快手同款单行（启用 + 内容属性下拉）。"""
+        tip = f"{get_platform_display_name('xiaohongshu')} · 作品申明"
+
+        row_w = QWidget(parent)
+        row = QHBoxLayout(row_w)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(H_GAP)
+        row.addWidget(
+            self._row_label(_WORK_ROW_LABELS["xiaohongshu"], row_w, tooltip=tip)
+        )
+        block["attr_auto"] = CheckBox(RIGHT_DECL_ENABLE_CHECK_LABEL, row_w)
+        apply_instructional_tooltip(
+            "发布时自动按右侧选项设置内容属性",
+            block["attr_auto"],
+            position=ToolTipPosition.BOTTOM,
+        )
+        block["attr_auto"].toggled.connect(
+            lambda _c, p="xiaohongshu": self._on_auto_toggled(p)
+        )
+        block["combo"] = ComboBox(row_w)
+        for val, text in XHS_CONTENT_ATTR_CHOICES:
+            block["combo"].addItem(text, userData=val)
+        self._configure_work_decl_combo(block["combo"])
+        block["combo"].currentIndexChanged.connect(
+            lambda _i, p="xiaohongshu": self._persist_platform(p)
+        )
+        row.addWidget(block["attr_auto"])
+        row.addWidget(block["combo"], 0)
+        row.addStretch(1)
+        layout.addWidget(self._finalize_row(row_w))
 
     def _rebuild_blocks(self) -> None:
         while self._layout.count():
@@ -220,88 +409,41 @@ class GroupPlatformDeclarationPanel(QWidget):
                 w.deleteLater()
         self._blocks.clear()
 
-        for pid in self._platform_ids:
-            wrap = QWidget(self)
-            v = QVBoxLayout(wrap)
-            v.setContentsMargins(0, 0, 0, 0)
-            v.setSpacing(H_GAP)
+        if self._original_ids:
+            if self._work_ids:
+                self._layout.addItem(
+                    QSpacerItem(0, SECTION_EXTRA_GAP, QSizePolicy.Policy.Minimum)
+                )
+            section_o = QWidget(self)
+            lo = QVBoxLayout(section_o)
+            lo.setContentsMargins(0, 0, 0, 0)
+            lo.setSpacing(ROW_GAP)
+            lo.addWidget(self._section_title_row(RIGHT_SECTION_ORIGINAL_TITLE, section_o))
+            for pid in self._original_ids:
+                self._blocks[pid] = self._build_original_platform_row(pid, section_o, lo)
+            self._layout.addWidget(section_o)
 
-            title = BodyLabel(f"{get_platform_display_name(pid)} · 作品申明", wrap)
-            title.setStyleSheet("color: #333; font-weight: 600; font-size: 13px;")
-            v.addWidget(title)
-
-            controls = QWidget(wrap)
-            row = QHBoxLayout(controls)
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(H_GAP)
-
-            block: Dict[str, Any] = {"platform": pid}
-            if pid == "douyin":
-                block["auto"] = CheckBox("发布时自动勾选", controls)
-                block["combo"] = ComboBox(controls)
-                for val, text in DOUYIN_CHOICES:
-                    block["combo"].addItem(text, userData=val)
-                block["combo"].setFixedWidth(COMBO_WIDTH)
-                block["auto"].toggled.connect(
-                    lambda _c, p=pid: self._on_auto_toggled(p)
-                )
-                block["combo"].currentIndexChanged.connect(
-                    lambda _i, p=pid: self._persist_platform(p)
-                )
-                row.addWidget(block["auto"])
-                row.addWidget(block["combo"])
-            elif pid == "kuaishou":
-                block["auto"] = CheckBox("发布时自动勾选", controls)
-                block["combo"] = ComboBox(controls)
-                for val, text in KUAISHOU_CHOICES:
-                    block["combo"].addItem(text, userData=val)
-                block["combo"].setFixedWidth(COMBO_WIDTH)
-                block["auto"].toggled.connect(
-                    lambda _c, p=pid: self._on_auto_toggled(p)
-                )
-                block["combo"].currentIndexChanged.connect(
-                    lambda _i, p=pid: self._persist_platform(p)
-                )
-                row.addWidget(block["auto"])
-                row.addWidget(block["combo"])
-            elif pid == "xiaohongshu":
-                block["orig"] = CheckBox("申明原创", controls)
-                apply_instructional_tooltip(
-                    "与「内容属性」无关，可分别设置",
-                    block["orig"],
-                    position=ToolTipPosition.BOTTOM,
-                )
-                block["attr_auto"] = CheckBox("属性自动勾选", controls)
-                block["combo"] = ComboBox(controls)
-                for val, text in XHS_CONTENT_ATTR_CHOICES:
-                    block["combo"].addItem(text, userData=val)
-                block["combo"].setFixedWidth(COMBO_WIDTH)
-                block["orig"].stateChanged.connect(
-                    lambda _s, p=pid: self._persist_platform(p)
-                )
-                block["attr_auto"].toggled.connect(
-                    lambda _c, p=pid: self._on_auto_toggled(p)
-                )
-                block["combo"].currentIndexChanged.connect(
-                    lambda _i, p=pid: self._persist_platform(p)
-                )
-                row.addWidget(block["orig"])
-                row.addWidget(block["attr_auto"])
-                row.addWidget(block["combo"])
-            elif pid == "wechat_video":
-                block["orig"] = CheckBox("申明原创", controls)
-                apply_instructional_tooltip(
-                    "仅对视频号发布任务生效",
-                    block["orig"],
-                    position=ToolTipPosition.BOTTOM,
-                )
-                block["orig"].stateChanged.connect(self._on_wechat_original_changed)
-                row.addWidget(block["orig"])
-
-            row.addStretch(1)
-            v.addWidget(controls)
-            self._layout.addWidget(wrap)
-            self._blocks[pid] = block
+        if self._work_ids:
+            self._layout.addItem(
+                QSpacerItem(0, SECTION_EXTRA_GAP, QSizePolicy.Policy.Minimum)
+            )
+            section_w = QWidget(self)
+            lw = QVBoxLayout(section_w)
+            lw.setContentsMargins(0, 0, 0, 0)
+            lw.setSpacing(ROW_GAP)
+            lw.addWidget(self._section_title_row(RIGHT_SECTION_WORK_TITLE, section_w))
+            for pid in self._work_ids:
+                if pid in ("douyin", "kuaishou"):
+                    self._blocks[pid] = self._build_work_auto_combo_row(
+                        pid, section_w, lw
+                    )
+                elif pid == "xiaohongshu":
+                    block = self._blocks.get("xiaohongshu")
+                    if block is None:
+                        block = {"platform": "xiaohongshu"}
+                    self._build_xhs_work_row(section_w, lw, block)
+                    self._blocks["xiaohongshu"] = block
+            self._layout.addWidget(section_w)
 
     def _on_auto_toggled(self, platform_id: str) -> None:
         self._update_auto_combo(platform_id)
@@ -332,9 +474,11 @@ class GroupPlatformDeclarationPanel(QWidget):
             cur[KEY_KUAISHOU_AUTO] = bool(block["auto"].isChecked())
         elif platform_id == "xiaohongshu":
             cur[KEY_XHS_ORIGINAL] = bool(block["orig"].isChecked())
-            raw = self._combo_data(block["combo"])
-            cur[KEY_XHS_CONTENT_ATTR] = normalize_xhs_content_attr(str(raw or "") or None)
-            cur[KEY_XHS_CONTENT_ATTR_AUTO] = bool(block["attr_auto"].isChecked())
+            if "combo" in block:
+                raw = self._combo_data(block["combo"])
+                cur[KEY_XHS_CONTENT_ATTR] = normalize_xhs_content_attr(str(raw or "") or None)
+            if "attr_auto" in block:
+                cur[KEY_XHS_CONTENT_ATTR_AUTO] = bool(block["attr_auto"].isChecked())
         save_persisted_work_declaration(cur)
 
     def _update_all_auto_combos(self) -> None:
@@ -347,7 +491,7 @@ class GroupPlatformDeclarationPanel(QWidget):
             return
         if platform_id in ("douyin", "kuaishou") and "combo" in block:
             block["combo"].setEnabled(block["auto"].isChecked())
-        elif platform_id == "xiaohongshu" and "combo" in block:
+        elif platform_id == "xiaohongshu" and "combo" in block and "attr_auto" in block:
             block["combo"].setEnabled(block["attr_auto"].isChecked())
 
     @staticmethod

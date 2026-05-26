@@ -67,7 +67,7 @@ KUAISHOU_MATERIAL = "material_from_web"
 
 KUAISHOU_CHOICES: Tuple[Tuple[str, str], ...] = (
     (KUAISHOU_AI, "内容为AI生成"),
-    (KUAISHOU_FICTION, "演绎清洁仅供参考"),
+    (KUAISHOU_FICTION, "演绎情节仅供参考"),
     (KUAISHOU_PERSONAL, "个人观点经供参考"),
     (KUAISHOU_MATERIAL, "素材来源于网络"),
 )

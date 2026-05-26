@@ -44,7 +44,7 @@ from .constants import (
     H_GAP,
     LABEL_WIDTH,
     LOCATION_LINEEDIT_MAX_WIDTH,
-    LOCATION_MODE_COMBO_WIDTH,
+    RIGHT_WORK_DECL_COMBO_WIDTH,
     LOCATION_MODE_TAG_KEY,
     ROW_GAP,
     SHARED_ROW_MIN_HEIGHT,
@@ -54,7 +54,7 @@ from .constants import (
     DOUYIN_LOC_PROMO_MUTEX_HINT_WHEN_PROMOTION,
     DOUYIN_LOCATION_SPECIAL_LABEL,
     DOUYIN_LOCATION_SPECIAL_LABEL_STYLE,
-    DOUYIN_LOCATION_SPECIAL_LABEL_WIDTH,
+    RIGHT_COLUMN_TITLE,
     SPLIT_COLUMN_GAP,
     SPLIT_LEFT_STRETCH,
     SPLIT_RIGHT_STRETCH,
@@ -89,16 +89,27 @@ class MorePublishSettingsCard(CardWidget):
         root.setContentsMargins(16, 12, 16, 12)
         root.setSpacing(ROW_GAP)
 
-        title_row = QHBoxLayout()
-        title = SubtitleLabel("更多发布设置", self)
-        hint = BodyLabel("开发中：完善后将替代下方「发布设置」", self)
-        hint.setStyleSheet("color: #888; font-size: 12px;")
-        title_row.addWidget(title)
-        title_row.addSpacing(12)
-        title_row.addWidget(hint, 1)
-        root.addLayout(title_row)
-
+        root.addWidget(self._build_title_row())
         root.addWidget(self._build_split_body(), 1)
+
+    def _build_title_row(self) -> QWidget:
+        """顶栏：左「更多发布设置」与右「平台特殊设置」与下方分栏同宽对齐。"""
+        wrap = QWidget(self)
+        row = QHBoxLayout(wrap)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(SPLIT_COLUMN_GAP)
+
+        self._left_title = SubtitleLabel("更多发布设置", wrap)
+        self._title_divider_spacer = QWidget(wrap)
+        self._title_divider_spacer.setFixedWidth(DIVIDER_WIDTH)
+        self._right_column_title = SubtitleLabel(RIGHT_COLUMN_TITLE, wrap)
+        self._right_column_title.hide()
+        self._title_divider_spacer.hide()
+
+        row.addWidget(self._left_title, SPLIT_LEFT_STRETCH)
+        row.addWidget(self._title_divider_spacer, 0)
+        row.addWidget(self._right_column_title, SPLIT_RIGHT_STRETCH)
+        return wrap
 
     def _make_vertical_divider(self, parent: QWidget) -> QWidget:
         wrap = QWidget(parent)
@@ -116,9 +127,10 @@ class MorePublishSettingsCard(CardWidget):
         body.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         row = QHBoxLayout(body)
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(0)
+        row.setSpacing(SPLIT_COLUMN_GAP)
 
         self._panel_shared = QWidget(body)
+        self._panel_shared.setMinimumWidth(0)
         self._panel_shared.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
@@ -136,14 +148,10 @@ class MorePublishSettingsCard(CardWidget):
         shared_layout.addWidget(self._declaration_panel)
         shared_layout.addStretch(1)
 
-        self._right_column_wrap = QWidget(body)
-        right_col = QHBoxLayout(self._right_column_wrap)
-        right_col.setContentsMargins(0, 0, 0, 0)
-        right_col.setSpacing(SPLIT_COLUMN_GAP)
-        self._split_divider = self._make_vertical_divider(self._right_column_wrap)
-        right_col.addWidget(self._split_divider)
+        self._split_divider = self._make_vertical_divider(body)
 
-        self._panel_platform = QWidget(self._right_column_wrap)
+        self._panel_platform = QWidget(body)
+        self._panel_platform.setMinimumWidth(0)
         self._panel_platform.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
@@ -162,10 +170,10 @@ class MorePublishSettingsCard(CardWidget):
         platform_outer.addWidget(self._group_declaration_panel)
         platform_outer.addWidget(self._build_platform_section())
         platform_outer.addStretch(1)
-        right_col.addWidget(self._panel_platform, 1)
 
         row.addWidget(self._panel_shared, SPLIT_LEFT_STRETCH)
-        row.addWidget(self._right_column_wrap, SPLIT_RIGHT_STRETCH)
+        row.addWidget(self._split_divider, 0)
+        row.addWidget(self._panel_platform, SPLIT_RIGHT_STRETCH)
         return body
 
     @staticmethod
@@ -204,26 +212,40 @@ class MorePublishSettingsCard(CardWidget):
         return row_w
 
     def _build_douyin_location_extras(self) -> QWidget:
-        """抖音位置特殊项：左标签 + 右打卡/带货模式（仅右栏展示）。"""
-        wrap = QWidget(self._panel_platform)
-        row = QHBoxLayout(wrap)
+        """抖音位置特殊项：与左栏同款「标签 + 控件」单行。"""
+        from src.ui.utils.fluent_tooltips import ToolTipPosition, apply_instructional_tooltip
+
+        row_w = QWidget(self._panel_platform)
+        row = QHBoxLayout(row_w)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(H_GAP)
 
-        self._douyin_location_special_label = BodyLabel(DOUYIN_LOCATION_SPECIAL_LABEL, wrap)
-        self._douyin_location_special_label.setStyleSheet(DOUYIN_LOCATION_SPECIAL_LABEL_STYLE)
-        self._douyin_location_special_label.setFixedWidth(DOUYIN_LOCATION_SPECIAL_LABEL_WIDTH)
+        self._douyin_location_special_label = BodyLabel("抖音位置", row_w)
+        self._douyin_location_special_label.setStyleSheet(
+            DOUYIN_LOCATION_SPECIAL_LABEL_STYLE
+        )
+        self._douyin_location_special_label.setFixedWidth(LABEL_WIDTH)
+        apply_instructional_tooltip(
+            DOUYIN_LOCATION_SPECIAL_LABEL,
+            self._douyin_location_special_label,
+            position=ToolTipPosition.BOTTOM,
+        )
 
-        self._location_mode_combo = ComboBox(wrap)
+        self._location_mode_combo = ComboBox(row_w)
         self._location_mode_combo.addItems(list(LOCATION_MODE_CHOICES))
-        self._location_mode_combo.setFixedWidth(LOCATION_MODE_COMBO_WIDTH)
-        self._location_mode_combo.currentTextChanged.connect(self._on_location_mode_changed)
+        self._location_mode_combo.setFixedWidth(RIGHT_WORK_DECL_COMBO_WIDTH)
+        self._location_mode_combo.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+        )
+        self._location_mode_combo.currentTextChanged.connect(
+            self._on_location_mode_changed
+        )
 
         row.addWidget(self._douyin_location_special_label)
-        row.addWidget(self._location_mode_combo)
+        row.addWidget(self._location_mode_combo, 0)
         row.addStretch(1)
-        wrap.hide()
-        return wrap
+        row_w.hide()
+        return row_w
 
     def _build_promotion_row(self) -> QWidget:
         row_w = QWidget(self)
@@ -387,12 +409,49 @@ class MorePublishSettingsCard(CardWidget):
         self._location_selector.apply_record("")
         self._declaration_panel.reset_to_defaults()
         self._group_declaration_panel.reset_to_defaults()
+        from .publish_extension_payload import reset_music_controls_to_default
+
+        reset_music_controls_to_default(self)
         self.refresh("none", platforms_in_selection=set())
 
     def apply_declaration_from_privacy_dict(self, ps: Dict[str, Any]) -> None:
         """编辑回填：从 privacy_settings 恢复原创/作品申明控件。"""
         self._declaration_panel.apply_privacy_dict(ps)
         self._group_declaration_panel.apply_privacy_dict(ps)
+
+    def build_publish_extension_payload(
+        self,
+        *,
+        account_platform: str,
+        preserve_micro_app_info: str = "",
+    ):
+        from .publish_extension_payload import build_publish_extension_payload
+
+        return build_publish_extension_payload(
+            self,
+            account_platform=account_platform,
+            preserve_micro_app_info=preserve_micro_app_info,
+        )
+
+    def apply_from_publish_record(
+        self,
+        record: dict,
+        *,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        from .publish_extension_payload import apply_from_publish_record
+
+        apply_from_publish_record(self, record, parent=parent)
+
+    def reset_music_controls_to_default(self) -> None:
+        from .publish_extension_payload import reset_music_controls_to_default
+
+        reset_music_controls_to_default(self)
+
+    def refresh_yellow_cart_platform(self, platform: str) -> None:
+        p = (platform or "").strip()
+        if p:
+            self._yellow_cart_selector.set_platform(p)
 
     def _sync_location_mode_from_tag_values(self) -> None:
         raw = (self._tag_values.get(LOCATION_MODE_TAG_KEY) or "").strip()
@@ -509,7 +568,12 @@ class MorePublishSettingsCard(CardWidget):
         )
         has_right = includes_douyin or has_music_block or has_group_decl
 
-        self._right_column_wrap.setVisible(has_right)
+        self._panel_platform.setVisible(has_right)
+        self._split_divider.setVisible(has_right)
+        if getattr(self, "_right_column_title", None) is not None:
+            self._right_column_title.setVisible(has_right)
+        if getattr(self, "_title_divider_spacer", None) is not None:
+            self._title_divider_spacer.setVisible(has_right)
         if not has_right:
             return
 

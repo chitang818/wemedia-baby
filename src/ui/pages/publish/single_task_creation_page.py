@@ -40,25 +40,10 @@ from qfluentwidgets import (
 )
 FLUENT_WIDGETS_AVAILABLE = True
 
-# 单条页「作品申明」堆叠页顺序（与 _create_work_declaration_settings_row 一致）
-_SINGLE_WD_PAGE_PROMPT = 0
-_SINGLE_WD_PAGE_MIXED = 1
-_SINGLE_WD_PAGE_WECHAT = 2
-_SINGLE_WD_PAGE_DOUYIN = 3
-_SINGLE_WD_PAGE_KUAISHOU = 4
-_SINGLE_WD_PAGE_XIAOHONGSHU = 5
-
-# 单条页「发布设置」堆叠页顺序（与 _create_publish_options_card 一致）
-_SINGLE_PO_PAGE_PROMPT = 0
-_SINGLE_PO_PAGE_MIXED = 1
-_SINGLE_PO_PAGE_CONTENT = 2
-
-# 发布设置卡片：标签列、控件间距、下拉宽度（权限与作品申明共用，视觉对齐）
-_SETTINGS_LABEL_WIDTH = 72   # 四字标签 + 余量
-_SETTINGS_ROW_GAP = 14       # 行与行之间的竖向间距
-_SETTINGS_H_GAP = 10         # 标签与内容区之间 / 同行控件之间
-_SETTINGS_COMBO_WIDTH = 220  # 下拉框统一宽度（权限 & 申明）
-_WORK_DECLARATION_COMBO_WIDTH = _SETTINGS_COMBO_WIDTH
+# 表单行：标签列宽、控件间距（核心配置卡封面行等与更多发布设置视觉对齐）
+_SETTINGS_LABEL_WIDTH = 72
+_SETTINGS_ROW_GAP = 14
+_SETTINGS_H_GAP = 10
 
 from src.ui.components.fast_calendar_picker import create_fast_calendar_picker
 from src.ui.utils.fluent_tooltips import ToolTipPosition, apply_instructional_tooltip
@@ -68,28 +53,11 @@ from ..base_page import BasePage
 from .single_task_creation_controller import SingleTaskCreationController
 from .single_task_creation_actions import add_or_update_publish_record, normalize_publish_record_id
 from .single_more_publish_settings import MorePublishSettingsCard
-from .single_more_publish_settings.constants import (
-    DOUYIN_LOC_PROMO_MUTEX_HINT_WHEN_LOCATION,
-    DOUYIN_LOC_PROMO_MUTEX_HINT_WHEN_PROMOTION,
-)
 from src.domain.publish.work_description import (
     normalize_topics_for_paste,
     parse_topic_list,
 )
 from src.ui.publish.work_description.work_description_edit_controller import WorkDescriptionEditController
-from src.domain.publish.location_settings import (
-    LOCATION_MODE_CHECKIN,
-    LOCATION_MODE_CHOICES,
-    format_poi_info_storage,
-    parse_location_short_name_from_storage,
-    parse_poi_info_storage,
-)
-from src.domain.publish.single_publish_options_capabilities import (
-    ALL_TAG_TYPES,
-    PublishOptionsCapabilities,
-    capabilities_for_platform,
-)
-from src.ui.publish.location import LocationSelectorWidget, WechatVideoLocationOption
 from src.utils.date_utils import format_schedule_time_st_str
 from qasync import asyncSlot
 
@@ -97,26 +65,10 @@ from src.ui.dialogs.file_select_dialog import (
     get_last_video_import_directory,
     save_last_video_import_directory_from_path,
 )
-from src.ui.publish.promotion import CartSelectorWidget
 from src.services.copywriting.copywriting_match_service import CopywritingMatchService, CopywritingMatchMode
 from src.infrastructure.storage.repositories.random_copywriting_repository import RandomCopywritingRepository
-from src.ui.publish.work_description.single_declare_original_prefs import (
-    load_persisted_single_declare_original,
-    save_persisted_single_declare_original,
-)
-from src.ui.publish.work_description.work_declaration_prefs import (
-    load_persisted_work_declaration,
-    save_persisted_work_declaration,
-)
-
 logger = logging.getLogger(__name__)
 
-# 购物车：商品链接与「推广标题」分字段存储；落库为 cart_info 单列（无推广标题时为纯文本链接）
-_CART_PROMOTION_TITLE_TAG_KEY = "购物车_推广标题"
-# 位置：地理信息与抖音「打卡模式/带货模式」；落库用 poi_info（可 JSON）
-_LOCATION_MODE_TAG_KEY = "位置_模式"
-# 团购：主内容与「推广标题」；落库仍用 anchor_info
-_TUAN_PROMOTION_TITLE_TAG_KEY = "团购_推广标题"
 # 封面类型下拉 userData
 _COVER_TYPE_FIRST_FRAME = "first_frame"
 _COVER_TYPE_LOCAL = "local"
@@ -124,128 +76,6 @@ COVER_TYPE_COMBO_WIDTH = 120
 
 # 未选发布账号/组时的提示（默认进入页面、清空表单）
 _ACCOUNT_LABEL_PLACEHOLDER = "请选择发布对象"
-
-# 添加标签：类型下拉（四字选项）略窄于原 120px
-TAG_TYPE_COMBO_WIDTH = 88
-# 位置二级「打卡/带货」模式下拉
-LOCATION_MODE_COMBO_WIDTH = 108
-# 选「位置」时主输入框最大宽度（与同行复选框并排，避免占满整行）
-TAG_LOCATION_LINEEDIT_MAX_WIDTH = 420
-# 推广标题字数上限（与抖音侧常见限制一致，按字符计）
-CART_PROMOTION_TITLE_MAX_LEN = 10
-
-
-def _parse_cart_info_storage(raw: str) -> Tuple[str, str]:
-    """从 cart_info 解析商品链接与推广标题。旧数据为纯文本链接；含推广标题时为 JSON（兼容 short_title 键）。"""
-    s = (raw or "").strip()
-    if not s:
-        return "", ""
-    if s.startswith("{"):
-        try:
-            d = json.loads(s)
-            if isinstance(d, dict):
-                link = (
-                    d.get("cart")
-                    or d.get("link")
-                    or d.get("url")
-                    or ""
-                )
-                if not isinstance(link, str):
-                    link = str(link) if link is not None else ""
-                st = (
-                    d.get("promotion_title")
-                    or d.get("short_title")
-                    or d.get("goods_short_title")
-                    or ""
-                )
-                if not isinstance(st, str):
-                    st = str(st) if st is not None else ""
-                st = st.strip()[:CART_PROMOTION_TITLE_MAX_LEN]
-                return link.strip(), st
-        except (json.JSONDecodeError, TypeError):
-            pass
-    return s, ""
-
-
-def _format_cart_info_storage(link: str, promotion_title: str) -> str:
-    """写入 cart_info：仅有链接时保持纯文本；有推广标题时写 JSON。"""
-    link = (link or "").strip()
-    promotion_title = (promotion_title or "").strip()[:CART_PROMOTION_TITLE_MAX_LEN]
-    if not promotion_title:
-        return link
-    return json.dumps(
-        {"cart": link, "promotion_title": promotion_title},
-        ensure_ascii=False,
-    )
-
-
-def _parse_anchor_info_storage(raw: str) -> Tuple[str, str]:
-    """从 anchor_info 解析团购主内容与推广标题。旧数据为纯文本或 JSON（忽略历史 tuan_mode 字段）。"""
-    s = (raw or "").strip()
-    if not s:
-        return "", ""
-    if s.startswith("{"):
-        try:
-            d = json.loads(s)
-            if isinstance(d, dict):
-                main = (
-                    d.get("tuan")
-                    or d.get("link")
-                    or d.get("url")
-                    or d.get("anchor")
-                    or ""
-                )
-                if not isinstance(main, str):
-                    main = str(main) if main is not None else ""
-                st = (
-                    d.get("promotion_title")
-                    or d.get("short_title")
-                    or ""
-                )
-                if not isinstance(st, str):
-                    st = str(st) if st is not None else ""
-                st = st.strip()[:CART_PROMOTION_TITLE_MAX_LEN]
-                return main.strip(), st
-        except (json.JSONDecodeError, TypeError):
-            pass
-    return s, ""
-
-
-def _format_anchor_info_storage(main: str, promotion_title: str) -> str:
-    """写入 anchor_info：无推广标题时为纯文本主内容；有推广标题时写 JSON。"""
-    main = (main or "").strip()
-    promotion_title = (promotion_title or "").strip()[:CART_PROMOTION_TITLE_MAX_LEN]
-    if not promotion_title:
-        return main
-    return json.dumps(
-        {"tuan": main, "promotion_title": promotion_title},
-        ensure_ascii=False,
-    )
-
-
-def _resolve_yellow_cart_anchor_exclusive(
-    cart_info: str,
-    anchor_info: str,
-    *,
-    promo_type_text: str,
-    yellow_cart_payload: Optional[Dict[str, Any]],
-    tag_type: str,
-) -> Tuple[str, str]:
-    """购物车（cart_info）与团购（anchor_info）二选一：两侧均有内容时按当前 UI 选择保留一侧。"""
-    g = (cart_info or "").strip()
-    a = (anchor_info or "").strip()
-    if not g or not a:
-        return cart_info or "", anchor_info or ""
-    if promo_type_text == "购物车推广" and yellow_cart_payload:
-        return (cart_info or "").strip(), ""
-    if promo_type_text == "团购推广":
-        return "", (anchor_info or "").strip()
-    if tag_type == "购物车":
-        return (cart_info or "").strip(), ""
-    if tag_type == "团购":
-        return "", (anchor_info or "").strip()
-    return (cart_info or "").strip(), ""
-
 
 # 单条任务创建页 UI 常量
 TITLE_MAX_LENGTH = 30
@@ -848,10 +678,8 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         self._more_publish_settings_card = MorePublishSettingsCard(
             self, is_image_mode=self._is_image_mode
         )
-        options_card = self._create_publish_options_card()
         schedule_card = self._create_schedule_card()
         layout.addWidget(self._more_publish_settings_card)
-        layout.addWidget(options_card)
         layout.addWidget(schedule_card)
         
         # 发布按钮卡片
@@ -1226,333 +1054,15 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         layout.addWidget(entry_container)
         return card
 
-    def _build_location_settings_row(self, card: QWidget, layout: QVBoxLayout) -> None:
-        """位置设置（共用项）：独立于「添加标签」，始终挂在发布设置卡片上。"""
-        if not hasattr(self, "tag_values"):
-            self.tag_values = {}
+    def _on_add_topic_clicked(self) -> None:
+        """在作品描述中插入话题符号。"""
+        self.desc_edit.insertPlainText("#")
+        self.desc_edit.setFocus()
 
-        self._publish_opts_row_location = QWidget(card)
-        loc_outer = QVBoxLayout(self._publish_opts_row_location)
-        loc_outer.setContentsMargins(0, 0, 0, 0)
-        loc_row = QHBoxLayout()
-        loc_row.setContentsMargins(0, 0, 0, 0)
-        loc_row.setSpacing(_SETTINGS_H_GAP)
-
-        loc_label = BodyLabel("位置设置", card)
-        loc_label.setFixedWidth(_SETTINGS_LABEL_WIDTH)
-
-        self.location_mode_combo = ComboBox(card)
-        self.location_mode_combo.addItems(list(LOCATION_MODE_CHOICES))
-        self.location_mode_combo.setFixedWidth(LOCATION_MODE_COMBO_WIDTH)
-        self.location_mode_combo.hide()
-        self.location_mode_combo.currentTextChanged.connect(self._on_location_mode_changed)
-
-        self._location_selector = LocationSelectorWidget(card)
-        self._location_selector.selection_changed.connect(
-            self._on_location_selector_changed
-        )
-
-        self.location_content_edit = LineEdit(card)
-        self.location_content_edit.setPlaceholderText("请从位置推广库选择")
-        self.location_content_edit.setMaximumWidth(TAG_LOCATION_LINEEDIT_MAX_WIDTH)
-        self.location_content_edit.hide()
-        self.location_content_edit.textChanged.connect(self._on_location_content_changed)
-
-        self._wx_empty_loc_opt = WechatVideoLocationOption(card)
-        self._wx_empty_loc_opt.attach_line_edit(self.location_content_edit)
-
-        loc_row.addWidget(loc_label)
-        loc_row.addWidget(self.location_mode_combo)
-        loc_row.addWidget(self._location_selector, 1)
-        loc_row.addWidget(self.location_content_edit, 1)
-        loc_row.addWidget(self._wx_empty_loc_opt.widget(), 0, Qt.AlignmentFlag.AlignVCenter)
-        loc_row.addStretch(1)
-        loc_outer.addLayout(loc_row)
-        layout.addWidget(self._publish_opts_row_location)
-
-        self._sync_location_mode_from_tag_values()
-        self._update_location_mode_visibility()
-        self._update_location_input_visibility()
-        self._refresh_wechat_empty_location_checkbox()
-
-    def _build_promotion_settings_row(self, card: QWidget, layout: QVBoxLayout) -> None:
-        """带货推广（共用项）：独立于堆叠内容区，始终挂在发布设置卡片上。"""
-        self._publish_opts_row_promotion = QWidget(card)
-        promo_row_layout = QVBoxLayout(self._publish_opts_row_promotion)
-        promo_row_layout.setContentsMargins(0, 0, 0, 0)
-        promotion_row = QHBoxLayout()
-        promotion_row.setContentsMargins(0, 0, 0, 0)
-        promotion_row.setSpacing(_SETTINGS_H_GAP)
-
-        promo_label = BodyLabel("带货推广", card)
-        promo_label.setFixedWidth(_SETTINGS_LABEL_WIDTH)
-
-        self._promotion_type_combo = ComboBox(card)
-        self._promotion_type_combo.addItems(["无", "购物车推广", "团购推广"])
-        self._promotion_type_combo.setFixedWidth(TAG_TYPE_COMBO_WIDTH + 16)
-        self._promotion_type_combo.currentTextChanged.connect(self._on_promotion_type_changed)
-
-        self._yellow_cart_selector = CartSelectorWidget(card)
-        self._yellow_cart_selector.hide()
-
-        self._promo_placeholder_label = BodyLabel("功能开发中，敬请期待", card)
-        self._promo_placeholder_label.setStyleSheet("color: #888; font-size: 12px;")
-        self._promo_placeholder_label.hide()
-
-        self._douyin_loc_promo_hint = BodyLabel("", card)
-        self._douyin_loc_promo_hint.setStyleSheet("color: #c45656; font-size: 12px;")
-        self._douyin_loc_promo_hint.hide()
-
-        promotion_row.addWidget(promo_label)
-        promotion_row.addWidget(self._promotion_type_combo)
-        promotion_row.addWidget(self._yellow_cart_selector, 1)
-        promotion_row.addWidget(self._promo_placeholder_label)
-        promotion_row.addWidget(self._douyin_loc_promo_hint, 1)
-        promotion_row.addStretch(1)
-        promo_row_layout.addLayout(promotion_row)
-        layout.addWidget(self._publish_opts_row_promotion)
-
-    def _build_privacy_settings_row(self, card: QWidget, layout: QVBoxLayout) -> None:
-        """设置权限（共用项）：独立于堆叠内容区。"""
-        self._publish_opts_row_privacy = QWidget(card)
-        perm_outer = QVBoxLayout(self._publish_opts_row_privacy)
-        perm_outer.setContentsMargins(0, 0, 0, 0)
-        perm_row = QHBoxLayout()
-        perm_row.setContentsMargins(0, 0, 0, 0)
-        perm_row.setSpacing(_SETTINGS_H_GAP)
-        perm_label = BodyLabel("设置权限", card)
-        perm_label.setFixedWidth(_SETTINGS_LABEL_WIDTH)
-        self.privacy_combo = ComboBox(card)
-        self.privacy_combo.addItems(["公开可见", "好友可见", "私密"])
-        self.privacy_combo.setFixedWidth(_SETTINGS_COMBO_WIDTH)
-        save_label = "允许他人保存作品" if self._is_image_mode else "允许保存视频"
-        self.allow_download_check = CheckBox(save_label, card)
-        self.allow_download_check.setChecked(True)
-        perm_row.addWidget(perm_label)
-        perm_row.addWidget(self.privacy_combo)
-        perm_row.addWidget(self.allow_download_check)
-        perm_row.addStretch(1)
-        perm_outer.addLayout(perm_row)
-        layout.addWidget(self._publish_opts_row_privacy)
-
-    def _build_extended_info_rows(self, card: QWidget, layout: QVBoxLayout) -> None:
-        """向堆叠内容区追加平台相关行（添加标签、图文音乐、作品申明）。"""
-        if not hasattr(self, "tag_values"):
-            self.tag_values = {}
-
-        # --- 添加标签 (下拉选择 + 输入框) ---
-        self._publish_opts_row_tags = QWidget(card)
-        tags_row_layout = QVBoxLayout(self._publish_opts_row_tags)
-        tags_row_layout.setContentsMargins(0, 0, 0, 0)
-        tags_row_layout.setSpacing(0)
-        add_tags_row = QHBoxLayout()
-        add_tags_row.setSpacing(6)
-        tags_label = BodyLabel("添加标签", card)
-        self.tag_type_combo = ComboBox(card)
-        self.tag_content_edit = LineEdit(card)
-        tags_label.adjustSize()
-        tags_label.setFixedWidth(tags_label.sizeHint().width() + 8)
-
-        self.tag_type_combo.addItems(list(ALL_TAG_TYPES))
-        self.tag_type_combo.setFixedWidth(TAG_TYPE_COMBO_WIDTH)
-
-        self.tag_content_edit.setPlaceholderText("请输入对应内容")
-        self.promotion_title_edit = LineEdit(card)
-        self.promotion_title_edit.setPlaceholderText("推广标题（最多10字）")
-        self.promotion_title_edit.setMaxLength(CART_PROMOTION_TITLE_MAX_LEN)
-        self.promotion_title_edit.setMinimumWidth(140)
-        self.promotion_title_edit.hide()
-        self.promotion_title_edit.textChanged.connect(self._on_promotion_title_changed)
-
-        self.tag_type_combo.currentTextChanged.connect(self._on_tag_type_changed)
-        self.tag_content_edit.textChanged.connect(self._on_tag_content_changed)
-
-        current_type = self.tag_type_combo.currentText()
-        self.tag_content_edit.setText(self.tag_values.get(current_type, ""))
-        self._sync_promotion_title_from_tag_values()
-        self._update_promotion_title_visibility()
-        self._update_tag_content_placeholder()
-
-        add_tags_row.addWidget(tags_label)
-        add_tags_row.addWidget(self.tag_type_combo)
-        add_tags_row.addWidget(self.tag_content_edit, 1)
-        add_tags_row.addWidget(self.promotion_title_edit, 2)
-        add_tags_row.addStretch(1)
-        tags_row_layout.addLayout(add_tags_row)
-        layout.addWidget(self._publish_opts_row_tags)
-
-        # --- 选择音乐（仅图文模式）---
-        self._publish_opts_row_music = None
-        if self._is_image_mode:
-            self._publish_opts_row_music = QWidget(card)
-            music_row_layout = QVBoxLayout(self._publish_opts_row_music)
-            music_row_layout.setContentsMargins(0, 0, 0, 0)
-            music_row = QHBoxLayout()
-            music_row.setSpacing(6)
-            music_label = BodyLabel("选择音乐", card)
-            music_label.adjustSize()
-            music_label.setFixedWidth(music_label.sizeHint().width() + 8)
-
-            self._music_type_combo = ComboBox(card)
-            self._music_type_combo.addItems(["不选音乐", "随机音乐", "指定音乐"])
-            self._music_type_combo.setCurrentText("随机音乐")  # 默认随机音乐
-            self._music_type_combo.setFixedWidth(TAG_TYPE_COMBO_WIDTH + 16)
-            self._music_type_combo.currentTextChanged.connect(self._on_music_type_changed)
-
-            self._music_name_edit = LineEdit(card)
-            self._music_name_edit.setPlaceholderText("请输入音乐名称")
-            self._music_name_edit.setMinimumWidth(160)
-            self._music_name_edit.hide()
-
-            music_row.addWidget(music_label)
-            music_row.addWidget(self._music_type_combo)
-            music_row.addWidget(self._music_name_edit)
-            music_row.addStretch(1)
-            music_row_layout.addLayout(music_row)
-            layout.addWidget(self._publish_opts_row_music)
-
-    def _reset_music_controls_to_default(self) -> None:
-        """图文页：音乐控件恢复为默认（随机音乐）。"""
-        if not self._is_image_mode:
-            return
-        combo = getattr(self, "_music_type_combo", None)
-        if combo is not None:
-            combo.blockSignals(True)
-            combo.setCurrentText("随机音乐")
-            combo.blockSignals(False)
-        name_edit = getattr(self, "_music_name_edit", None)
-        if name_edit is not None:
-            name_edit.clear()
-            name_edit.hide()
-
-    def _on_music_type_changed(self, text: str) -> None:
-        """切换音乐类型时，显示/隐藏音乐名称输入框。"""
-        name_edit = getattr(self, "_music_name_edit", None)
-        if name_edit is not None:
-            name_edit.setVisible(text == "指定音乐")
-
-    def _selection_includes_douyin(self) -> bool:
-        return "douyin" in self._platforms_in_selected_publish_target()
-
-    def _clear_promotion_settings_to_none(self) -> None:
-        combo = getattr(self, "_promotion_type_combo", None)
-        if combo is None or combo.currentText() == "无":
-            return
-        combo.blockSignals(True)
-        combo.setCurrentIndex(0)
-        combo.blockSignals(False)
-        yc = getattr(self, "_yellow_cart_selector", None)
-        if yc:
-            yc.apply_record("")
-        self._apply_promotion_settings_ui()
-
-    def _apply_douyin_location_promotion_mutex(self) -> None:
-        """抖音：位置推广与带货推广互斥。"""
-        hint = getattr(self, "_douyin_loc_promo_hint", None)
-        loc_sel = getattr(self, "_location_selector", None)
-        combo = getattr(self, "_promotion_type_combo", None)
-        yc = getattr(self, "_yellow_cart_selector", None)
-        ph = getattr(self, "_promo_placeholder_label", None)
-        if not self._selection_includes_douyin():
-            if combo:
-                combo.setEnabled(True)
-            if loc_sel:
-                loc_sel.setEnabled(True)
-            if yc:
-                yc.setEnabled(True)
-            if ph:
-                ph.setEnabled(True)
-            if hint:
-                hint.hide()
-            return
-
-        has_location = bool(loc_sel and loc_sel.get_selected_short_name())
-        has_promotion = bool(combo and combo.currentText() != "无")
-
-        if has_location:
-            if combo:
-                combo.setEnabled(False)
-            if yc:
-                yc.setEnabled(False)
-            if ph:
-                ph.setEnabled(False)
-            if loc_sel:
-                loc_sel.setEnabled(True)
-            if hint:
-                hint.setText(DOUYIN_LOC_PROMO_MUTEX_HINT_WHEN_LOCATION)
-                hint.show()
-        elif has_promotion:
-            if combo:
-                combo.setEnabled(True)
-            if yc:
-                yc.setEnabled(True)
-            if ph:
-                ph.setEnabled(True)
-            if loc_sel:
-                loc_sel.setEnabled(False)
-            if hint:
-                hint.setText(DOUYIN_LOC_PROMO_MUTEX_HINT_WHEN_PROMOTION)
-                hint.show()
-        else:
-            if combo:
-                combo.setEnabled(True)
-            if loc_sel:
-                loc_sel.setEnabled(True)
-            if yc:
-                yc.setEnabled(True)
-            if ph:
-                ph.setEnabled(True)
-            if hint:
-                hint.hide()
-
-    def _on_promotion_type_changed(self, text: str) -> None:
-        """切换带货推广类型时，显示/隐藏对应控件。"""
-        if self._selection_includes_douyin() and text != "无":
-            loc_sel = getattr(self, "_location_selector", None)
-            if loc_sel and loc_sel.get_selected_short_name():
-                loc_sel.apply_record("")
-                if hasattr(self, "tag_values"):
-                    self.tag_values["位置"] = ""
-        tv = getattr(self, "tag_values", None)
-        if tv is not None:
-            if text == "购物车推广":
-                tv["团购"] = ""
-                tv[_TUAN_PROMOTION_TITLE_TAG_KEY] = ""
-                if (
-                    getattr(self, "tag_type_combo", None)
-                    and self.tag_type_combo.currentText() == "团购"
-                    and getattr(self, "tag_content_edit", None)
-                ):
-                    self.tag_content_edit.blockSignals(True)
-                    self.tag_content_edit.setText(tv.get("团购", ""))
-                    self.tag_content_edit.blockSignals(False)
-            elif text == "团购推广":
-                tv["购物车"] = ""
-                tv[_CART_PROMOTION_TITLE_TAG_KEY] = ""
-                yc_clear = getattr(self, "_yellow_cart_selector", None)
-                if yc_clear:
-                    yc_clear.apply_record("")
-                if (
-                    getattr(self, "tag_type_combo", None)
-                    and self.tag_type_combo.currentText() == "购物车"
-                    and getattr(self, "tag_content_edit", None)
-                ):
-                    self.tag_content_edit.blockSignals(True)
-                    self.tag_content_edit.setText(tv.get("购物车", ""))
-                    self.tag_content_edit.blockSignals(False)
-        yc = getattr(self, "_yellow_cart_selector", None)
-        ph = getattr(self, "_promo_placeholder_label", None)
-        if yc:
-            yc.setVisible(text == "购物车推广")
-        if ph:
-            ph.setVisible(text == "团购推广")
-        # 刷新选择器平台（账号已选时）
-        if text == "购物车推广" and yc:
-            self._refresh_yellow_cart_platform()
-        if getattr(self, "promotion_title_edit", None):
-            self._sync_promotion_title_from_tag_values()
-            self._update_promotion_title_visibility()
-        self._apply_douyin_location_promotion_mutex()
+    def _on_add_mention_clicked(self) -> None:
+        """在作品描述中插入 @ 符号。"""
+        self.desc_edit.insertPlainText("@")
+        self.desc_edit.setFocus()
 
     def _selected_account_platform_for_widgets(self) -> str:
         """当前选中账号/组用于位置库、购物车等控件的平台 id。"""
@@ -1598,26 +1108,8 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             return set(plats)
         return set()
 
-    def _refresh_location_selector_platform(self) -> None:
-        """将当前选中账号的平台同步到 LocationSelectorWidget。"""
-        loc_sel = getattr(self, "_location_selector", None)
-        if not loc_sel:
-            return
-        platform = self._selected_account_platform_for_widgets()
-        if platform:
-            loc_sel.set_platform(platform.strip())
-
-    def _refresh_yellow_cart_platform(self) -> None:
-        """将当前选中账号的平台同步到 CartSelectorWidget。"""
-        yc = getattr(self, "_yellow_cart_selector", None)
-        if not yc:
-            return
-        platform = self._selected_account_platform_for_widgets()
-        if platform:
-            yc.set_platform(platform.strip())
-
     def _refresh_more_publish_settings_ui(self) -> None:
-        """刷新「更多发布设置」卡片（并行开发，提交仍走旧卡）。"""
+        """刷新「更多发布设置」卡片。"""
         card = getattr(self, "_more_publish_settings_card", None)
         if card is None:
             return
@@ -1626,306 +1118,9 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             location_platform=self._selected_account_platform_for_widgets(),
             platforms_in_selection=self._platforms_in_selected_publish_target(),
         )
-
-    def _normalize_loaded_record_cart_vs_group_buy(self, record: dict) -> None:
-        """编辑回填：cart_info 与 anchor_info 同时有值时只保留一侧（与抖音侧互斥一致）。"""
-        g_raw = (record.get("cart_info") or "").strip()
-        a_raw = (record.get("anchor_info") or "").strip()
-        if not g_raw or not a_raw:
-            return
-
-        has_yc_json = False
-        if g_raw.startswith("{"):
-            try:
-                d = json.loads(g_raw)
-                if isinstance(d, dict) and (
-                    d.get("cart_short_name") or d.get("yellow_cart_short_name") or ""
-                ).strip():
-                    has_yc_json = True
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-        tv = getattr(self, "tag_values", None)
-        if not tv:
-            return
-
-        if has_yc_json:
-            tv["团购"] = ""
-            tv[_TUAN_PROMOTION_TITLE_TAG_KEY] = ""
-        else:
-            # 手填购物车与团购并存时保留团购（与标签下拉遍历顺序一致）
-            tv["购物车"] = ""
-            tv[_CART_PROMOTION_TITLE_TAG_KEY] = ""
-            yc = getattr(self, "_yellow_cart_selector", None)
-            if yc:
-                yc.apply_record("")
-            pc = getattr(self, "_promotion_type_combo", None)
-            if pc:
-                pc.blockSignals(True)
-                pc.setCurrentIndex(0)
-                pc.blockSignals(False)
-                self._on_promotion_type_changed(pc.currentText())
-
-        combo = getattr(self, "tag_type_combo", None)
-        if combo:
-            ct = combo.currentText()
-            if has_yc_json and ct == "团购":
-                combo.blockSignals(True)
-                combo.setCurrentText("购物车")
-                combo.blockSignals(False)
-                ce = getattr(self, "tag_content_edit", None)
-                if ce:
-                    ce.blockSignals(True)
-                    ce.setText(tv.get("购物车", ""))
-                    ce.blockSignals(False)
-            elif not has_yc_json and ct == "购物车":
-                combo.blockSignals(True)
-                combo.setCurrentText("团购")
-                combo.blockSignals(False)
-                ce = getattr(self, "tag_content_edit", None)
-                if ce:
-                    ce.blockSignals(True)
-                    ce.setText(tv.get("团购", ""))
-                    ce.blockSignals(False)
-
-        self._sync_promotion_title_from_tag_values()
-        self._update_promotion_title_visibility()
-        if getattr(self, "_wx_empty_loc_opt", None):
-            self._refresh_wechat_empty_location_checkbox()
-
-    def _create_publish_options_card(self) -> QWidget:
-        """创建发布设置卡片：共用行（位置/带货/权限）+ 堆叠区（标签/申明等）。"""
-        card = CardWidget(self)
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(_SETTINGS_ROW_GAP)
-
-        title = SubtitleLabel("发布设置", card)
-        layout.addWidget(title)
-
-        self._build_location_settings_row(card, layout)
-        self._build_promotion_settings_row(card, layout)
-        self._build_privacy_settings_row(card, layout)
-
-        self._publish_opts_stack = QStackedWidget(card)
-        self._publish_opts_stack.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
-        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-
-        def _prompt_page(text: str) -> QWidget:
-            w = QWidget(card)
-            h = QVBoxLayout(w)
-            h.setContentsMargins(0, 0, 0, 0)
-            lbl = BodyLabel(text, w)
-            lbl.setStyleSheet("color: #888;")
-            h.addWidget(lbl)
-            h.addStretch(1)
-            return w
-
-        p0 = QWidget(card)
-        p0l = QVBoxLayout(p0)
-        p0l.setContentsMargins(0, 0, 0, 0)
-        self._publish_opts_prompt_label = BodyLabel("请先选择发布对象", p0)
-        self._publish_opts_prompt_label.setStyleSheet("color: #888;")
-        p0l.addWidget(self._publish_opts_prompt_label)
-        p0l.addStretch(1)
-        self._publish_opts_stack.addWidget(p0)
-        self._publish_opts_stack.addWidget(
-            _prompt_page("组内含多平台，发布时将按各平台页面默认或已保存配置分别生效")
-        )
-
-        content = QWidget(card)
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(_SETTINGS_ROW_GAP)
-        self._build_extended_info_rows(card, content_layout)
-        content_layout.addSpacing(6)
-
-        self._publish_opts_row_work_declaration = QWidget(card)
-        wd_outer = QVBoxLayout(self._publish_opts_row_work_declaration)
-        wd_outer.setContentsMargins(0, 0, 0, 0)
-        self._create_work_declaration_settings_row(card, wd_outer)
-        content_layout.addWidget(self._publish_opts_row_work_declaration)
-
-        self._publish_opts_stack.addWidget(content)
-        layout.addWidget(self._publish_opts_stack)
-
-        return card
-
-    def _create_schedule_card(self) -> QWidget:
-        """创建发布时间独立卡片。"""
-        card = CardWidget(self)
-        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(_SETTINGS_ROW_GAP)
-
-        title = SubtitleLabel("发布时间", card)
-        layout.addWidget(title)
-
-        schedule_row = QHBoxLayout()
-        schedule_row.setContentsMargins(0, 0, 0, 0)
-        schedule_row.setSpacing(_SETTINGS_H_GAP)
-        schedule_label = BodyLabel("发布时间", card)
-        schedule_label.setFixedWidth(_SETTINGS_LABEL_WIDTH)
-        schedule_content = QVBoxLayout()
-        schedule_content.setContentsMargins(0, 0, 0, 0)
-        schedule_content.setSpacing(0)
-        self._init_schedule_ui(schedule_content, card)
-        schedule_row.addWidget(schedule_label)
-        schedule_row.addLayout(schedule_content, 1)
-        layout.addLayout(schedule_row)
-
-        return card
-
-    def _create_work_declaration_settings_row(
-        self, card: QWidget, layout: QVBoxLayout
-    ) -> None:
-        """发布设置内「作品申明」行：左侧标签 + QStackedWidget 切换各平台控件。"""
-        from src.domain.publish.work_declaration import (
-            DOUYIN_CHOICES,
-            KUAISHOU_CHOICES,
-            XHS_CONTENT_ATTR_CHOICES,
-        )
-
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(_SETTINGS_H_GAP)
-        wd_label = BodyLabel("作品申明", card)
-        wd_label.setFixedWidth(_SETTINGS_LABEL_WIDTH)
-        self._wd_stack = QStackedWidget(card)
-        self._wd_stack.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
-        )
-
-        # ---------- 各平台页面（统一 QHBoxLayout，零边距）----------
-
-        def _page_hbox(parent: QWidget) -> tuple:
-            w = QWidget(parent)
-            h = QHBoxLayout(w)
-            h.setContentsMargins(0, 0, 0, 0)
-            h.setSpacing(_SETTINGS_H_GAP)
-            return w, h
-
-        # 0 - 未选账号
-        p0, p0l = _page_hbox(card)
-        self._wd_stack_prompt_label = BodyLabel("请先选择发布对象", p0)
-        self._wd_stack_prompt_label.setStyleSheet("color: #888;")
-        p0l.addWidget(self._wd_stack_prompt_label)
-        p0l.addStretch(1)
-        self._wd_stack.addWidget(p0)
-
-        # 1 - 多平台账号组
-        p1, p1l = _page_hbox(card)
-        _p1t = BodyLabel("组内含多平台，将按各平台已保存的申明分别生效", p1)
-        _p1t.setStyleSheet("color: #888;")
-        p1l.addWidget(_p1t)
-        p1l.addStretch(1)
-        self._wd_stack.addWidget(p1)
-
-        # 2 - 视频号
-        p2, p2l = _page_hbox(card)
-        self.is_original_check = CheckBox("申明原创", p2)
-        apply_instructional_tooltip(
-            "仅对视频号发布任务生效。",
-            self.is_original_check,
-            position=ToolTipPosition.BOTTOM,
-        )
-        self.is_original_check.blockSignals(True)
-        self.is_original_check.setChecked(load_persisted_single_declare_original())
-        self.is_original_check.blockSignals(False)
-        self.is_original_check.stateChanged.connect(self._persist_single_declare_original)
-        p2l.addWidget(self.is_original_check)
-        p2l.addStretch(1)
-        self._wd_stack.addWidget(p2)
-
-        # 3 - 抖音
-        p3, p3l = _page_hbox(card)
-        self._wd_dy_auto = CheckBox("发布时自动勾选", p3)
-        apply_instructional_tooltip(
-            "勾选后发布时自动在网页上选中对应申明",
-            self._wd_dy_auto,
-            position=ToolTipPosition.BOTTOM,
-        )
-        self._wd_dy_combo = ComboBox(p3)
-        apply_instructional_tooltip(
-            "与抖音发布页「作品申明」选项一致",
-            self._wd_dy_combo,
-            position=ToolTipPosition.BOTTOM,
-        )
-        for val, text in DOUYIN_CHOICES:
-            self._wd_dy_combo.addItem(text, userData=val)
-        self._wd_dy_combo.setFixedWidth(_SETTINGS_COMBO_WIDTH)
-        p3l.addWidget(self._wd_dy_auto)
-        p3l.addWidget(self._wd_dy_combo)
-        p3l.addStretch(1)
-        self._wd_stack.addWidget(p3)
-
-        # 4 - 快手
-        p4, p4l = _page_hbox(card)
-        self._wd_ks_auto = CheckBox("发布时自动勾选", p4)
-        apply_instructional_tooltip(
-            "勾选后发布时自动在网页上选中对应申明",
-            self._wd_ks_auto,
-            position=ToolTipPosition.BOTTOM,
-        )
-        self._wd_ks_combo = ComboBox(p4)
-        apply_instructional_tooltip(
-            "与快手发布页申明类选项一致",
-            self._wd_ks_combo,
-            position=ToolTipPosition.BOTTOM,
-        )
-        for val, text in KUAISHOU_CHOICES:
-            self._wd_ks_combo.addItem(text, userData=val)
-        self._wd_ks_combo.setFixedWidth(_SETTINGS_COMBO_WIDTH)
-        p4l.addWidget(self._wd_ks_auto)
-        p4l.addWidget(self._wd_ks_combo)
-        p4l.addStretch(1)
-        self._wd_stack.addWidget(p4)
-
-        # 5 - 小红书
-        p5, p5l = _page_hbox(card)
-        self._wd_xhs_orig = CheckBox("申明原创", p5)
-        apply_instructional_tooltip(
-            "与「内容属性」无关，可分别设置",
-            self._wd_xhs_orig,
-            position=ToolTipPosition.BOTTOM,
-        )
-        self._wd_xhs_attr_auto = CheckBox("属性自动勾选", p5)
-        apply_instructional_tooltip(
-            "勾选后发布时自动设置内容属性",
-            self._wd_xhs_attr_auto,
-            position=ToolTipPosition.BOTTOM,
-        )
-        self._wd_xhs_combo = ComboBox(p5)
-        apply_instructional_tooltip(
-            "小红书发布页「内容属性」选项",
-            self._wd_xhs_combo,
-            position=ToolTipPosition.BOTTOM,
-        )
-        for val, text in XHS_CONTENT_ATTR_CHOICES:
-            self._wd_xhs_combo.addItem(text, userData=val)
-        self._wd_xhs_combo.setFixedWidth(_SETTINGS_COMBO_WIDTH)
-        p5l.addWidget(self._wd_xhs_orig)
-        p5l.addWidget(self._wd_xhs_attr_auto)
-        p5l.addWidget(self._wd_xhs_combo)
-        p5l.addStretch(1)
-        self._wd_stack.addWidget(p5)
-
-        # 信号连接
-        self._wd_dy_combo.currentIndexChanged.connect(self._on_wd_douyin_user_changed)
-        self._wd_dy_auto.toggled.connect(self._on_wd_douyin_auto_toggled)
-        self._wd_ks_combo.currentIndexChanged.connect(self._on_wd_kuaishou_user_changed)
-        self._wd_ks_auto.toggled.connect(self._on_wd_kuaishou_auto_toggled)
-        self._wd_xhs_orig.stateChanged.connect(self._on_wd_xiaohongshu_user_changed)
-        self._wd_xhs_attr_auto.toggled.connect(self._on_wd_xhs_attr_auto_toggled)
-        self._wd_xhs_combo.currentIndexChanged.connect(self._on_wd_xiaohongshu_user_changed)
-
-        row.addWidget(wd_label)
-        row.addWidget(self._wd_stack, 1)
-        layout.addLayout(row)
-        self._update_work_declaration_auto_combos_enabled()
+        platform = self._selected_account_platform_for_widgets()
+        if platform:
+            card.refresh_yellow_cart_platform(platform)
 
     def _work_declaration_effective_context(self) -> str:
         """返回当前应展示的作品申明上下文：平台 id、mixed、none。"""
@@ -1957,689 +1152,37 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             return "none"
         return "none"
 
-    def _wd_set_syncing(self, syncing: bool) -> None:
-        self._wd_syncing = bool(syncing)
-
-    def _update_work_declaration_auto_combos_enabled(self) -> None:
-        """「自动勾选」复选框未勾选时禁用对应申明下拉，勾选后启用。"""
-        if getattr(self, "_wd_dy_auto", None) and getattr(self, "_wd_dy_combo", None):
-            self._wd_dy_combo.setEnabled(self._wd_dy_auto.isChecked())
-        if getattr(self, "_wd_ks_auto", None) and getattr(self, "_wd_ks_combo", None):
-            self._wd_ks_combo.setEnabled(self._wd_ks_auto.isChecked())
-        if getattr(self, "_wd_xhs_attr_auto", None) and getattr(self, "_wd_xhs_combo", None):
-            self._wd_xhs_combo.setEnabled(self._wd_xhs_attr_auto.isChecked())
-
-    def _on_wd_douyin_auto_toggled(self, _checked: bool) -> None:
-        self._update_work_declaration_auto_combos_enabled()
-        self._on_wd_douyin_user_changed()
-
-    def _on_wd_kuaishou_auto_toggled(self, _checked: bool) -> None:
-        self._update_work_declaration_auto_combos_enabled()
-        self._on_wd_kuaishou_user_changed()
-
-    def _on_wd_xhs_attr_auto_toggled(self, _checked: bool) -> None:
-        self._update_work_declaration_auto_combos_enabled()
-        self._on_wd_xiaohongshu_user_changed()
-
-    def _persist_work_declaration_merge(self, updates: Dict[str, Any]) -> None:
-        """合并写入全局「作品申明」偏好（与批量页共用 batch_publish.work_declaration）。"""
-        cur = load_persisted_work_declaration()
-        cur.update(updates)
-        save_persisted_work_declaration(cur)
-
-    def _on_wd_douyin_user_changed(self, *_args) -> None:
-        if getattr(self, "_wd_syncing", False):
-            return
-        from src.domain.publish.work_declaration import (
-            KEY_DOUYIN,
-            KEY_DOUYIN_AUTO,
-            normalize_douyin_value,
-        )
-
-        c = getattr(self, "_wd_dy_combo", None)
-        s = getattr(self, "_wd_dy_auto", None)
-        if c is None or s is None:
-            return
-        raw = c.currentData()
-        if raw is None and c.currentIndex() >= 0:
-            raw = c.itemData(c.currentIndex())
-        self._persist_work_declaration_merge({
-            KEY_DOUYIN: normalize_douyin_value(str(raw or "") or None),
-            KEY_DOUYIN_AUTO: bool(s.isChecked()),
-        })
-
-    def _on_wd_kuaishou_user_changed(self, *_args) -> None:
-        if getattr(self, "_wd_syncing", False):
-            return
-        from src.domain.publish.work_declaration import (
-            KEY_KUAISHOU,
-            KEY_KUAISHOU_AUTO,
-            normalize_kuaishou_value,
-        )
-
-        c = getattr(self, "_wd_ks_combo", None)
-        s = getattr(self, "_wd_ks_auto", None)
-        if c is None or s is None:
-            return
-        raw = c.currentData()
-        if raw is None and c.currentIndex() >= 0:
-            raw = c.itemData(c.currentIndex())
-        self._persist_work_declaration_merge({
-            KEY_KUAISHOU: normalize_kuaishou_value(str(raw or "") or None),
-            KEY_KUAISHOU_AUTO: bool(s.isChecked()),
-        })
-
-    def _on_wd_xiaohongshu_user_changed(self, *_args) -> None:
-        if getattr(self, "_wd_syncing", False):
-            return
-        from src.domain.publish.work_declaration import (
-            KEY_XHS_CONTENT_ATTR,
-            KEY_XHS_CONTENT_ATTR_AUTO,
-            KEY_XHS_ORIGINAL,
-            normalize_xhs_content_attr,
-        )
-
-        co = getattr(self, "_wd_xhs_combo", None)
-        sw = getattr(self, "_wd_xhs_attr_auto", None)
-        chk = getattr(self, "_wd_xhs_orig", None)
-        if co is None or sw is None or chk is None:
-            return
-        raw = co.currentData()
-        if raw is None and co.currentIndex() >= 0:
-            raw = co.itemData(co.currentIndex())
-        self._persist_work_declaration_merge({
-            KEY_XHS_ORIGINAL: bool(chk.isChecked()),
-            KEY_XHS_CONTENT_ATTR: normalize_xhs_content_attr(str(raw or "") or None),
-            KEY_XHS_CONTENT_ATTR_AUTO: bool(sw.isChecked()),
-        })
-
-    def _sync_work_declaration_widgets_from_storage(self) -> None:
-        """从本地偏好加载各平台申明控件（不改变当前 QStackedWidget 页）。"""
-        from src.domain.publish.work_declaration import (
-            KEY_DOUYIN,
-            KEY_DOUYIN_AUTO,
-            KEY_KUAISHOU,
-            KEY_KUAISHOU_AUTO,
-            KEY_XHS_CONTENT_ATTR,
-            KEY_XHS_CONTENT_ATTR_AUTO,
-            KEY_XHS_ORIGINAL,
-            normalize_douyin_value,
-            normalize_kuaishou_value,
-            normalize_xhs_content_attr,
-        )
-        self._wd_set_syncing(True)
-        try:
-            wd = load_persisted_work_declaration()
-            dy = normalize_douyin_value(str(wd.get(KEY_DOUYIN) or "") or None)
-            ks = normalize_kuaishou_value(str(wd.get(KEY_KUAISHOU) or "") or None)
-            if getattr(self, "_wd_dy_combo", None):
-                c = self._wd_dy_combo
-                c.blockSignals(True)
-                for i in range(c.count()):
-                    if c.itemData(i) == dy:
-                        c.setCurrentIndex(i)
-                        break
-                c.blockSignals(False)
-            if getattr(self, "_wd_dy_auto", None):
-                self._wd_dy_auto.blockSignals(True)
-                self._wd_dy_auto.setChecked(bool(wd.get(KEY_DOUYIN_AUTO, False)))
-                self._wd_dy_auto.blockSignals(False)
-            if getattr(self, "_wd_ks_combo", None):
-                c = self._wd_ks_combo
-                c.blockSignals(True)
-                for i in range(c.count()):
-                    if c.itemData(i) == ks:
-                        c.setCurrentIndex(i)
-                        break
-                c.blockSignals(False)
-            if getattr(self, "_wd_ks_auto", None):
-                self._wd_ks_auto.blockSignals(True)
-                self._wd_ks_auto.setChecked(bool(wd.get(KEY_KUAISHOU_AUTO, False)))
-                self._wd_ks_auto.blockSignals(False)
-            if getattr(self, "_wd_xhs_orig", None):
-                self._wd_xhs_orig.blockSignals(True)
-                self._wd_xhs_orig.setChecked(bool(wd.get(KEY_XHS_ORIGINAL, False)))
-                self._wd_xhs_orig.blockSignals(False)
-            if getattr(self, "_wd_xhs_attr_auto", None):
-                self._wd_xhs_attr_auto.blockSignals(True)
-                self._wd_xhs_attr_auto.setChecked(bool(wd.get(KEY_XHS_CONTENT_ATTR_AUTO, False)))
-                self._wd_xhs_attr_auto.blockSignals(False)
-            xv = normalize_xhs_content_attr(str(wd.get(KEY_XHS_CONTENT_ATTR) or "") or None)
-            if getattr(self, "_wd_xhs_combo", None):
-                c = self._wd_xhs_combo
-                c.blockSignals(True)
-                for i in range(c.count()):
-                    if c.itemData(i) == xv:
-                        c.setCurrentIndex(i)
-                        break
-                c.blockSignals(False)
-            if hasattr(self, "is_original_check") and self.is_original_check:
-                self.is_original_check.blockSignals(True)
-                self.is_original_check.setChecked(load_persisted_single_declare_original())
-                self.is_original_check.blockSignals(False)
-        finally:
-            self._wd_set_syncing(False)
-            self._update_work_declaration_auto_combos_enabled()
-
-    def _apply_work_declaration_from_privacy_dict(self, ps: Dict[str, Any]) -> None:
-        """从发布记录 privacy_settings dict 回填作品申明控件。"""
-        from src.domain.publish.work_declaration import (
-            KEY_DOUYIN,
-            KEY_DOUYIN_AUTO,
-            KEY_IS_ORIGINAL,
-            KEY_KUAISHOU,
-            KEY_KUAISHOU_AUTO,
-            KEY_XHS_CONTENT_ATTR,
-            KEY_XHS_CONTENT_ATTR_AUTO,
-            KEY_XHS_ORIGINAL,
-            declaration_auto_apply,
-            normalize_douyin_value,
-            normalize_kuaishou_value,
-            normalize_xhs_content_attr,
-        )
-
-        self._wd_set_syncing(True)
-        try:
-            if hasattr(self, "is_original_check") and self.is_original_check:
-                self.is_original_check.blockSignals(True)
-                self.is_original_check.setChecked(bool(ps.get(KEY_IS_ORIGINAL, False)))
-                self.is_original_check.blockSignals(False)
-            dy = normalize_douyin_value(str(ps.get(KEY_DOUYIN) or "") or None)
-            if getattr(self, "_wd_dy_combo", None):
-                c = self._wd_dy_combo
-                c.blockSignals(True)
-                for i in range(c.count()):
-                    if c.itemData(i) == dy:
-                        c.setCurrentIndex(i)
-                        break
-                c.blockSignals(False)
-            if getattr(self, "_wd_dy_auto", None):
-                self._wd_dy_auto.blockSignals(True)
-                self._wd_dy_auto.setChecked(declaration_auto_apply(ps, KEY_DOUYIN_AUTO))
-                self._wd_dy_auto.blockSignals(False)
-            ks = normalize_kuaishou_value(str(ps.get(KEY_KUAISHOU) or "") or None)
-            if getattr(self, "_wd_ks_combo", None):
-                c = self._wd_ks_combo
-                c.blockSignals(True)
-                for i in range(c.count()):
-                    if c.itemData(i) == ks:
-                        c.setCurrentIndex(i)
-                        break
-                c.blockSignals(False)
-            if getattr(self, "_wd_ks_auto", None):
-                self._wd_ks_auto.blockSignals(True)
-                self._wd_ks_auto.setChecked(declaration_auto_apply(ps, KEY_KUAISHOU_AUTO))
-                self._wd_ks_auto.blockSignals(False)
-            if getattr(self, "_wd_xhs_orig", None):
-                self._wd_xhs_orig.blockSignals(True)
-                self._wd_xhs_orig.setChecked(bool(ps.get(KEY_XHS_ORIGINAL, False)))
-                self._wd_xhs_orig.blockSignals(False)
-            if getattr(self, "_wd_xhs_attr_auto", None):
-                self._wd_xhs_attr_auto.blockSignals(True)
-                self._wd_xhs_attr_auto.setChecked(
-                    declaration_auto_apply(ps, KEY_XHS_CONTENT_ATTR_AUTO)
-                )
-                self._wd_xhs_attr_auto.blockSignals(False)
-            xv = normalize_xhs_content_attr(str(ps.get(KEY_XHS_CONTENT_ATTR) or "") or None)
-            if getattr(self, "_wd_xhs_combo", None):
-                c = self._wd_xhs_combo
-                c.blockSignals(True)
-                for i in range(c.count()):
-                    if c.itemData(i) == xv:
-                        c.setCurrentIndex(i)
-                        break
-                c.blockSignals(False)
-        finally:
-            self._wd_set_syncing(False)
-            self._update_work_declaration_auto_combos_enabled()
-
-    def _refresh_work_declaration_ui(self, *, sync_from_storage: bool = True) -> None:
-        """根据当前所选账号切换作品申明堆叠页；sync_from_storage 为 True 时从本地偏好刷新控件。"""
-        stack = getattr(self, "_wd_stack", None)
-        if stack is None:
-            return
-        ctx = self._work_declaration_effective_context()
-        if sync_from_storage:
-            self._sync_work_declaration_widgets_from_storage()
-        if ctx == "none":
-            if getattr(self, "_wd_stack_prompt_label", None):
-                self._wd_stack_prompt_label.setText("请先选择发布对象")
-            stack.setCurrentIndex(_SINGLE_WD_PAGE_PROMPT)
-        elif ctx == "mixed":
-            stack.setCurrentIndex(_SINGLE_WD_PAGE_MIXED)
-        elif ctx == "wechat_video":
-            stack.setCurrentIndex(_SINGLE_WD_PAGE_WECHAT)
-        elif ctx == "douyin":
-            stack.setCurrentIndex(_SINGLE_WD_PAGE_DOUYIN)
-        elif ctx == "kuaishou":
-            stack.setCurrentIndex(_SINGLE_WD_PAGE_KUAISHOU)
-        elif ctx == "xiaohongshu":
-            stack.setCurrentIndex(_SINGLE_WD_PAGE_XIAOHONGSHU)
-        else:
-            if getattr(self, "_wd_stack_prompt_label", None):
-                self._wd_stack_prompt_label.setText(
-                    "本平台暂不支持在此配置申明，不影响发布。"
-                )
-            stack.setCurrentIndex(_SINGLE_WD_PAGE_PROMPT)
-
-    def _current_publish_options_capabilities(self) -> Optional[PublishOptionsCapabilities]:
-        """当前单账号上下文下的发布设置能力；未选账号或混平台组时返回 None。"""
-        ctx = self._work_declaration_effective_context()
-        if ctx in ("none", "mixed"):
-            return None
-        return capabilities_for_platform(ctx, is_image_mode=self._is_image_mode)
-
-    def _apply_tag_types_for_capabilities(self, cap: PublishOptionsCapabilities) -> None:
-        """按平台能力刷新「添加标签」下拉项并保持 tag_values。"""
-        combo = getattr(self, "tag_type_combo", None)
-        if combo is None or not cap.show_add_tags:
-            return
-        types = list(cap.tag_types)
-        if not types:
-            return
-        combo.blockSignals(True)
-        current = combo.currentText()
-        combo.clear()
-        combo.addItems(types)
-        if current in types:
-            combo.setCurrentText(current)
-        else:
-            combo.setCurrentIndex(0)
-        combo.blockSignals(False)
-        if getattr(self, "tag_content_edit", None):
-            self.tag_content_edit.blockSignals(True)
-            self.tag_content_edit.setText(self.tag_values.get(combo.currentText(), ""))
-            self.tag_content_edit.blockSignals(False)
-        self._sync_promotion_title_from_tag_values()
-        self._update_promotion_title_visibility()
-        self._update_tag_content_placeholder()
-
-    def _apply_location_settings_ui(
-        self, cap: Optional[PublishOptionsCapabilities] = None
-    ) -> None:
-        """刷新位置设置行（共用项：未选账号时仍展示，按平台能力显隐子控件）。"""
-        row = getattr(self, "_publish_opts_row_location", None)
-        if row is None:
-            return
-        show_row = cap is None or cap.show_location
-        row.setVisible(show_row)
-        if not show_row:
-            return
-        show_mode = bool(cap and cap.show_location_mode)
-        if getattr(self, "location_mode_combo", None):
-            self.location_mode_combo.setVisible(show_mode)
-        self._update_location_input_visibility()
-        self._refresh_location_selector_platform()
-        self._refresh_wechat_empty_location_checkbox()
-
-    def _apply_promotion_settings_ui(
-        self, cap: Optional[PublishOptionsCapabilities] = None
-    ) -> None:
-        """刷新带货推广行（共用项：未选账号时仍展示）。"""
-        row = getattr(self, "_publish_opts_row_promotion", None)
-        if row is None:
-            return
-        show_row = cap is None or cap.show_promotion
-        row.setVisible(show_row)
-        if not show_row:
-            return
-        promo_text = ""
-        combo = getattr(self, "_promotion_type_combo", None)
-        if combo is not None:
-            promo_text = combo.currentText()
-        yc = getattr(self, "_yellow_cart_selector", None)
-        ph = getattr(self, "_promo_placeholder_label", None)
-        if yc:
-            yc.setVisible(promo_text == "购物车推广")
-        if ph:
-            ph.setVisible(promo_text == "团购推广")
-        if promo_text == "购物车推广" and yc:
-            self._refresh_yellow_cart_platform()
-
-    def _apply_privacy_settings_ui(
-        self, cap: Optional[PublishOptionsCapabilities] = None
-    ) -> None:
-        """刷新设置权限行（共用项：未选账号时仍展示）。"""
-        row = getattr(self, "_publish_opts_row_privacy", None)
-        if row is None:
-            return
-        if cap is None:
-            show_row = True
-            show_privacy = True
-            show_download = True
-        else:
-            show_row = cap.show_privacy or cap.show_allow_download
-            show_privacy = cap.show_privacy
-            show_download = cap.show_allow_download
-        row.setVisible(show_row)
-        if getattr(self, "privacy_combo", None):
-            self.privacy_combo.setVisible(show_privacy)
-        if getattr(self, "allow_download_check", None):
-            self.allow_download_check.setVisible(show_download)
-
-    def _apply_publish_options_capabilities(self, cap: PublishOptionsCapabilities) -> None:
-        """在堆叠内容区内按能力显示/隐藏各行控件。"""
-        row_vis = (
-            (getattr(self, "_publish_opts_row_tags", None), cap.show_add_tags),
-            (getattr(self, "_publish_opts_row_music", None), cap.show_music),
-            (getattr(self, "_publish_opts_row_work_declaration", None), cap.show_work_declaration),
-        )
-        for row, show in row_vis:
-            if row is not None:
-                row.setVisible(show)
-        if cap.show_add_tags:
-            self._apply_tag_types_for_capabilities(cap)
-
-    def _apply_shared_publish_settings_ui(
-        self, cap: Optional[PublishOptionsCapabilities] = None
-    ) -> None:
-        """刷新发布设置卡片上的共用行（位置、带货推广、设置权限）。"""
-        self._apply_location_settings_ui(cap)
-        self._apply_promotion_settings_ui(cap)
-        self._apply_privacy_settings_ui(cap)
-        self._apply_douyin_location_promotion_mutex()
-
-    def _refresh_publish_options_ui(self) -> None:
-        """根据所选账号切换发布设置堆叠页与各平台行显隐。"""
-        stack = getattr(self, "_publish_opts_stack", None)
-        if stack is None:
-            return
-        ctx = self._work_declaration_effective_context()
-        cap: Optional[PublishOptionsCapabilities] = None
-        if ctx == "none":
-            if getattr(self, "_publish_opts_prompt_label", None):
-                self._publish_opts_prompt_label.setText("请先选择发布对象")
-            stack.setCurrentIndex(_SINGLE_PO_PAGE_PROMPT)
-        elif ctx == "mixed":
-            stack.setCurrentIndex(_SINGLE_PO_PAGE_MIXED)
-        else:
-            stack.setCurrentIndex(_SINGLE_PO_PAGE_CONTENT)
-            cap = capabilities_for_platform(ctx, is_image_mode=self._is_image_mode)
-            self._apply_publish_options_capabilities(cap)
-        self._apply_shared_publish_settings_ui(cap)
-
     def _refresh_account_dependent_settings_ui(
         self, *, sync_work_declaration_from_storage: bool = True
     ) -> None:
-        """账号变化时刷新发布设置与作品申明。"""
-        self._refresh_publish_options_ui()
+        """账号变化时刷新更多发布设置（sync 参数保留兼容，申明由新卡自行处理）。"""
+        del sync_work_declaration_from_storage
         self._refresh_more_publish_settings_ui()
-        self._refresh_work_declaration_ui(sync_from_storage=sync_work_declaration_from_storage)
 
-    def _compose_privacy_settings_json_for_platform(self, account_platform: str) -> str:
-        """组装 privacy_settings JSON 并按任务平台裁剪申明键。"""
-        from src.domain.publish.work_declaration import (
-            KEY_DOUYIN,
-            KEY_DOUYIN_AUTO,
-            KEY_IS_ORIGINAL,
-            KEY_KUAISHOU,
-            KEY_KUAISHOU_AUTO,
-            KEY_XHS_CONTENT_ATTR,
-            KEY_XHS_CONTENT_ATTR_AUTO,
-            KEY_XHS_ORIGINAL,
-            normalize_douyin_value,
-            normalize_kuaishou_value,
-            normalize_xhs_content_attr,
-            strip_privacy_declaration_keys_for_platform,
-        )
-        privacy = "public"
-        if hasattr(self, "privacy_combo"):
-            p_text = self.privacy_combo.currentText()
-            if "好友" in p_text:
-                privacy = "friend"
-            elif "私密" in p_text:
-                privacy = "private"
-            elif "粉丝" in p_text:
-                privacy = "fans"
+    def _create_schedule_card(self) -> QWidget:
+        """创建「发布时间」独立卡片。"""
+        card = CardWidget(self)
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(_SETTINGS_ROW_GAP)
 
-        allow_dl = True
-        if hasattr(self, "allow_download_check") and self.allow_download_check:
-            allow_dl = self.allow_download_check.isChecked()
+        layout.addWidget(SubtitleLabel("发布时间", card))
 
-        wd = load_persisted_work_declaration()
-        ctx = self._work_declaration_effective_context()
+        schedule_row = QHBoxLayout()
+        schedule_row.setContentsMargins(0, 0, 0, 0)
+        schedule_row.setSpacing(_SETTINGS_H_GAP)
+        schedule_label = BodyLabel("发布时间", card)
+        schedule_label.setFixedWidth(_SETTINGS_LABEL_WIDTH)
+        schedule_content = QVBoxLayout()
+        schedule_content.setContentsMargins(0, 0, 0, 0)
+        schedule_content.setSpacing(0)
+        self._init_schedule_ui(schedule_content, card)
+        schedule_row.addWidget(schedule_label)
+        schedule_row.addLayout(schedule_content, 1)
+        layout.addLayout(schedule_row)
 
-        is_orig = load_persisted_single_declare_original()
-        if ctx == "wechat_video" and hasattr(self, "is_original_check") and self.is_original_check:
-            is_orig = self.is_original_check.isChecked()
-
-        if ctx == "douyin":
-            c = getattr(self, "_wd_dy_combo", None)
-            s = getattr(self, "_wd_dy_auto", None)
-            if c is not None:
-                raw = c.currentData()
-                if raw is None and c.currentIndex() >= 0:
-                    raw = c.itemData(c.currentIndex())
-                wd[KEY_DOUYIN] = normalize_douyin_value(str(raw or "") or None)
-            if s is not None:
-                wd[KEY_DOUYIN_AUTO] = bool(s.isChecked())
-        elif ctx == "kuaishou":
-            c = getattr(self, "_wd_ks_combo", None)
-            s = getattr(self, "_wd_ks_auto", None)
-            if c is not None:
-                raw = c.currentData()
-                if raw is None and c.currentIndex() >= 0:
-                    raw = c.itemData(c.currentIndex())
-                wd[KEY_KUAISHOU] = normalize_kuaishou_value(str(raw or "") or None)
-            if s is not None:
-                wd[KEY_KUAISHOU_AUTO] = bool(s.isChecked())
-        elif ctx == "xiaohongshu":
-            co = getattr(self, "_wd_xhs_combo", None)
-            sw = getattr(self, "_wd_xhs_attr_auto", None)
-            chk = getattr(self, "_wd_xhs_orig", None)
-            if chk is not None:
-                wd[KEY_XHS_ORIGINAL] = bool(chk.isChecked())
-            if sw is not None:
-                wd[KEY_XHS_CONTENT_ATTR_AUTO] = bool(sw.isChecked())
-            if co is not None:
-                raw = co.currentData()
-                if raw is None and co.currentIndex() >= 0:
-                    raw = co.itemData(co.currentIndex())
-                wd[KEY_XHS_CONTENT_ATTR] = normalize_xhs_content_attr(str(raw or "") or None)
-
-        full_ps: Dict[str, Any] = {
-            "privacy": privacy,
-            "allow_download": allow_dl,
-            KEY_IS_ORIGINAL: bool(is_orig),
-            **wd,
-        }
-        raw = json.dumps(full_ps, ensure_ascii=False)
-        plat = (account_platform or "").strip()
-        return strip_privacy_declaration_keys_for_platform(raw, plat)
-
-    def _persist_single_declare_original(self, _state: int = 0) -> None:
-        """用户勾选变更时写入本地，下次启动恢复。"""
-        if not hasattr(self, "is_original_check") or not self.is_original_check:
-            return
-        save_persisted_single_declare_original(self.is_original_check.isChecked())
-
-    def _on_add_topic_clicked(self):
-        """插入话题符号"""
-        self.desc_edit.insertPlainText("#")
-        self.desc_edit.setFocus()
-
-    def _on_add_mention_clicked(self):
-        """插入艾特符号"""
-        self.desc_edit.insertPlainText("@")
-        self.desc_edit.setFocus()
-
-    def _on_tag_type_changed(self, text):
-        """标签类型切换"""
-        tv = getattr(self, "tag_values", None)
-        if tv is not None:
-            if text == "购物车":
-                tv["团购"] = ""
-                tv[_TUAN_PROMOTION_TITLE_TAG_KEY] = ""
-            elif text == "团购":
-                tv["购物车"] = ""
-                tv[_CART_PROMOTION_TITLE_TAG_KEY] = ""
-        # 切换时，输入框显示对应类型的值
-        # 注意: 之前的输入值已经在 textChanged 中保存了
-        val = self.tag_values.get(text, "")
-        self.tag_content_edit.blockSignals(True)
-        self.tag_content_edit.setText(val)
-        self.tag_content_edit.blockSignals(False)
-        self._sync_promotion_title_from_tag_values()
-        self._update_promotion_title_visibility()
-        self._update_tag_content_placeholder()
-
-    def _reset_location_settings_controls(self) -> None:
-        """清空位置设置控件（表单重置时调用）。"""
-        if getattr(self, "location_mode_combo", None):
-            self.location_mode_combo.blockSignals(True)
-            self.location_mode_combo.setCurrentText(LOCATION_MODE_CHECKIN)
-            self.location_mode_combo.blockSignals(False)
-        loc_sel = getattr(self, "_location_selector", None)
-        if loc_sel:
-            loc_sel.apply_record("")
-        if getattr(self, "location_content_edit", None):
-            self.location_content_edit.blockSignals(True)
-            self.location_content_edit.clear()
-            self.location_content_edit.blockSignals(False)
-        if getattr(self, "_wx_empty_loc_opt", None):
-            self._wx_empty_loc_opt.apply_from_db(False)
-        self._apply_shared_publish_settings_ui(None)
-
-    def _reset_promotion_settings_controls(self) -> None:
-        """清空带货推广控件（表单重置时调用）。"""
-        combo = getattr(self, "_promotion_type_combo", None)
-        if combo is not None:
-            combo.blockSignals(True)
-            combo.setCurrentIndex(0)
-            combo.blockSignals(False)
-        yc = getattr(self, "_yellow_cart_selector", None)
-        if yc:
-            yc.apply_record("")
-            yc.setVisible(False)
-        ph = getattr(self, "_promo_placeholder_label", None)
-        if ph:
-            ph.setVisible(False)
-        self._apply_promotion_settings_ui(None)
-
-    def _on_location_content_changed(self, text: str) -> None:
-        if hasattr(self, "tag_values"):
-            self.tag_values["位置"] = text
-        self._refresh_wechat_empty_location_checkbox()
-
-    def _update_location_input_visibility(self) -> None:
-        """位置行内优先展示位置推广库下拉。"""
-        loc_sel = getattr(self, "_location_selector", None)
-        ed = getattr(self, "location_content_edit", None)
-        if loc_sel:
-            loc_sel.setVisible(True)
-        if ed:
-            ed.setVisible(False)
-
-    def _on_location_selector_changed(self, _index: int = 0) -> None:
-        sn = ""
-        loc_sel = getattr(self, "_location_selector", None)
-        if loc_sel:
-            sn = loc_sel.get_selected_short_name()
-        if hasattr(self, "tag_values"):
-            self.tag_values["位置"] = sn
-        if self._selection_includes_douyin() and sn:
-            self._clear_promotion_settings_to_none()
-        self._refresh_wechat_empty_location_checkbox()
-        self._apply_douyin_location_promotion_mutex()
-
-    def _effective_location_short_name(self) -> str:
-        loc_sel = getattr(self, "_location_selector", None)
-        if loc_sel and loc_sel.isVisible():
-            sn = loc_sel.get_selected_short_name()
-            if sn:
-                return sn
-        return (getattr(self, "tag_values", {}) or {}).get("位置", "") or ""
-
-    def _on_tag_content_changed(self, text):
-        """标签内容变更"""
-        current_type = self.tag_type_combo.currentText()
-        self.tag_values[current_type] = text
-
-    def _promotion_title_storage_key(self) -> Optional[str]:
-        t = self.tag_type_combo.currentText()
-        if t == "购物车":
-            return _CART_PROMOTION_TITLE_TAG_KEY
-        if t == "团购":
-            return _TUAN_PROMOTION_TITLE_TAG_KEY
-        return None
-
-    def _sync_promotion_title_from_tag_values(self) -> None:
-        if not hasattr(self, "promotion_title_edit") or not self.promotion_title_edit:
-            return
-        key = self._promotion_title_storage_key()
-        if key is None:
-            return
-        raw = self.tag_values.get(key, "") or ""
-        st = raw[:CART_PROMOTION_TITLE_MAX_LEN]
-        if st != raw:
-            self.tag_values[key] = st
-        self.promotion_title_edit.blockSignals(True)
-        self.promotion_title_edit.setText(st)
-        self.promotion_title_edit.blockSignals(False)
-
-    def _update_promotion_title_visibility(self) -> None:
-        if not hasattr(self, "promotion_title_edit") or not self.promotion_title_edit:
-            return
-        t = self.tag_type_combo.currentText()
-        self.promotion_title_edit.setVisible(t in ("购物车", "团购"))
-
-    def _on_promotion_title_changed(self, text: str) -> None:
-        key = self._promotion_title_storage_key()
-        if key is None:
-            return
-        self.tag_values[key] = text
-
-    def _sync_location_mode_from_tag_values(self) -> None:
-        if not getattr(self, "location_mode_combo", None):
-            return
-        raw = (self.tag_values.get(_LOCATION_MODE_TAG_KEY) or "").strip()
-        mode = raw if raw in LOCATION_MODE_CHOICES else LOCATION_MODE_CHECKIN
-        self.tag_values[_LOCATION_MODE_TAG_KEY] = mode
-        self.location_mode_combo.blockSignals(True)
-        self.location_mode_combo.setCurrentText(mode)
-        self.location_mode_combo.blockSignals(False)
-
-    def _update_location_mode_visibility(self) -> None:
-        if not getattr(self, "location_mode_combo", None):
-            return
-        cap = self._current_publish_options_capabilities()
-        show_mode = bool(cap and cap.show_location_mode)
-        if cap is None:
-            ctx = self._work_declaration_effective_context()
-            if ctx == "douyin":
-                show_mode = True
-        self.location_mode_combo.setVisible(show_mode)
-
-    def _on_location_mode_changed(self, text: str) -> None:
-        if text in LOCATION_MODE_CHOICES:
-            self.tag_values[_LOCATION_MODE_TAG_KEY] = text
-
-    def _update_tag_content_placeholder(self) -> None:
-        if not getattr(self, "tag_content_edit", None):
-            return
-        t = self.tag_type_combo.currentText()
-        if t == "团购":
-            self.tag_content_edit.setPlaceholderText("请输入团购相关信息")
-        elif t == "购物车":
-            self.tag_content_edit.setPlaceholderText("请输入商品链接或分享内容")
-        elif t == "小程序":
-            self.tag_content_edit.setPlaceholderText("请输入小程序路径或说明")
-        else:
-            self.tag_content_edit.setPlaceholderText("请输入对应内容")
-
-    def _refresh_wechat_empty_location_checkbox(self) -> None:
-        """视频号时显示「默认城市定位」（落库字段仍仅视频号步骤使用）。"""
-        opt = getattr(self, "_wx_empty_loc_opt", None)
-        if not opt:
-            return
-        cap = self._current_publish_options_capabilities()
-        show = bool(cap and cap.show_wechat_empty_location)
-        if cap is None:
-            ctx = self._work_declaration_effective_context()
-            show = ctx == "wechat_video"
-        opt.set_row_visible(show)
-        if show:
-            opt.refresh_from_line_text(self._effective_location_short_name())
+        return card
 
     def _init_schedule_ui(self, layout, parent):
         """初始化定时发布UI (立即/定时)"""
@@ -2990,9 +1533,6 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
                     self.account_label.setStyleSheet("margin-left: 10px;")
                 
                 self._update_publish_button_state()
-                self._refresh_wechat_empty_location_checkbox()
-                self._refresh_yellow_cart_platform()
-                self._refresh_location_selector_platform()
                 self._refresh_account_dependent_settings_ui()
                 if (
                     not self._is_image_mode
@@ -3925,82 +2465,26 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             if self._cover_type_is_local():
                 cover_path = getattr(self, 'selected_cover_path', None)
             
-            # 使用 self.tag_values 安全获取扩展字段
-            tv = getattr(self, 'tag_values', {})
-            loc_mode = (tv.get(_LOCATION_MODE_TAG_KEY) or "").strip()
-            if loc_mode not in LOCATION_MODE_CHOICES:
-                loc_mode = ""
-            wx_loc_pick = None
-            loc_sel = getattr(self, "_location_selector", None)
-            loc_short = (
-                loc_sel.get_selected_short_name() if loc_sel else ""
-            ) or (tv.get("位置", "") or "").strip()
-            if loc_short:
-                lm = loc_mode or LOCATION_MODE_CHECKIN
-                poi_info = (
-                    loc_sel.build_poi_info_storage(lm)
-                    if loc_sel
-                    else format_poi_info_storage(loc_short, lm)
-                )
-                wx_loc_pick = False
-            else:
-                poi_info = ""
-                wx_opt = getattr(self, "_wx_empty_loc_opt", None)
-                if wx_opt:
-                    wx_loc_pick = wx_opt.value_for_persist(
-                        tag_is_location=True,
-                        effective_location_empty=True,
-                    )
-            micro_app_info = tv.get("小程序", "")
-            cart_link = tv.get("购物车", "")
-            promotion = tv.get(_CART_PROMOTION_TITLE_TAG_KEY, "")
-            cart_info = _format_cart_info_storage(cart_link, promotion)
-            tuan_main = tv.get("团购", "")
-            tuan_promotion = tv.get(_TUAN_PROMOTION_TITLE_TAG_KEY, "")
-            anchor_info = _format_anchor_info_storage(tuan_main, tuan_promotion)
-
-            # 带货推广优先级高于「添加标签-购物车」手填：有选购物车商品则覆盖 cart_info
-            _promo_type = getattr(self, "_promotion_type_combo", None)
-            _promo_type_text = _promo_type.currentText() if _promo_type else "无"
-            _yc_payload: Optional[Dict[str, Any]] = None
-            if _promo_type_text == "购物车推广":
-                _yc_sel = getattr(self, "_yellow_cart_selector", None)
-                _yc_payload = (
-                    _yc_sel.build_cart_info_dict() if _yc_sel else None
-                )
-                if _yc_payload:
-                    # 含 cart_short_name + cart_short_title；发布时 executor 仅按简称查库注入各平台链接
-                    cart_info = json.dumps(_yc_payload, ensure_ascii=False)
-
-            _tag_t = ""
-            if getattr(self, "tag_type_combo", None):
-                _tag_t = self.tag_type_combo.currentText()
-            cart_info, anchor_info = _resolve_yellow_cart_anchor_exclusive(
-                cart_info,
-                anchor_info,
-                promo_type_text=_promo_type_text,
-                yellow_cart_payload=_yc_payload,
-                tag_type=_tag_t,
-            )
-
             plat = (account.get("platform") or "").strip()
-            privacy_settings = self._compose_privacy_settings_json_for_platform(plat)
-
-            # 音乐配置（仅图文模式）
-            music_info = None
-            if self._is_image_mode:
-                _music_combo = getattr(self, "_music_type_combo", None)
-                _music_name_edit = getattr(self, "_music_name_edit", None)
-                if _music_combo is not None:
-                    _mt = _music_combo.currentText()
-                    if _mt == "随机音乐":
-                        music_info = json.dumps({"music_type": "random"}, ensure_ascii=False)
-                    elif _mt == "指定音乐":
-                        _mn = (_music_name_edit.text().strip() if _music_name_edit else "")
-                        if _mn:
-                            music_info = json.dumps(
-                                {"music_type": "specific", "music_name": _mn}, ensure_ascii=False
-                            )
+            preserve_micro = ""
+            if editing_record_id is not None:
+                preserve_micro = (
+                    getattr(self, "_preserve_micro_app_info", "") or ""
+                ).strip()
+            more_card = getattr(self, "_more_publish_settings_card", None)
+            if more_card is None:
+                raise RuntimeError("更多发布设置卡片未初始化")
+            ext = more_card.build_publish_extension_payload(
+                account_platform=plat,
+                preserve_micro_app_info=preserve_micro,
+            )
+            poi_info = ext.poi_info
+            wx_loc_pick = ext.wechat_empty_location_open_picker
+            micro_app_info = ext.micro_app_info
+            cart_info = ext.cart_info
+            anchor_info = ext.anchor_info
+            privacy_settings = ext.privacy_settings
+            music_info = ext.music_info
 
             ft = "image" if self._is_image_mode else "video"
             orig_status = (
@@ -4040,6 +2524,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
                 self._editing_record_original_status = None
                 self._editing_record_original_task_source = None
                 self._editing_record_original_file_path = None
+                self._preserve_micro_app_info = ""
                 if hasattr(self, "btn_publish") and self.btn_publish:
                     self.btn_publish.setText("添加到发布列表")
 
@@ -4072,17 +2557,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         self._set_cover_type_combo(_COVER_TYPE_FIRST_FRAME)
         if hasattr(self, "cover_path_label") and self.cover_path_label:
             self.cover_path_label.setText("未选择本地封面")
-        if hasattr(self, "tag_values"):
-            self.tag_values = {}
-        if hasattr(self, "tag_type_combo") and hasattr(self, "tag_content_edit"):
-            self.tag_content_edit.setText("")
-        if getattr(self, "promotion_title_edit", None):
-            self.promotion_title_edit.blockSignals(True)
-            self.promotion_title_edit.clear()
-            self.promotion_title_edit.blockSignals(False)
-            self.promotion_title_edit.hide()
-        self._reset_location_settings_controls()
-        self._reset_promotion_settings_controls()
+        self._preserve_micro_app_info = ""
         more_card = getattr(self, "_more_publish_settings_card", None)
         if more_card is not None:
             more_card.reset_to_defaults()
@@ -4092,11 +2567,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             self.btn_publish.setText("添加到发布列表")
         if hasattr(self, "btn_return_to_publish") and self.btn_return_to_publish:
             self.btn_return_to_publish.setVisible(False)
-        if hasattr(self, "allow_download_check") and self.allow_download_check:
-            self.allow_download_check.setChecked(True)
-        self._sync_work_declaration_widgets_from_storage()
         self._refresh_account_dependent_settings_ui()
-        self._reset_music_controls_to_default()
         self._update_publish_button_state()
 
     def _reset_form_to_new_page(self):
@@ -4126,24 +2597,10 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         self._set_cover_type_combo(_COVER_TYPE_FIRST_FRAME)
         if hasattr(self, "cover_path_label") and self.cover_path_label:
             self.cover_path_label.setText("未选择本地封面")
-        if hasattr(self, "tag_values"):
-            self.tag_values = {}
-        if hasattr(self, "tag_type_combo") and hasattr(self, "tag_content_edit"):
-            self.tag_content_edit.setText("")
-            if self.tag_type_combo.currentIndex() != 0:
-                self.tag_type_combo.setCurrentIndex(0)
-        if getattr(self, "promotion_title_edit", None):
-            self.promotion_title_edit.blockSignals(True)
-            self.promotion_title_edit.clear()
-            self.promotion_title_edit.blockSignals(False)
-            self.promotion_title_edit.hide()
-        self._reset_location_settings_controls()
-        self._reset_promotion_settings_controls()
+        self._preserve_micro_app_info = ""
         more_card = getattr(self, "_more_publish_settings_card", None)
         if more_card is not None:
             more_card.reset_to_defaults()
-        if hasattr(self, "privacy_combo") and self.privacy_combo:
-            self.privacy_combo.setCurrentIndex(0)
         if hasattr(self, "radio_now") and self.radio_now:
             self.radio_now.setChecked(True)
         if hasattr(self, "date_picker") and self.date_picker:
@@ -4156,13 +2613,6 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             self.btn_publish.setText("添加到发布列表")
         if hasattr(self, "btn_return_to_publish") and self.btn_return_to_publish:
             self.btn_return_to_publish.setVisible(False)
-        if hasattr(self, "allow_download_check") and self.allow_download_check:
-            self.allow_download_check.setChecked(True)
-        self._sync_work_declaration_widgets_from_storage()
-        if hasattr(self, "is_original_check") and self.is_original_check:
-            self.is_original_check.blockSignals(True)
-            self.is_original_check.setChecked(False)
-            self.is_original_check.blockSignals(False)
         self._refresh_account_dependent_settings_ui(sync_work_declaration_from_storage=False)
         if not self._is_image_mode and getattr(self, "_auto_match_video_switch", None):
             self._auto_match_video_switch.blockSignals(True)
@@ -4189,7 +2639,6 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
                     0,
                     self._schedule_apply_copywriting_from_library,
                 )
-        self._reset_music_controls_to_default()
         self._update_publish_button_state()
 
     def _on_publish_success(self, message: str):
@@ -4261,8 +2710,6 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             # 即使确保内容失败，也尽量继续回填（后续会有 has_attr 保护）
             pass
 
-        _single_wd_applied_from_record = False
-
         # 回填记录中的路径视为手动指定，非本次自动匹配
         self._file_from_auto_library = False
         self._publish_edit_return_route = (edit_return_route or "").strip() or "publish_list_page"
@@ -4286,7 +2733,11 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             self._editing_record_original_file_path = (record.get("file_path") or "").strip()
             if hasattr(self, "btn_publish") and self.btn_publish:
                 self.btn_publish.setText("保存修改")
-        
+
+        self._preserve_micro_app_info = ""
+        if self.editing_record_id is not None:
+            self._preserve_micro_app_info = (record.get("micro_app_info") or "").strip()
+
         # 1. 基础文本（描述用 setPlainText 以便话题高亮逻辑正确解析）
         title = record.get('title', '')
         description = record.get('description', '')
@@ -4355,170 +2806,9 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             # 或者什么都不做，因为当前 UI 没有独立标签输入框
             pass
 
-        # 4b. 位置→poi_info；团购/购物车/小程序→对应字段
-        _tag_value_keys = ("位置", "团购", "购物车", "小程序")
-        if hasattr(self, "tag_values"):
-            self.tag_values = {t: "" for t in _tag_value_keys}
-            p_raw = (record.get("poi_info") or "").strip()
-            _loc_short = parse_location_short_name_from_storage(p_raw)
-            _loc_text, _loc_mode = parse_poi_info_storage(p_raw)
-            if _loc_short:
-                self.tag_values["位置"] = _loc_short
-                loc_sel = getattr(self, "_location_selector", None)
-                if loc_sel:
-                    loc_sel.apply_record(_loc_short)
-            elif _loc_text and not _loc_short:
-                self.tag_values["位置"] = ""
-                from qfluentwidgets import InfoBar, InfoBarPosition
-
-                InfoBar.warning(
-                    title="位置需重新选择",
-                    content="该任务的位置为旧版手填数据，请先在「位置推广」中配置位置后重新选择。",
-                    orient=Qt.Horizontal,
-                    isClosable=True,
-                    duration=6000,
-                    position=InfoBarPosition.TOP,
-                    parent=self,
-                )
-            else:
-                self.tag_values["位置"] = ""
-            self.tag_values[_LOCATION_MODE_TAG_KEY] = (
-                _loc_mode if _loc_mode in LOCATION_MODE_CHOICES else LOCATION_MODE_CHECKIN
-            )
-            self.tag_values["小程序"] = (record.get("micro_app_info") or "").strip()
-            a_raw = (record.get("anchor_info") or "").strip()
-            _tuan_link, _tuan_st = _parse_anchor_info_storage(a_raw)
-            self.tag_values["团购"] = _tuan_link
-            self.tag_values[_TUAN_PROMOTION_TITLE_TAG_KEY] = _tuan_st
-            g_raw = (record.get("cart_info") or "").strip()
-            _cart_link, _cart_st = _parse_cart_info_storage(g_raw)
-            self.tag_values["购物车"] = _cart_link
-            self.tag_values[_CART_PROMOTION_TITLE_TAG_KEY] = _cart_st
-            self._sync_location_mode_from_tag_values()
-            self._update_location_mode_visibility()
-            self._update_location_input_visibility()
-            self._refresh_location_selector_platform()
-            if getattr(self, "_wx_empty_loc_opt", None):
-                raw_wx = record.get("wechat_empty_location_open_picker")
-                self._wx_empty_loc_opt.apply_from_db(
-                    None if raw_wx is None else bool(raw_wx)
-                )
-                self._refresh_wechat_empty_location_checkbox()
-
-            if hasattr(self, "tag_type_combo") and hasattr(self, "tag_content_edit"):
-                _chosen = ALL_TAG_TYPES[0]
-                for _t in ALL_TAG_TYPES:
-                    if _t == "购物车" and (_cart_link or _cart_st):
-                        _chosen = "购物车"
-                        break
-                    if _t == "团购" and (_tuan_link or _tuan_st):
-                        _chosen = "团购"
-                        break
-                    if self.tag_values.get(_t):
-                        _chosen = _t
-                        break
-                self.tag_type_combo.blockSignals(True)
-                if _chosen in [
-                    self.tag_type_combo.itemText(i)
-                    for i in range(self.tag_type_combo.count())
-                ]:
-                    self.tag_type_combo.setCurrentText(_chosen)
-                self.tag_type_combo.blockSignals(False)
-                self.tag_content_edit.blockSignals(True)
-                self.tag_content_edit.setText(
-                    self.tag_values.get(self.tag_type_combo.currentText(), "")
-                )
-                self.tag_content_edit.blockSignals(False)
-                self._sync_promotion_title_from_tag_values()
-                self._update_promotion_title_visibility()
-                self._update_tag_content_placeholder()
-
-        # 4c. 带货推广回填
-        _promo_combo = getattr(self, "_promotion_type_combo", None)
-        _yc_widget = getattr(self, "_yellow_cart_selector", None)
-        if _promo_combo and _yc_widget:
-            g_raw_promo = (record.get("cart_info") or "").strip()
-            _yc_short_name_back = ""
-            if g_raw_promo.startswith("{"):
-                try:
-                    import json as _json_back
-                    _d = _json_back.loads(g_raw_promo)
-                    _yc_short_name_back = (
-                        _d.get("cart_short_name") or _d.get("yellow_cart_short_name") or ""
-                    ).strip()
-                except Exception:
-                    pass
-            if _yc_short_name_back:
-                _promo_combo.blockSignals(True)
-                _promo_combo.setCurrentText("购物车推广")
-                _promo_combo.blockSignals(False)
-                _yc_widget.apply_record(_yc_short_name_back)
-                _yc_widget.setVisible(True)
-                _ph = getattr(self, "_promo_placeholder_label", None)
-                if _ph:
-                    _ph.setVisible(False)
-                self._refresh_yellow_cart_platform()
-            else:
-                _promo_combo.setCurrentIndex(0)
-
-        # 4d. 购物车与团购互斥（与 4b/4c 回填一致）
-        self._normalize_loaded_record_cart_vs_group_buy(record)
-
-        # 4e. 音乐配置回填（仅图文模式）
-        if self._is_image_mode:
-            _music_combo_back = getattr(self, "_music_type_combo", None)
-            _music_name_edit_back = getattr(self, "_music_name_edit", None)
-            if _music_combo_back is not None:
-                _music_raw_back = (record.get("music_info") or "").strip()
-                if _music_raw_back:
-                    try:
-                        import json as _json_music_back
-                        _md = _json_music_back.loads(_music_raw_back)
-                        _mt_back = (_md.get("music_type") or "").strip()
-                        _mn_back = (_md.get("music_name") or "").strip()
-                        if _mt_back == "random":
-                            _music_combo_back.blockSignals(True)
-                            _music_combo_back.setCurrentText("随机音乐")
-                            _music_combo_back.blockSignals(False)
-                            if _music_name_edit_back:
-                                _music_name_edit_back.hide()
-                        elif _mt_back == "specific":
-                            _music_combo_back.blockSignals(True)
-                            _music_combo_back.setCurrentText("指定音乐")
-                            _music_combo_back.blockSignals(False)
-                            if _music_name_edit_back:
-                                _music_name_edit_back.setText(_mn_back)
-                                _music_name_edit_back.setVisible(True)
-                    except Exception:
-                        pass
-                else:
-                    _music_combo_back.blockSignals(True)
-                    _music_combo_back.setCurrentText("不选音乐")
-                    _music_combo_back.blockSignals(False)
-                    if _music_name_edit_back:
-                        _music_name_edit_back.hide()
-
-        # 5. 回填权限与选项 (隐私, 允许下载, 作品申明各平台键)
-        privacy_settings_str = record.get('privacy_settings', '{}')
-        if privacy_settings_str:
-            try:
-                ps = json.loads(privacy_settings_str)
-                if isinstance(ps, dict):
-                    privacy = ps.get("privacy", "public")
-                    allow_dl = ps.get("allow_download", True)
-                    if hasattr(self, 'privacy_combo'):
-                        idx = 0
-                        if privacy == "friend":
-                            idx = 1
-                        elif privacy == "private":
-                            idx = 2
-                        self.privacy_combo.setCurrentIndex(idx)
-                    if hasattr(self, 'allow_download_check'):
-                        self.allow_download_check.setChecked(allow_dl)
-                    self._apply_work_declaration_from_privacy_dict(ps)
-                    _single_wd_applied_from_record = True
-            except Exception as e:
-                logger.error(f"解析 privacy_settings 失败: {e}")
+        more_card = getattr(self, "_more_publish_settings_card", None)
+        if more_card is not None:
+            more_card.apply_from_publish_record(record, parent=self)
 
         # 6. 定时发布：有 scheduled_publish_time 则选中「定时」并回填时间。
         # 必须 blockSignals：否则 radio_schedule.setChecked 会触发 _on_schedule_mode_toggled，
@@ -4620,7 +2910,4 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             self._copywriting_auto_switch.blockSignals(False)
 
         self._update_publish_button_state()
-        if _single_wd_applied_from_record:
-            self._refresh_account_dependent_settings_ui(sync_work_declaration_from_storage=False)
-        else:
-            self._refresh_account_dependent_settings_ui(sync_work_declaration_from_storage=True)
+        self._refresh_account_dependent_settings_ui(sync_work_declaration_from_storage=False)
