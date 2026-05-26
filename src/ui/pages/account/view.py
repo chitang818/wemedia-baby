@@ -1020,11 +1020,22 @@ class AccountPage(BasePage):
         return self._account_controller.refresh(silent=silent)
 
     def _on_refresh_legacy(self, silent: bool = False):
-        """刷新账号列表（验证Cookie有效性）"""
+        """刷新账号列表（验证Cookie有效性）；有筛选时仅验证当前可见账号。"""
         if not self.account_manager:
             return
         self._refresh_silent_mode = bool(silent)
-        # 使用服务层的新接口，验证所有账号
+        if (
+            hasattr(self, "account_table_widget")
+            and self.account_table_widget
+            and self.account_table_widget.is_filter_active()
+        ):
+            visible = self.account_table_widget.get_visible_records()
+            if not visible:
+                if not silent:
+                    self._show_warning("当前筛选条件下没有可刷新的账号")
+                return
+            self.validator_service.verify_accounts(visible, silent=silent)
+            return
         self.validator_service.start_verify_all(silent=silent)
 
     def _on_verification_started(self, total):

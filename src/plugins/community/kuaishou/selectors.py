@@ -174,6 +174,29 @@ class Selectors:
             "[class*='_description_']",
             "div[placeholder*='作品描述']",
         ],
+        # 作品描述 # 触发的话题下拉（须在 _edit-desc-container_ 内，勿用全局 role=listbox 以免误判 Ant Select）
+        "TOPIC_DROPDOWN": [
+            "[class*='_edit-desc-container_'] [class*='_dropdown-container_']",
+            "[class*='_edit-desc-container_'] [class*='_desc-dropdown_']",
+        ],
+        "TOPIC_SUGGESTION": [
+            "[class*='_edit-desc-container_'] [class*='_topic-item_']",
+            "[class*='_desc-dropdown_'] [class*='_topic-item_']",
+        ],
+        "TOPIC_SUGGESTION_ACTIVE": [
+            "[class*='_edit-desc-container_'] [class*='_topic-item_'][class*='_active_']",
+            "[class*='_desc-dropdown_'] [class*='_topic-item_'][class*='_active_']",
+        ],
+        # 已收成话题：诊断页 CSS 为 .at-tag-item（蓝色 #385080），纯文本 # 不算
+        "TOPIC_CHIP": [
+            "#work-description-edit .at-tag-item",
+            "[class*='_edit-desc-container_'] .at-tag-item",
+        ],
+        "TOPIC_AI_BUTTON": [
+            "#ai-bar-container :text('智能话题')",
+            "[class*='_ai-button-icon-topic']",
+            "[id='ai-bar-container'] [id='ai-button']:has([class*='icon-topic'])",
+        ],
         # DOM 对照表 §11：发布逻辑在底部栏「主色 div」上；div.publish-button 可能只是可见外壳，须优先点 _button-primary_
         "SUBMIT_BTN": [
             "[class*='_edit-section-btns_'] [class*='_button-primary_']:has-text('发布')",
@@ -288,7 +311,31 @@ class Selectors:
     }
 
     # ==========================================
-    # 7. 作者服务（步骤6）
+    # 7. 作品申明 / 作者声明（步骤8）
+    # ==========================================
+    # 作者声明 Ant Design Select（OpenClaw DOM 20260526）
+    WORK_DECLARATION = {
+        "LABEL_TEXT": "作者声明",
+        "PLACEHOLDER": "为作品添加补充说明",
+        "COMBOBOX_BY_LABEL": [
+            'label:has-text("作者声明")',
+        ],
+        "DROPDOWN_VISIBLE": [
+            ".ant-select-dropdown:not(.ant-select-dropdown-hidden)",
+        ],
+        "LISTBOX": [
+            '[role="listbox"]',
+        ],
+        "SELECTION_ITEM": [
+            ".ant-select-selection-item",
+        ],
+        "OPTION_BY_LABEL_ATTR": [
+            '[role="option"][label="{text}"]',
+        ],
+    }
+
+    # ==========================================
+    # 8. 作者服务（步骤6）
     # ==========================================
     AUTHOR_SERVICE = {
         # 作者服务区域中「选择服务类型」下拉触发器

@@ -2,10 +2,13 @@
 """「更多发布设置」卡片布局常量（与单条页旧「发布设置」视觉对齐，独立维护便于日后删旧卡）。"""
 
 LABEL_WIDTH = 72
-ROW_GAP = 14
+# 行间距、行高：略收紧以在卡片内紧凑展示（仍与 ComboBox 单行对齐）
+ROW_GAP = 8
 H_GAP = 10
 # 左栏每一设置行统一最小高度（与 ComboBox 单行对齐）
-SHARED_ROW_MIN_HEIGHT = 32
+SHARED_ROW_MIN_HEIGHT = 28
+# 卡片内边距（左, 上, 右, 下）
+CARD_CONTENT_MARGINS = (16, 10, 16, 10)
 # 左右分栏：各占一半（默认窗口与最大化时 stretch 均为 1:1）
 SPLIT_LEFT_STRETCH = 1
 SPLIT_RIGHT_STRETCH = 1
@@ -41,8 +44,6 @@ RIGHT_COLUMN_TITLE = "平台特殊设置"
 RIGHT_SECTION_ORIGINAL_TITLE = "原创声明"
 RIGHT_SECTION_WORK_TITLE = "作品申明"
 RIGHT_SECTION_TITLE_STYLE = "font-weight: 600;"
-# 申明分区标题行前额外间距（与位置扩展区等分隔）
-SECTION_EXTRA_GAP = 8
 
 # 混平台账号组：左栏申明提示（实际操作在右栏）
 MIXED_GROUP_WD_LEFT_HINT = "请在右侧设置"

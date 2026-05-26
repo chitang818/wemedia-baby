@@ -13,6 +13,7 @@ from src.services.account.cookie_manager import (
     CookieManager,
     COOKIE_FILENAME,
     _ENCRYPTED_PREFIX,
+    flat_cookies_have_session,
 )
 
 
@@ -148,3 +149,76 @@ class TestCookieManager:
         manager = CookieManager()
         assert manager.delete_cookie("u", "douyin", "profile_abc123")
         assert not os.path.exists(str(cookies_file))
+
+
+class TestMergeStorageState:
+    """merge_storage_state_into_flat_cookies 防复活会话测试"""
+
+    def test_flat_cookies_have_session_kuaishou(self):
+        assert flat_cookies_have_session(
+            {"userId": "1", "kuaishou.web.cp.api_st": "x"}, "kuaishou"
+        )
+        assert not flat_cookies_have_session({"userId": "1"}, "kuaishou")
+        assert not flat_cookies_have_session({}, "kuaishou")
+
+    def test_skips_merge_when_cookies_json_newer(self, tmp_account_dir):
+        account_dir, _ = tmp_account_dir
+        browser_dir = account_dir / "browser"
+        browser_dir.mkdir(parents=True, exist_ok=True)
+        cookies_file = account_dir / COOKIE_FILENAME
+        state_file = browser_dir / "storage_state.json"
+        with open(cookies_file, "w", encoding="utf-8") as f:
+            json.dump({"did": "only"}, f)
+        with open(state_file, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "cookies": [
+                        {"name": "userId", "value": "stale"},
+                        {"name": "kuaishou.web.cp.api_st", "value": "stale"},
+                    ]
+                },
+                f,
+            )
+        import time
+        os.utime(cookies_file, (time.time() + 10, time.time() + 10))
+
+        manager = CookieManager()
+        merged = manager.merge_storage_state_into_flat_cookies(
+            "test_user",
+            "kuaishou",
+            "profile_abc123",
+            {"did": "only"},
+        )
+        assert merged == {"did": "only"}
+        assert "userId" not in merged
+
+    def test_does_not_resurrect_session_without_flat_session(self, tmp_account_dir):
+        account_dir, _ = tmp_account_dir
+        browser_dir = account_dir / "browser"
+        browser_dir.mkdir(parents=True, exist_ok=True)
+        state_file = browser_dir / "storage_state.json"
+        with open(state_file, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "cookies": [
+                        {"name": "userId", "value": "stale"},
+                        {"name": "kuaishou.web.cp.api_st", "value": "stale"},
+                        {"name": "did", "value": "device"},
+                    ]
+                },
+                f,
+            )
+        import time
+        past = time.time() - 100
+        os.utime(state_file, (past, past))
+
+        manager = CookieManager()
+        merged = manager.merge_storage_state_into_flat_cookies(
+            "test_user",
+            "kuaishou",
+            "profile_abc123",
+            {},
+        )
+        assert "userId" not in merged
+        assert "kuaishou.web.cp.api_st" not in merged
+        assert merged.get("did") == "device"

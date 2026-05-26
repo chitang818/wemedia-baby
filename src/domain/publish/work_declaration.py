@@ -59,7 +59,7 @@ def douyin_declaration_trigger_label_hints() -> Tuple[str, ...]:
     """发布页识别自主声明入口按钮：各枚举已选态展示文案（与占位符并列用于匹配入口 button）。"""
     return tuple(dict.fromkeys(v for _, v in DOUYIN_CHOICES))
 
-# 快手（界面文案以产品为准；部分为历史需求字面）
+# 快手（与 cp.kuaishou.com 发布页作者声明下拉一致，见 DOM 分析报告 20260526）
 KUAISHOU_AI = "ai_generated"
 KUAISHOU_FICTION = "fiction_disclaimer"
 KUAISHOU_PERSONAL = "personal_opinion"
@@ -67,10 +67,32 @@ KUAISHOU_MATERIAL = "material_from_web"
 
 KUAISHOU_CHOICES: Tuple[Tuple[str, str], ...] = (
     (KUAISHOU_AI, "内容为AI生成"),
-    (KUAISHOU_FICTION, "演绎情节仅供参考"),
-    (KUAISHOU_PERSONAL, "个人观点经供参考"),
+    (KUAISHOU_FICTION, "演绎情节，仅供娱乐"),
+    (KUAISHOU_PERSONAL, "个人观点，仅供参考"),
     (KUAISHOU_MATERIAL, "素材来源于网络"),
 )
+
+KUAISHOU_DECLARATION_PLACEHOLDER = "为作品添加补充说明"
+
+KUAISHOU_DECLARATION_OPTIONS: Tuple[str, ...] = tuple(
+    label for _, label in KUAISHOU_CHOICES
+)
+
+# 历史错误展示文案 / 旧版配置 → 枚举 key（读库兼容）
+_KUAISHOU_LEGACY_LABEL_TO_KEY: Dict[str, str] = {
+    "个人观点经供参考": KUAISHOU_PERSONAL,
+    "个人观点仅供参考": KUAISHOU_PERSONAL,
+    "演绎情节仅供参考": KUAISHOU_FICTION,
+    "演绎情节，仅供娱乐": KUAISHOU_FICTION,
+    "内容为 AI 生成": KUAISHOU_AI,
+}
+
+# 自动化点击兜底：仅历史/变体文案，canonical 以 KUAISHOU_CHOICES 为准
+KUAISHOU_UI_CLICK_ALTERNATES: Dict[str, Tuple[str, ...]] = {
+    KUAISHOU_PERSONAL: ("个人观点经供参考",),
+    KUAISHOU_FICTION: ("演绎情节仅供参考",),
+    KUAISHOU_AI: ("内容为 AI 生成",),
+}
 
 _DOUYIN_LABEL = {k: v for k, v in DOUYIN_CHOICES}
 _KS_LABEL = {k: v for k, v in KUAISHOU_CHOICES}
@@ -144,6 +166,22 @@ def label_for_kuaishou_value(value: Optional[str]) -> str:
     return _KS_LABEL[value]
 
 
+def kuaishou_declaration_click_texts(value: Optional[str]) -> Tuple[str, ...]:
+    """快手作品申明：点击选项时依次尝试的文案（canonical + KUAISHOU_UI_CLICK_ALTERNATES）。"""
+    key = normalize_kuaishou_value(value)
+    primary = label_for_kuaishou_value(value)
+    if not primary:
+        return ()
+    extras = KUAISHOU_UI_CLICK_ALTERNATES.get(key, ())
+    ordered: List[str] = []
+    seen = set()
+    for t in (primary,) + tuple(extras):
+        if t and t not in seen:
+            seen.add(t)
+            ordered.append(t)
+    return tuple(ordered)
+
+
 def normalize_douyin_value(value: Optional[str]) -> str:
     if value and value in _DOUYIN_LABEL:
         return value
@@ -153,6 +191,10 @@ def normalize_douyin_value(value: Optional[str]) -> str:
 def normalize_kuaishou_value(value: Optional[str]) -> str:
     if value and value in _KS_LABEL:
         return value
+    if value:
+        key = _KUAISHOU_LEGACY_LABEL_TO_KEY.get(str(value).strip())
+        if key and key in _KS_LABEL:
+            return key
     return DEFAULT_KUAISHOU_VALUE
 
 

@@ -1569,9 +1569,23 @@ class UndetectedBrowserManager:
     async def save_state(self) -> bool:
         """将当前 Context 导出为 storage_state.json，供关闭后与账号库 cookies.json 同步等流程使用。"""
         if not self.context:
-            logger.warning("无法保存状态：Context 不存在")
+            logger.debug("无法保存状态：Context 不存在")
             return False
-        
+        try:
+            _ = self.context.pages
+        except Exception as e:
+            err = str(e).lower()
+            if (
+                "has been closed" in err
+                or ("target page" in err and "closed" in err)
+                or "context or browser has been closed" in err
+            ):
+                logger.debug(
+                    "无法保存状态：Context 已关闭 account=%s", self.account_id
+                )
+                return False
+            raise
+
         return await self.profile_manager.save_storage_state(self.context)
     
     async def close(self):

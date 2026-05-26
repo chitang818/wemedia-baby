@@ -97,7 +97,8 @@ class PublishDiagnosticDialog(AppMessageBoxBase):
         path_edit.setReadOnly(True)
         path_edit.setText(format_elided_diagnostic_path(self._diagnostic_path))
         path_edit.setToolTip(self._diagnostic_path)
-        path_edit.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        if hasattr(path_edit, "setTextElideMode"):
+            path_edit.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.viewLayout.addWidget(path_edit)
 
         self.viewLayout.addSpacing(8)

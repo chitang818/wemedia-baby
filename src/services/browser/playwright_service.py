@@ -26,7 +26,21 @@ logger = logging.getLogger(__name__)
 def _is_playwright_target_closed_error(exc: BaseException) -> bool:
     """浏览器/页面已关闭时 Playwright 抛出的错误，属于预期竞态，不应当作未处理异常刷屏。"""
     m = str(exc).lower()
-    return "target page" in m and "closed" in m or "context or browser has been closed" in m
+    return (
+        ("target page" in m and "closed" in m)
+        or "context or browser has been closed" in m
+    )
+
+
+def _browser_context_usable(context: Any) -> bool:
+    """手动关窗回调时 context 可能已关闭，调用 Playwright API 前先做探测。"""
+    if context is None:
+        return False
+    try:
+        _ = context.pages
+        return True
+    except Exception as e:
+        return not _is_playwright_target_closed_error(e)
 
 
 class PlaywrightBrowserService(QObject):
@@ -873,10 +887,22 @@ class PlaywrightBrowserService(QObject):
         logger.info("检测到浏览器已手动关闭: account_id=%s, username=%s, platform=%s, reason=%s",
                     account_id, username, platform, reason)
 
-        # 0) 在仍能从 _active_browsers 拿到 context 时，尽力同步 Cookie/昵称/状态（手动关窗不走 close_browser 的 _sync_before_close）
+        # 0) context 仍可用时同步（close 事件触发后 context 常已关闭，需先探测再调 Playwright API）
         if account_id.isdigit() and self.account_manager:
             browser_wrapper = self._active_browsers.get(account_id)
-            if browser_wrapper and getattr(browser_wrapper, "context", None):
+            ctx = getattr(browser_wrapper, "context", None) if browser_wrapper else None
+            if browser_wrapper and ctx and _browser_context_usable(ctx):
+                try:
+                    if hasattr(browser_wrapper, "service") and hasattr(
+                        browser_wrapper.service, "save_state"
+                    ):
+                        await browser_wrapper.service.save_state()
+                        logger.debug(
+                            "手动关窗已导出 storage_state: account_id=%s", account_id
+                        )
+                except Exception as e:
+                    if not _is_playwright_target_closed_error(e):
+                        logger.debug("手动关窗导出 storage_state 失败(可忽略): %s", e)
                 try:
                     account = await self.account_manager.get_account_by_id(int(account_id))
                     if account:
@@ -887,7 +913,13 @@ class PlaywrightBrowserService(QObject):
                             silent=True,
                         )
                 except Exception as e:
-                    logger.debug("手动关窗前同步账号信息失败(可忽略): %s", e)
+                    if not _is_playwright_target_closed_error(e):
+                        logger.debug("手动关窗前同步账号信息失败(可忽略): %s", e)
+            elif browser_wrapper and ctx:
+                logger.debug(
+                    "手动关窗: context 已关闭，跳过 storage_state 与浏览器内同步 account_id=%s",
+                    account_id,
+                )
 
         # 1) 终止静默更新任务与早期 Cookie 同步（手动关窗不会走 close_browser）
         self._cancel_early_cookie_tasks(account_id)

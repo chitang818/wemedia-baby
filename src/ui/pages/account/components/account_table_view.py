@@ -45,6 +45,9 @@ class AccountFilterProxyModel(QSortFilterProxyModel):
         self._platform = platform or "all"
         self.invalidateFilter()
 
+    def is_filter_active(self) -> bool:
+        return bool(self._keyword) or self._platform != "all"
+
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
         model = self.sourceModel()
         if model is None:
@@ -698,6 +701,19 @@ class AccountTableViewWidget(QWidget):
 
     def filter_accounts(self, keyword: str = "", platform: str = "all") -> None:
         self._proxy.set_filter(keyword, platform)
+
+    def is_filter_active(self) -> bool:
+        return self._proxy.is_filter_active()
+
+    def get_visible_records(self) -> List[Dict[str, Any]]:
+        """返回当前筛选条件下表格可见行的账号记录。"""
+        records: List[Dict[str, Any]] = []
+        proxy = self._proxy
+        for row in range(proxy.rowCount()):
+            rec = self.table.record_at_view_row(row)
+            if rec:
+                records.append(dict(rec))
+        return records
 
     def update_account_status(self, account_id: int, new_status: str, error_msg: str = "") -> None:
         updates: Dict[str, Any] = {"login_status": new_status}

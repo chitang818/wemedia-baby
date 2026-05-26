@@ -19,6 +19,49 @@ COOKIE_FILENAME = "cookies.json"
 _COOKIE_KEY_NAME = "cookie_store_key"
 _ENCRYPTED_PREFIX = b"FERNET:"
 
+# 各平台会话 Cookie 名（用于 merge 时避免从过期的 storage_state 复活登录态）
+_PLATFORM_SESSION_COOKIE_NAMES: Dict[str, frozenset] = {
+    "kuaishou": frozenset({
+        "userId",
+        "bUserId",
+        "kuaishou.web.cp.api_st",
+        "kuaishou.web.cp.api_ph",
+    }),
+    "douyin": frozenset({
+        "sessionid",
+        "sessionid_ss",
+        "sid_tt",
+        "uid_tt",
+        "sid_guard",
+    }),
+}
+
+
+def _session_cookie_names_for_platform(platform: str) -> frozenset:
+    names = _PLATFORM_SESSION_COOKIE_NAMES.get(platform or "")
+    if names:
+        return names
+    return frozenset({
+        "sessionid",
+        "session_id",
+        "token",
+        "auth_token",
+        "access_token",
+        "userId",
+        "sid",
+    })
+
+
+def flat_cookies_have_session(flat_cookies: Dict[str, Any], platform: str) -> bool:
+    """扁平 Cookie 是否仍含该平台会话关键字段（用于判断是否允许从 storage_state 补全会话项）。"""
+    names = _session_cookie_names_for_platform(platform)
+    keys = set(flat_cookies or {})
+    if platform == "kuaishou":
+        has_user = "userId" in keys
+        has_token = "kuaishou.web.cp.api_st" in keys or "kuaishou.web.cp.api_ph" in keys
+        return has_user and has_token
+    return bool(keys & names)
+
 
 def normalize_to_flat_cookie_dict(data: Any) -> Dict[str, str]:
     """将 cookies.json 常见形态（扁平 dict、Playwright 列表、含 cookies 数组的 dict）转为 name->value。"""
@@ -249,6 +292,10 @@ class CookieManager:
 
         持久化 Chromium Profile 里可能仍有完整登录态，而 cookies.json 只是某次导出的子集；
         「刷新登录状态」仅读 cookies.json 做 HTTP 校验时会误判离线，故校验前合并 Playwright 快照。
+
+        约束（避免浏览器内退出后误判在线）：
+        - cookies.json 比 storage_state.json 新时，以 cookies.json 为准，不再合并；
+        - cookies.json 已无会话 Cookie 时，不从 storage_state 补全会话类 Cookie。
         """
         merged: Dict[str, str] = {}
         for k, v in (flat_cookies or {}).items():
@@ -263,9 +310,26 @@ class CookieManager:
         except ValueError:
             return merged
 
+        cookies_path = account_dir / COOKIE_FILENAME
         state_path = account_dir / "browser" / "storage_state.json"
         if not state_path.is_file():
             return merged
+
+        if cookies_path.is_file():
+            try:
+                cookie_mtime = cookies_path.stat().st_mtime
+                state_mtime = state_path.stat().st_mtime
+                if cookie_mtime >= state_mtime:
+                    logger.debug(
+                        "HTTP 校验跳过 storage_state 合并: cookies.json 不早于快照 (%s)",
+                        state_path,
+                    )
+                    return merged
+            except OSError:
+                pass
+
+        allow_session_merge = flat_cookies_have_session(merged, platform)
+        session_names = _session_cookie_names_for_platform(platform)
 
         try:
             with open(state_path, "r", encoding="utf-8") as f:
@@ -279,11 +343,15 @@ class CookieManager:
             return merged
 
         added = 0
+        skipped_session = 0
         for c in cookies:
             if not isinstance(c, dict):
                 continue
             name = c.get("name")
             if not name or name in merged:
+                continue
+            if not allow_session_merge and name in session_names:
+                skipped_session += 1
                 continue
             val = c.get("value")
             if val is None:
@@ -293,6 +361,11 @@ class CookieManager:
 
         if added:
             logger.debug("HTTP 校验合并 storage_state: 补充 %s 个 Cookie (%s)", added, state_path)
+        if skipped_session:
+            logger.debug(
+                "HTTP 校验跳过 storage_state 中 %s 个会话 Cookie（cookies.json 已无会话）",
+                skipped_session,
+            )
 
         return merged
 

@@ -89,7 +89,17 @@ class ProfileManager:
             logger.info(f"凭证已保存: {self.storage_state_path}")
             return True
         except Exception as e:
-            logger.error(f"保存凭证失败: {e}", exc_info=True)
+            err = str(e).lower()
+            if (
+                "has been closed" in err
+                or ("target page" in err and "closed" in err)
+                or "context or browser has been closed" in err
+            ):
+                logger.debug(
+                    "保存凭证跳过: 浏览器上下文已关闭 (%s)", self.storage_state_path
+                )
+                return False
+            logger.error("保存凭证失败: %s", e, exc_info=True)
             return False
     
     def get_storage_state_path(self) -> Optional[str]:

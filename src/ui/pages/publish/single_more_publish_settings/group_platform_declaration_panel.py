@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Set
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QSpacerItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 
 from qfluentwidgets import BodyLabel, CheckBox, ComboBox
 
@@ -50,7 +50,6 @@ from .constants import (
     RIGHT_SECTION_WORK_TITLE,
     ROW_GAP,
     RIGHT_WORK_DECL_COMBO_WIDTH,
-    SECTION_EXTRA_GAP,
     SHARED_ROW_MIN_HEIGHT,
 )
 
@@ -110,7 +109,7 @@ class GroupPlatformDeclarationPanel(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(0)
+        self._layout.setSpacing(ROW_GAP)
         self.hide()
 
     def has_content(self, platform_ids: Set[str]) -> bool:
@@ -410,10 +409,6 @@ class GroupPlatformDeclarationPanel(QWidget):
         self._blocks.clear()
 
         if self._original_ids:
-            if self._work_ids:
-                self._layout.addItem(
-                    QSpacerItem(0, SECTION_EXTRA_GAP, QSizePolicy.Policy.Minimum)
-                )
             section_o = QWidget(self)
             lo = QVBoxLayout(section_o)
             lo.setContentsMargins(0, 0, 0, 0)
@@ -424,9 +419,6 @@ class GroupPlatformDeclarationPanel(QWidget):
             self._layout.addWidget(section_o)
 
         if self._work_ids:
-            self._layout.addItem(
-                QSpacerItem(0, SECTION_EXTRA_GAP, QSizePolicy.Policy.Minimum)
-            )
             section_w = QWidget(self)
             lw = QVBoxLayout(section_w)
             lw.setContentsMargins(0, 0, 0, 0)

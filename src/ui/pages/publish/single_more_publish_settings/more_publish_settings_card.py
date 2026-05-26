@@ -40,6 +40,7 @@ from src.ui.publish.promotion import CartSelectorWidget
 from .declaration_settings_panel import DeclarationSettingsPanel
 from .group_platform_declaration_panel import GroupPlatformDeclarationPanel
 from .constants import (
+    CARD_CONTENT_MARGINS,
     SHARED_LEFT_COMBO_WIDTH,
     H_GAP,
     LABEL_WIDTH,
@@ -86,7 +87,7 @@ class MorePublishSettingsCard(CardWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 12, 16, 12)
+        root.setContentsMargins(*CARD_CONTENT_MARGINS)
         root.setSpacing(ROW_GAP)
 
         root.addWidget(self._build_title_row())

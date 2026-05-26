@@ -12,6 +12,7 @@
 from typing import Dict, Optional
 import json
 import logging
+import re
 
 from src.plugins.core.interfaces.login_plugin import LoginPluginInterface, LoginResult
 from .scripts import LOGIN_DETECTION_SCRIPT
@@ -24,6 +25,9 @@ _SESSION_COOKIES = {
     "kuaishou.web.cp.api_st",
     "kuaishou.web.cp.api_ph",
 }
+
+# 创作者中心鉴权接口（result==1 表示会话有效，社区实践与扫码登录流程一致）
+_AUTHORITY_ACCOUNT_API = "https://cp.kuaishou.com/rest/pc/authority/account/current"
 
 
 class KuaishouLoginPlugin(LoginPluginInterface):
@@ -203,22 +207,66 @@ class KuaishouLoginPlugin(LoginPluginInterface):
     # ------------------------------------------------------------------
     # HTTP Cookie 验证（verify_account_status 使用基类默认实现）
     # ------------------------------------------------------------------
-    async def verify_cookie_http(
-        self, session, cookies: Dict[str, str], user_agent: Optional[str] = None
-    ) -> LoginResult:
-        """通过 HTTP 请求验证快手 Cookie 有效性。
 
-        访问 cp.kuaishou.com/profile，检测是否被重定向到登录页，或者返回了包含未登录特征的页面。
-        """
-        # 前置判断：如果必备的身份标识都不存在，直接拦截
-        if "userId" not in cookies or ("kuaishou.web.cp.api_st" not in cookies and "kuaishou.web.cp.api_ph" not in cookies):
-            return LoginResult(
-                success=False,
-                error_message="缺失关键会话 Cookie（userId 或 api_st/ph）",
+    @staticmethod
+    def _kuaishou_url_indicates_logout(url: str) -> bool:
+        u = (url or "").lower()
+        return any(
+            token in u
+            for token in (
+                "passport.kuaishou.com",
+                "/login",
+                "/signin",
+                "/rest/infra/logout",
             )
+        )
 
+    @staticmethod
+    def _kuaishou_html_indicates_logout(html: str) -> bool:
+        if not html:
+            return True
+        if "扫码登录" in html or "立即登录" in html:
+            return True
+        if "passport.kuaishou.com/pc/account/login" in html:
+            return True
+        return False
+
+    @staticmethod
+    def _kuaishou_extract_nickname_from_html(html: str) -> Optional[str]:
+        if not html:
+            return None
+        for pattern in (
+            r'"nickname"\s*:\s*"([^"\\]{1,30})"',
+            r'"userName"\s*:\s*"([^"\\]{1,30})"',
+            r'"name"\s*:\s*"([^"\\]{1,30})"',
+        ):
+            m = re.search(pattern, html)
+            if m:
+                nick = m.group(1).strip()
+                if nick and "登录" not in nick:
+                    return nick
+        return None
+
+    @staticmethod
+    def _kuaishou_html_indicates_logged_in(html: str) -> bool:
+        if not html:
+            return False
+        if KuaishouLoginPlugin._kuaishou_html_indicates_logout(html):
+            return False
+        if re.search(r'"userId"\s*:\s*"?[0-9]+', html):
+            return True
+        if re.search(r'"loggedIn"\s*:\s*true', html, re.IGNORECASE):
+            return True
+        if re.search(r"kuaishou\.web\.cp\.api_st", html):
+            return True
+        return False
+
+    @staticmethod
+    def _build_verify_headers(
+        cookies: Dict[str, str], user_agent: Optional[str] = None
+    ) -> Dict[str, str]:
         cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
-        headers = {
+        return {
             "User-Agent": user_agent
             or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Cookie": cookie_str,
@@ -228,37 +276,164 @@ class KuaishouLoginPlugin(LoginPluginInterface):
             "Accept-Encoding": "gzip, deflate",
         }
 
+    @classmethod
+    def _nickname_from_authority_payload(cls, data: dict) -> Optional[str]:
+        blocks = [data]
+        for key in ("data", "user", "userInfo", "account", "userProfile"):
+            block = data.get(key)
+            if isinstance(block, dict):
+                blocks.append(block)
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            for nk in ("userName", "nickname", "name", "userNickName", "user_name"):
+                val = block.get(nk)
+                if isinstance(val, str) and val.strip() and "登录" not in val:
+                    return val.strip()
+        return None
+
+    async def _verify_via_authority_api(
+        self,
+        session,
+        cookies: Dict[str, str],
+        headers: Dict[str, str],
+    ) -> Optional[LoginResult]:
+        """POST 创作者鉴权 API；明确返回在线/离线，None 表示需走 profile 兜底。"""
+        payload: Dict[str, str] = {}
+        if cookies.get("kuaishou.web.cp.api_ph"):
+            payload["kuaishou.web.cp.api_ph"] = cookies["kuaishou.web.cp.api_ph"]
+        if cookies.get("kuaishou.web.cp.api_st"):
+            payload["kuaishou.web.cp.api_st"] = cookies["kuaishou.web.cp.api_st"]
+        if not payload:
+            return LoginResult(
+                success=False,
+                error_message="缺失关键会话 Cookie（api_st/ph）",
+            )
+
+        api_headers = {
+            **headers,
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+        }
         try:
-            async with session.get(
-                "https://cp.kuaishou.com/profile",
-                headers=headers,
+            async with session.post(
+                _AUTHORITY_ACCOUNT_API,
+                headers=api_headers,
+                json=payload,
                 timeout=10,
                 allow_redirects=False,
             ) as response:
-                if response.status == 302:
-                    location = response.headers.get("Location", "")
-                    if "login" in location.lower() or "passport" in location.lower():
-                        return LoginResult(
-                            success=False,
-                            error_message="Cookie 已失效（重定向到登录页）",
-                        )
-                    return LoginResult(success=True)
+                if response.status not in (200, 201):
+                    logger.debug(
+                        "[%s] 鉴权 API HTTP %s", self.platform_name, response.status
+                    )
+                    return None
+                try:
+                    data = await response.json()
+                except Exception as e:
+                    logger.debug("[%s] 鉴权 API 非 JSON: %s", self.platform_name, e)
+                    return None
+                if not isinstance(data, dict):
+                    return None
 
-                if response.status == 200:
-                    text = await response.text()
-                    # 快手由于未登录也返回200，但页面包含了登录提示，进行拦截
-                    if "立即登录" in text and "passport.kuaishou.com" in text:
-                        return LoginResult(
-                            success=False,
-                            error_message="Cookie 已失效（检测到登录要求特征页面）",
-                        )
-                    # 保守判定为成功
-                    return LoginResult(success=True)
+                result = data.get("result")
+                if result == 1:
+                    nickname = self._nickname_from_authority_payload(data)
+                    logger.info(
+                        "[%s] HTTP 鉴权验证通过: authority/account/current",
+                        self.platform_name,
+                    )
+                    return LoginResult(success=True, nickname=nickname)
 
+                err = (
+                    data.get("message")
+                    or data.get("error_msg")
+                    or data.get("errMsg")
+                    or f"result={result}"
+                )
+                return LoginResult(
+                    success=False,
+                    error_message=f"Cookie 已失效（鉴权 API: {err}）",
+                )
+        except Exception as e:
+            logger.debug("[%s] 鉴权 API 请求异常: %s", self.platform_name, e)
+            return None
+
+    async def _verify_via_profile_page(
+        self,
+        session,
+        headers: Dict[str, str],
+    ) -> LoginResult:
+        """profile 页兜底：拦截登录页；创作者域且无登录文案时视为在线（兼容 SPA 空壳 HTML）。"""
+        profile_headers = {
+            **headers,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+        async with session.get(
+            "https://cp.kuaishou.com/profile",
+            headers=profile_headers,
+            timeout=10,
+            allow_redirects=True,
+            max_redirects=8,
+        ) as response:
+            final_url = str(response.url)
+            if response.status in (401, 403):
+                return LoginResult(
+                    success=False,
+                    error_message=f"Cookie 已失效（HTTP {response.status}）",
+                )
+            if self._kuaishou_url_indicates_logout(final_url):
+                return LoginResult(
+                    success=False,
+                    error_message="Cookie 已失效（已跳转登录页）",
+                )
+            if response.status not in (200, 201):
                 return LoginResult(
                     success=False,
                     error_message=f"HTTP 验证失败: 状态码 {response.status}",
                 )
+
+            text = await response.text()
+            if self._kuaishou_html_indicates_logout(text):
+                return LoginResult(
+                    success=False,
+                    error_message="Cookie 已失效（检测到登录要求特征页面）",
+                )
+            if self._kuaishou_html_indicates_logged_in(text):
+                nickname = self._kuaishou_extract_nickname_from_html(text)
+                return LoginResult(success=True, nickname=nickname)
+            if "cp.kuaishou.com" in final_url.lower():
+                logger.debug(
+                    "[%s] profile 页为 SPA 壳且无登录文案，结合会话 Cookie 判为在线",
+                    self.platform_name,
+                )
+                return LoginResult(success=True, nickname=None)
+            return LoginResult(
+                success=False,
+                error_message="Cookie 已失效（未进入创作者中心）",
+            )
+
+    async def verify_cookie_http(
+        self, session, cookies: Dict[str, str], user_agent: Optional[str] = None
+    ) -> LoginResult:
+        """通过 HTTP 验证快手 Cookie：优先鉴权 API，其次 profile 页兜底。"""
+        if "userId" not in cookies or (
+            "kuaishou.web.cp.api_st" not in cookies
+            and "kuaishou.web.cp.api_ph" not in cookies
+        ):
+            return LoginResult(
+                success=False,
+                error_message="缺失关键会话 Cookie（userId 或 api_st/ph）",
+            )
+
+        headers = self._build_verify_headers(cookies, user_agent)
+
+        api_result = await self._verify_via_authority_api(session, cookies, headers)
+        if api_result is not None:
+            return api_result
+
+        try:
+            return await self._verify_via_profile_page(session, headers)
         except Exception as e:
             logger.warning(f"[{self.platform_name}] HTTP Cookie 验证异常: {e}")
             return LoginResult(
