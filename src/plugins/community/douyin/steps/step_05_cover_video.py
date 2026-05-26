@@ -285,7 +285,7 @@ class CoverVideoStep(BasePublishStep):
         return False
 
     async def _dismiss_vertical_cover_promo_if_present(self, page: Page) -> bool:
-        """若出现「设置竖封面获更多流量」推荐弹窗：优先关闭/暂不设置（不切换竖封面），避免挡横封面流程；否则再点「设置竖封面」。"""
+        """若出现「设置竖封面获更多流量」推荐弹窗：优先点击「设置竖封面」清除上层遮挡。"""
         for sel in (Selectors.PUBLISH.get("COVER_VERTICAL_PROMO_MODAL") or []):
             try:
                 group = page.locator(sel)
@@ -304,7 +304,38 @@ class CoverVideoStep(BasePublishStep):
                         except Exception:
                             continue
 
-                        # 优先：右上角关闭（与横封面推广弹窗一致）
+                        # 优先：按业务要求点击「设置竖封面」，让上层引导弹窗先退出
+                        try:
+                            v_btn = modal.get_by_role("button", name="设置竖封面").first
+                            if await v_btn.count() > 0 and await v_btn.is_visible():
+                                await v_btn.click()
+                                logger.info("已点击「设置竖封面」处理「设置竖封面获更多流量」弹窗")
+                                USER_LOG.info("[步骤5/9 视频封面] 已处理「设置竖封面获更多流量」弹窗（点击设置竖封面）")
+                                await self._wait_locator_hidden(page, modal)
+                                return True
+                        except Exception:
+                            pass
+
+                        for btn_sel in (Selectors.PUBLISH.get("COVER_VERTICAL_PROMO_BTN") or []):
+                            try:
+                                if ">>" in btn_sel:
+                                    parts = [p.strip() for p in btn_sel.split(">>")]
+                                    btn = modal
+                                    for part in parts[1:]:
+                                        btn = btn.locator(part)
+                                    btn = btn.first
+                                else:
+                                    btn = modal.locator(btn_sel).first
+                                if await btn.count() > 0 and await btn.is_visible():
+                                    await btn.click()
+                                    logger.info("已点击「设置竖封面」关闭推荐弹窗（selector=%s）", btn_sel)
+                                    USER_LOG.info("[步骤5/9 视频封面] 已处理「设置竖封面获更多流量」弹窗（点击设置竖封面）")
+                                    await self._wait_locator_hidden(page, modal)
+                                    return True
+                            except Exception:
+                                continue
+
+                        # 兜底：右上角关闭（与横封面推广弹窗一致）
                         try:
                             close_btn = modal.get_by_label("关闭").first
                             if await close_btn.count() > 0 and await close_btn.is_visible():
@@ -338,36 +369,6 @@ class CoverVideoStep(BasePublishStep):
                         except Exception:
                             pass
 
-                        # 最后兜底：点击「设置竖封面」进入竖封面（旧行为，仍可关闭推广层）
-                        try:
-                            v_btn = modal.get_by_role("button", name="设置竖封面").first
-                            if await v_btn.count() > 0 and await v_btn.is_visible():
-                                await v_btn.click()
-                                logger.info("已点击「设置竖封面」处理「设置竖封面获更多流量」弹窗")
-                                USER_LOG.info("[步骤5/9 视频封面] 已处理「设置竖封面获更多流量」弹窗（点击设置竖封面）")
-                                await self._wait_locator_hidden(page, modal)
-                                return True
-                        except Exception:
-                            pass
-
-                        for btn_sel in (Selectors.PUBLISH.get("COVER_VERTICAL_PROMO_BTN") or []):
-                            try:
-                                if ">>" in btn_sel:
-                                    parts = [p.strip() for p in btn_sel.split(">>")]
-                                    btn = modal
-                                    for part in parts[1:]:
-                                        btn = btn.locator(part)
-                                    btn = btn.first
-                                else:
-                                    btn = modal.locator(btn_sel).first
-                                if await btn.count() > 0 and await btn.is_visible():
-                                    await btn.click()
-                                    logger.info("已点击「设置竖封面」关闭推荐弹窗（selector=%s）", btn_sel)
-                                    USER_LOG.info("[步骤5/9 视频封面] 已处理「设置竖封面获更多流量」弹窗（点击设置竖封面）")
-                                    await self._wait_locator_hidden(page, modal)
-                                    return True
-                            except Exception:
-                                continue
                     except Exception:
                         continue
             except Exception:
@@ -464,7 +465,7 @@ class CoverVideoStep(BasePublishStep):
         logger.info("封面弹窗已打开（视频），按配置执行: %s", cover_type)
         USER_LOG.info("[步骤5/9 视频封面] ▶ 弹窗已打开，选择并确认")
 
-        # 有几率先出现「设置竖封面获更多流量」推荐弹窗：优先关闭/暂不设置，避免挡后续横封面流程
+        # 有几率先出现「设置竖封面获更多流量」推荐弹窗：优先点击「设置竖封面」消除遮挡
         await self._dismiss_vertical_cover_promo_if_present(page)
         # 有的账号会弹出「设置横封面获更多流量」弹窗遮挡操作，先尝试关闭
         await self._dismiss_horizontal_cover_traffic_promo_if_present(page)
