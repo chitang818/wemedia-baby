@@ -477,8 +477,15 @@ class MainWindow(FluentWindow):
         try:
             from src.infrastructure.common.material_library_manager import MaterialLibraryManager
 
-            if MaterialLibraryManager.get_root_base_dir() is not None:
+            base_dir, source = MaterialLibraryManager.get_root_base_dir_with_source()
+            if base_dir is not None:
+                logger.info(
+                    "启动媒体库检查：已配置 (source=%s, base=%s)",
+                    source,
+                    base_dir,
+                )
                 return
+            logger.info("启动媒体库检查：未配置 (source=%s)", source)
             from src.ui.utils.fluent_dialogs import show_confirm
 
             content = (

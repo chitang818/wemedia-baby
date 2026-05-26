@@ -5,8 +5,8 @@
 能力矩阵（视频默认可选图文音乐）：
 - douyin：完整添加标签、带货推广、权限、作品申明；图文额外音乐
 - kuaishou：仅作品申明
-- xiaohongshu：位置标签、权限、作品申明
-- wechat_video：位置 + 默认城市定位、作品申明（原创）
+- xiaohongshu：位置设置、权限、作品申明
+- wechat_video：位置设置 + 默认城市定位、作品申明（原创）
 - 其他平台：无可编辑项（作品申明堆叠内另有「暂不支持」提示）
 """
 from __future__ import annotations
@@ -14,8 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
-ALL_TAG_TYPES: Tuple[str, ...] = ("位置", "团购", "购物车", "小程序")
-LOCATION_ONLY_TAG_TYPES: Tuple[str, ...] = ("位置",)
+ALL_TAG_TYPES: Tuple[str, ...] = ("团购", "购物车", "小程序")
 
 
 @dataclass(frozen=True)
@@ -24,6 +23,7 @@ class PublishOptionsCapabilities:
 
     show_add_tags: bool = False
     tag_types: Tuple[str, ...] = ()
+    show_location: bool = False
     show_location_mode: bool = False
     show_wechat_empty_location: bool = False
     show_promotion: bool = False
@@ -45,6 +45,7 @@ def capabilities_for_platform(
         return PublishOptionsCapabilities(
             show_add_tags=True,
             tag_types=ALL_TAG_TYPES,
+            show_location=True,
             show_location_mode=True,
             show_promotion=True,
             show_music=is_image_mode,
@@ -60,8 +61,7 @@ def capabilities_for_platform(
 
     if p == "xiaohongshu":
         return PublishOptionsCapabilities(
-            show_add_tags=True,
-            tag_types=LOCATION_ONLY_TAG_TYPES,
+            show_location=True,
             show_privacy=True,
             show_allow_download=True,
             show_work_declaration=True,
@@ -69,8 +69,7 @@ def capabilities_for_platform(
 
     if p == "wechat_video":
         return PublishOptionsCapabilities(
-            show_add_tags=True,
-            tag_types=LOCATION_ONLY_TAG_TYPES,
+            show_location=True,
             show_wechat_empty_location=True,
             show_work_declaration=True,
         )

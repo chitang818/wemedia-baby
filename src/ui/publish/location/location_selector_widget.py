@@ -9,7 +9,7 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QWidget, QHBoxLayout
 
 from qfluentwidgets import ComboBox, BodyLabel
@@ -29,6 +29,8 @@ _PLACEHOLDER = "（未选择）"
 
 class LocationSelectorWidget(QWidget):
     """位置推广选择行：[位置简称 ComboBox] [平台搜索词只读标签]"""
+
+    selection_changed = Signal()
 
     def __init__(
         self, parent: Optional[QWidget] = None, *, initial_short_name: str = ""
@@ -105,6 +107,11 @@ class LocationSelectorWidget(QWidget):
     def short_name_from_poi_info(poi_info_raw: str) -> str:
         return parse_location_short_name_from_storage(poi_info_raw or "")
 
+    def set_combo_fixed_width(self, width: int) -> None:
+        """固定位置简称下拉宽度（如「更多发布设置」左栏与其它下拉对齐）。"""
+        w = max(1, int(width))
+        self._combo.setFixedWidth(w)
+
     def set_platform(self, platform: str) -> None:
         self._platform = (platform or "").strip()
         self._refresh_value_label()
@@ -159,6 +166,7 @@ class LocationSelectorWidget(QWidget):
 
     def _on_selection_changed(self, _index: int) -> None:
         self._refresh_value_label()
+        self.selection_changed.emit()
 
     def _refresh_value_label(self) -> None:
         short_name = self.get_selected_short_name()

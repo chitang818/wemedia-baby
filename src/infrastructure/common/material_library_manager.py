@@ -398,23 +398,55 @@ class MaterialLibraryManager:
     # ---------------- 配置读写 ----------------
 
     @classmethod
+    def _parse_base_dir_from_raw(cls, raw_path: str) -> Optional[Path]:
+        """将配置中的路径字符串解析为 Path；空值或无效值返回 None。"""
+        raw = (raw_path or "").strip()
+        if not raw:
+            return None
+        try:
+            return Path(raw).expanduser()
+        except Exception as e:
+            logger.warning("解析媒体库基础路径失败: %s (value=%r)", e, raw)
+            return None
+
+    @classmethod
+    def get_root_base_dir_with_source(cls) -> tuple[Optional[Path], str]:
+        """获取媒体库基础目录及来源（memory/disk/none/invalid）。"""
+        config_center = cls._get_config_center()
+        app_config = config_center.get_app_config()
+        raw_memory = str(app_config.get(cls.APP_CONFIG_FIELD) or "")
+        path_from_memory = cls._parse_base_dir_from_raw(raw_memory)
+        if path_from_memory is not None:
+            return path_from_memory, "memory"
+
+        # 启动早期偶发内存配置尚未就绪时，回退读取磁盘 app_config.json，避免误判未配置。
+        try:
+            from src.infrastructure.common.config.app_config_merge import (
+                read_app_config_from_disk_sync,
+            )
+
+            disk_cfg = read_app_config_from_disk_sync()
+            raw_disk = str((disk_cfg or {}).get(cls.APP_CONFIG_FIELD) or "")
+            path_from_disk = cls._parse_base_dir_from_raw(raw_disk)
+            if path_from_disk is not None:
+                logger.info("媒体库路径从磁盘回退读取成功: %s", path_from_disk)
+                return path_from_disk, "disk"
+        except Exception as e:
+            logger.debug("媒体库路径磁盘回退读取失败: %s", e)
+
+        if raw_memory.strip():
+            return None, "invalid"
+        return None, "none"
+
+    @classmethod
     def get_root_base_dir(cls) -> Optional[Path]:
         """获取用户配置的媒体库“基础目录”（未附带 `媒小宝媒体库` 子目录）。
 
         Returns:
             Path 或 None：当尚未配置或配置为空/无效时返回 None。
         """
-        config_center = cls._get_config_center()
-        app_config = config_center.get_app_config()
-        raw_path = (app_config.get(cls.APP_CONFIG_FIELD) or "").strip()
-        if not raw_path:
-            return None
-        try:
-            path = Path(raw_path).expanduser()
-            return path
-        except Exception as e:
-            logger.warning("解析媒体库基础路径失败: %s (value=%r)", e, raw_path)
-            return None
+        path, _ = cls.get_root_base_dir_with_source()
+        return path
 
     @classmethod
     def get_root_dir(cls) -> Optional[Path]:
