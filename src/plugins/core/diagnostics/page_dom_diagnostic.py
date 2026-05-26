@@ -106,6 +106,12 @@ def load_page_diagnostics_config() -> PageDiagnosticsConfig:
         return PageDiagnosticsConfig()
 
 
+# platform_id -> async capture extras(module_path attribute)
+_PLATFORM_EXTRA_CAPTURE: dict[str, str] = {
+    "xiaohongshu": "capture_xiaohongshu_extras",
+}
+
+
 class PageDomDiagnosticPlugin:
     """Create a self-contained local page diagnostic bundle."""
 
@@ -152,6 +158,16 @@ class PageDomDiagnosticPlugin:
             if isinstance(raw_context, Mapping):
                 diag_context = dict(raw_context)
 
+        platform_extra = await self._run_platform_extras(
+            platform,
+            page,
+            bundle_dir,
+            metadata,
+            step_name=step_name,
+            reason=reason,
+            page_url=page_url,
+        )
+
         meta = {
             "platform": platform,
             "step_name": step_name,
@@ -164,6 +180,10 @@ class PageDomDiagnosticPlugin:
             "file_name": Path(str(diag_context.get("file_path") or "")).name,
             "app_version": self._read_app_version(),
         }
+        if diag_context.get("xhs_publish_snapshot"):
+            meta["xhs_publish_snapshot"] = diag_context.get("xhs_publish_snapshot")
+        if platform_extra:
+            meta.update(platform_extra)
         await self._write_json(bundle_dir / "metadata.json", meta)
 
         logger.info("Saved publish diagnostic bundle: %s", bundle_dir)
@@ -174,8 +194,8 @@ class PageDomDiagnosticPlugin:
         day_dir = platform_dir / now.strftime("%Y%m%d")
         bundle_name = (
             f"{now.strftime('%H%M%S_%f')[:13]}_"
-            f"{_safe_filename(step_name, 'step', 50)}_"
-            f"{_safe_filename(reason, 'reason', 60)}"
+            f"{_safe_filename(step_name, 'step', 30)}_"
+            f"{_hash_text(reason)[:8]}"
         )
         bundle_dir = day_dir / bundle_name
         bundle_dir.mkdir(parents=True, exist_ok=True)
@@ -264,6 +284,7 @@ class PageDomDiagnosticPlugin:
                     return {index, src: frame.src || '', accessible: false, error: String(e)};
                 }
             });
+            const xhsHosts = document.querySelectorAll('xhs-publish-btn').length;
             return {
                 url: location.href,
                 title: document.title,
@@ -272,6 +293,10 @@ class PageDomDiagnosticPlugin:
                 activeElement: document.activeElement ? brief(document.activeElement, 'activeElement') : null,
                 visibleInteractiveElements: elements,
                 iframes: frames,
+                xhsPublishHostCount: xhsHosts,
+                closedShadowNote: xhsHosts > 0
+                    ? 'xhs-publish-btn uses closed Shadow; inner buttons are in xhs_publish_snapshot.json when platform extras run.'
+                    : '',
             };
         }
         """
@@ -279,6 +304,38 @@ class PageDomDiagnosticPlugin:
             return _redact_json(await page.evaluate(script))
         except Exception as exc:
             return {"error": str(exc), "url": self._safe_page_attr(page, "url")}
+
+    async def _run_platform_extras(
+        self,
+        platform: str,
+        page: Page,
+        bundle_dir: Path,
+        metadata: Optional[Mapping[str, Any]],
+        *,
+        step_name: str,
+        reason: str,
+        page_url: str,
+    ) -> dict[str, Any]:
+        fn_name = _PLATFORM_EXTRA_CAPTURE.get((platform or "").strip().lower())
+        if not fn_name:
+            return {}
+        try:
+            if fn_name == "capture_xiaohongshu_extras":
+                from src.plugins.pro.xiaohongshu.publish_failure_diagnostics import (
+                    capture_xiaohongshu_extras,
+                )
+
+                return await capture_xiaohongshu_extras(
+                    page,
+                    bundle_dir,
+                    metadata,
+                    step_name=step_name,
+                    reason=reason,
+                    page_url=page_url,
+                )
+        except Exception as exc:
+            logger.warning("platform diagnostic extras failed (%s): %s", platform, exc)
+        return {}
 
     async def _capture_selector_probes(self, page: Page, probes: Mapping[str, Any]) -> dict[str, Any]:
         out: dict[str, Any] = {}

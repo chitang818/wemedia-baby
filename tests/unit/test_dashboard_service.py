@@ -13,6 +13,11 @@ from src.services.workspace.dashboard_service import (
     DashboardService,
     build_account_statistics,
 )
+from src.utils.date_utils import (
+    compute_publish_reminder_days,
+    format_publish_reminder_text,
+    is_latest_publish_overdue,
+)
 from src.services.workspace.dashboard_snapshot import DashboardSnapshot
 from src.services.workspace.dashboard_stats_cache import DashboardStatsCache
 
@@ -210,7 +215,10 @@ async def test_get_account_publish_reminders_includes_offline_accounts():
     assert rows[0]["account_name"] == "在线号"
     assert rows[1]["is_online"] is False
     assert rows[1]["account_name"] == "视频号A"
-    assert rows[1]["reminder_text"] == "账号离线"
+    assert rows[1]["reminder_text"] == format_publish_reminder_text(
+        compute_publish_reminder_days("2026-05-18")
+    )
+    assert rows[1]["is_overdue"] == is_latest_publish_overdue("2026-05-18")
     repo.get_latest_publish_display_time_by_account_ids.assert_awaited_once()
     called_ids = set(repo.get_latest_publish_display_time_by_account_ids.await_args.args[0])
     assert called_ids == {1, 2}

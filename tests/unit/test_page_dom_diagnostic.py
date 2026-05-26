@@ -102,6 +102,27 @@ async def test_capture_writes_diagnostic_bundle():
 
 
 @pytest.mark.asyncio
+async def test_capture_bundle_dir_uses_reason_hash_not_full_reason():
+    long_reason = "发布后未能确认成功：未检测到发布成功提示或页面跳转，请手动检查"
+    plugin = PageDomDiagnosticPlugin(PageDiagnosticsConfig(max_html_bytes=100_000))
+
+    result = await plugin.capture(
+        FakePage(),
+        platform="xiaohongshu",
+        step_name="SubmitStep",
+        reason=long_reason,
+    )
+
+    assert result is not None
+    bundle = Path(result.path)
+    assert long_reason not in bundle.name
+    assert "SubmitStep" in bundle.name
+
+    metadata = json.loads((bundle / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["reason"] == long_reason
+
+
+@pytest.mark.asyncio
 async def test_capture_truncates_large_html():
     plugin = PageDomDiagnosticPlugin(PageDiagnosticsConfig(max_html_bytes=20))
 
@@ -129,3 +150,65 @@ def test_redact_sensitive_text_masks_common_assignments():
     assert "secret123" not in redacted
     assert "sid=abc" not in redacted
     assert redacted.count("***REDACTED***") >= 3
+
+
+@pytest.mark.asyncio
+async def test_capture_xiaohongshu_writes_platform_extras(monkeypatch):
+    async def _fake_platform_extras(
+        self,
+        platform: str,
+        page,
+        bundle_dir: Path,
+        metadata,
+        *,
+        step_name: str,
+        reason: str,
+        page_url: str,
+    ):
+        if platform != "xiaohongshu":
+            return {}
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        (bundle_dir / "xhs_publish_snapshot.json").write_text(
+            json.dumps({"hostCount": 1}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        (bundle_dir / "xhs_publish_probe.json").write_text(
+            json.dumps({"srAccessMethod": "_sr"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        (bundle_dir / "platform_analysis.json").write_text(
+            json.dumps({"hints": ["测试提示"]}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return {
+            "xhs_host_count": 1,
+            "xhs_sr_access_method": "_sr",
+            "xhs_analysis_hints": ["测试提示"],
+        }
+
+    monkeypatch.setattr(
+        PageDomDiagnosticPlugin,
+        "_run_platform_extras",
+        _fake_platform_extras,
+    )
+    plugin = PageDomDiagnosticPlugin(PageDiagnosticsConfig(max_html_bytes=100_000))
+
+    result = await plugin.capture(
+        FakePage(),
+        platform="xiaohongshu",
+        step_name="SubmitStep",
+        reason="submit-disabled timeout",
+        metadata={"_diagnostic_context": {"xhs_publish_snapshot": {"host_count": 1}}},
+    )
+
+    assert result is not None
+    bundle = Path(result.path)
+    assert (bundle / "xhs_publish_snapshot.json").is_file()
+    assert (bundle / "xhs_publish_probe.json").is_file()
+    assert (bundle / "platform_analysis.json").is_file()
+
+    metadata = json.loads((bundle / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata.get("xhs_host_count") == 1
+    assert metadata.get("xhs_sr_access_method") == "_sr"
+    assert metadata.get("xhs_publish_snapshot") == {"host_count": 1}
+    assert (bundle / "dom_snapshot.json").is_file()

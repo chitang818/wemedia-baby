@@ -1,6 +1,6 @@
 # 小红书步骤运行器 — 继承通用 GenericStepRunner
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Set, Tuple
 
 from src.plugins.core.step_runner import GenericStepRunner, BaseRunnerConfig
 
@@ -28,6 +28,26 @@ MAIN_PHASES: List[Tuple[str, ...]] = [
     ("SubmitStep",),
 ]
 
+# 同一张发布编辑页内连续子步骤：跳过 0.5~3s 步骤间等待，改为约 80ms 停顿
+_SKIP_STEP_INTERVAL_EDGES: Set[Tuple[str, str]] = {
+    ("CoverSettingStep", "MetadataFillStep"),
+    ("MetadataFillStep", "OriginalDeclarationStep"),
+    ("OriginalDeclarationStep", "WorkDeclarationStep"),
+    ("WorkDeclarationStep", "LocationStep"),
+    ("LocationStep", "PublishSettingsStep"),
+}
+
+# 发布编辑页内步骤无需步骤前随机浏览
+_SKIP_BROWSE_STEPS: Set[str] = {
+    "CoverSettingStep",
+    "MetadataFillStep",
+    "OriginalDeclarationStep",
+    "WorkDeclarationStep",
+    "LocationStep",
+    "PublishSettingsStep",
+    "SubmitStep",
+}
+
 
 @dataclass
 class RunnerConfig(BaseRunnerConfig):
@@ -37,3 +57,13 @@ class RunnerConfig(BaseRunnerConfig):
 class StepRunner(GenericStepRunner):
     MAIN_PHASES = MAIN_PHASES
     STEP_DISPLAY_NAMES = STEP_DISPLAY_NAMES
+
+    def _should_skip_browse(self, step_name: str) -> bool:
+        return step_name in _SKIP_BROWSE_STEPS
+
+    def _should_skip_step_interval(
+        self, completed_step: str, next_step: Optional[str],
+    ) -> bool:
+        if not next_step:
+            return False
+        return (completed_step, next_step) in _SKIP_STEP_INTERVAL_EDGES

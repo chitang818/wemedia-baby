@@ -31,15 +31,19 @@ _DIALOG_FEATURE_TEXTS: Sequence[str] = (
     "获得原创笔记标记",
     "我已阅读并同意",
 )
-_DIALOG_WAIT_MS = 10_000
-_DIALOG_POLL_MS = 250
-_DIALOG_CLOSE_WAIT_MS = 8_000
-_POST_CLICK_SETTLE_MS = 300
+_DIALOG_WAIT_MS = 5_000
+_DIALOG_POLL_MS = 150
+_DIALOG_CLOSE_WAIT_MS = 4_000
+_DIALOG_AFTER_ENABLE_WAIT_MS = 3_000
+_POST_CLICK_SETTLE_MS = 150
 _SWITCH_CLICK_MAX_ATTEMPTS = 3
-_SWITCH_RESPONSE_WAIT_MS = 2_500
+_SWITCH_RESPONSE_WAIT_MS = 1_500
+_CONFIRM_ENABLE_POLL_MS = 100
+_CONFIRM_ENABLE_MAX_MS = 2_500
+_SCROLL_SETTLE_MS = 180
 
 
-async def _scroll_locator_to_center(page: Page, locator: Locator, *, wait_ms: int = 350) -> None:
+async def _scroll_locator_to_center(page: Page, locator: Locator, *, wait_ms: int = _SCROLL_SETTLE_MS) -> None:
     """将元素滚到视口中部（比 scroll_into_view_if_needed 更适合长页表单）。"""
     try:
         handle = await locator.element_handle()
@@ -118,7 +122,7 @@ class OriginalDeclarationStep(BasePublishStep):
             USER_LOG.warning("%s ✗ %s", prefix, msg)
             return PublishResult(success=False, error_message=msg, failed_step=self._FAILED_STEP)
 
-        await page.wait_for_timeout(300)
+        await page.wait_for_timeout(150)
 
         if want_checked:
             if not await self._verify_original_enabled(page, checkbox):
@@ -443,54 +447,134 @@ class OriginalDeclarationStep(BasePublishStep):
             pass
         return True
 
+    async def _click_agreement_in_dialog(
+        self,
+        page: Page,
+        agreement: Locator,
+        metadata: Dict[str, Any],
+        config: Dict[str, Any],
+    ) -> bool:
+        from src.infrastructure.anti_risk.human_like import human_click
+
+        try:
+            clicked = await page.evaluate(
+                """() => {
+                    const texts = ['我已阅读并同意'];
+                    const roots = document.querySelectorAll(
+                        'div[role="dialog"], div.d-modal, div.d-modal-wrapper'
+                    );
+                    const tryClick = (root) => {
+                        const all = root.querySelectorAll(
+                            'input[type="checkbox"], label, span, div'
+                        );
+                        for (const el of all) {
+                            const tx = (el.innerText || el.textContent || '').trim();
+                            if (!texts.some((t) => tx.includes(t))) continue;
+                            const box = el.matches('input[type="checkbox"]')
+                                ? el
+                                : el.querySelector('input[type="checkbox"]');
+                            if (box && !box.checked) {
+                                box.click();
+                                return true;
+                            }
+                            if (!box && tx.includes('我已阅读并同意')) {
+                                el.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    };
+                    for (const r of roots) {
+                        if (tryClick(r)) return true;
+                    }
+                    return tryClick(document.body);
+                }"""
+            )
+            if clicked:
+                await page.wait_for_timeout(120)
+                return True
+        except Exception as e:
+            logger.debug("evaluate 勾选协议失败: %s", e)
+
+        try:
+            await _scroll_locator_to_center(page, agreement, wait_ms=100)
+            if await self._mouse_click_locator_center(page, agreement):
+                await page.wait_for_timeout(120)
+                return True
+            await human_click(
+                page,
+                agreement,
+                metadata,
+                config,
+                use_operation_delay=False,
+            )
+            await page.wait_for_timeout(120)
+            return True
+        except Exception as e:
+            logger.debug("点击协议区域失败: %s", e)
+            return False
+
+    async def _wait_confirm_button_enabled(
+        self,
+        page: Page,
+        confirm: Locator,
+        metadata: Dict[str, Any],
+        config: Dict[str, Any],
+    ) -> bool:
+        from src.infrastructure.anti_risk.human_like import human_click
+
+        elapsed = 0
+        while elapsed < _CONFIRM_ENABLE_MAX_MS:
+            if await self._is_confirm_button_enabled(confirm):
+                return True
+            agreement = await self._find_agreement_target(page)
+            if agreement is not None:
+                await self._click_agreement_in_dialog(page, agreement, metadata, config)
+            await page.wait_for_timeout(_CONFIRM_ENABLE_POLL_MS)
+            elapsed += _CONFIRM_ENABLE_POLL_MS
+            confirm = await self._find_confirm_button(page)
+            if confirm is None:
+                return False
+        return await self._is_confirm_button_enabled(confirm)
+
     async def _complete_original_dialog(
         self,
         page: Page,
         metadata: Dict[str, Any],
         config: Dict[str, Any],
     ) -> bool:
-        from src.infrastructure.anti_risk.human_like import human_click
-
         agreement = await self._find_agreement_target(page)
         if agreement is None:
             logger.warning("小红书原创声明：弹窗内未找到协议勾选区域")
             return False
 
-        try:
-            await _scroll_locator_to_center(page, agreement, wait_ms=150)
-            await human_click(page, agreement, metadata, config)
-            await page.wait_for_timeout(300)
-            USER_LOG.info(
-                "%s ▶ 已勾选「我已阅读并同意」",
-                self._step_prefix(metadata, "原创声明"),
-            )
-        except Exception as e:
-            logger.warning("小红书原创声明：勾选协议失败: %s", e)
+        if not await self._click_agreement_in_dialog(page, agreement, metadata, config):
+            logger.warning("小红书原创声明：勾选协议失败")
             return False
+        USER_LOG.info(
+            "%s ▶ 已勾选「我已阅读并同意」",
+            self._step_prefix(metadata, "原创声明"),
+        )
 
         confirm = await self._find_confirm_button(page)
         if confirm is None:
             logger.warning("小红书原创声明：弹窗内未找到「声明原创」按钮")
             return False
 
-        for attempt in range(3):
-            if await self._is_confirm_button_enabled(confirm):
-                break
-            agreement = await self._find_agreement_target(page)
-            if agreement is not None:
-                try:
-                    await human_click(page, agreement, metadata, config)
-                    await page.wait_for_timeout(250)
-                except Exception:
-                    pass
-            await page.wait_for_timeout(300)
-        else:
+        if not await self._wait_confirm_button_enabled(page, confirm, metadata, config):
             logger.warning("小红书原创声明：「声明原创」按钮仍不可用")
             return False
 
         try:
-            await _scroll_locator_to_center(page, confirm, wait_ms=150)
-            await human_click(page, confirm, metadata, config)
+            await _scroll_locator_to_center(page, confirm, wait_ms=100)
+            if not await self._mouse_click_locator_center(page, confirm):
+                await human_click(
+                    page,
+                    confirm,
+                    metadata,
+                    config,
+                    use_operation_delay=False,
+                )
             USER_LOG.info(
                 "%s ▶ 已点击弹窗「声明原创」",
                 self._step_prefix(metadata, "原创声明"),
@@ -536,7 +620,7 @@ class OriginalDeclarationStep(BasePublishStep):
     ) -> None:
         from src.infrastructure.anti_risk.human_like import human_click
 
-        await _scroll_locator_to_center(page, target, wait_ms=200)
+        await _scroll_locator_to_center(page, target, wait_ms=120)
         if await self._mouse_click_locator_center(page, target):
             return
         try:
@@ -730,6 +814,9 @@ class OriginalDeclarationStep(BasePublishStep):
 
         if await self._is_original_dialog_open(page):
             USER_LOG.info("%s ▶ 检测到未完成的原创权益弹窗，继续确认流程", prefix)
+            outcome = "dialog"
+        elif await self._verify_original_enabled(page, checkbox):
+            outcome = "enabled"
         else:
             switch_ok = await self._click_switch_to_open(
                 page, wrapper, checkbox, metadata, config
@@ -739,8 +826,16 @@ class OriginalDeclarationStep(BasePublishStep):
                     "小红书原创声明：多次点击开关后仍无弹窗且未变红"
                 )
                 return False
-
-        outcome = await self._wait_dialog_or_enabled(page, checkbox)
+            if await self._is_original_dialog_open(page):
+                outcome = "dialog"
+            elif await self._verify_original_enabled(page, checkbox):
+                outcome = "enabled"
+            else:
+                outcome = await self._wait_dialog_or_enabled(
+                    page,
+                    checkbox,
+                    timeout_ms=_DIALOG_AFTER_ENABLE_WAIT_MS,
+                )
         if outcome == "enabled":
             USER_LOG.info(
                 "%s ✓ 开关已开启（未出现或未等待权益弹窗）",
@@ -763,7 +858,7 @@ class OriginalDeclarationStep(BasePublishStep):
         if not await self._complete_original_dialog(page, metadata, config):
             return False
 
-        await page.wait_for_timeout(300)
+        await page.wait_for_timeout(150)
         return await self._verify_original_enabled(page, checkbox)
 
     async def _disable_original(
@@ -793,7 +888,7 @@ class OriginalDeclarationStep(BasePublishStep):
             try:
                 if not await target.is_visible():
                     continue
-                await _scroll_locator_to_center(page, target, wait_ms=200)
+                await _scroll_locator_to_center(page, target, wait_ms=120)
                 await human_click(page, target, metadata, config)
                 await page.wait_for_timeout(400)
                 if not await self._read_checkbox_state(checkbox) and not await self._read_switch_visual_on(page):

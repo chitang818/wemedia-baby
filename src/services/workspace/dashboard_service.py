@@ -214,14 +214,9 @@ class DashboardService:
                 )
                 latest_raw = latest_map.get(aid_int)
                 latest_publish_time = latest_raw if latest_raw else "-"
-                if is_online:
-                    remaining_days = compute_publish_reminder_days(latest_publish_time)
-                    reminder_text = format_publish_reminder_text(remaining_days)
-                    is_overdue = is_latest_publish_overdue(latest_publish_time)
-                else:
-                    remaining_days = None
-                    reminder_text = "账号离线"
-                    is_overdue = False
+                remaining_days = compute_publish_reminder_days(latest_publish_time)
+                reminder_text = format_publish_reminder_text(remaining_days)
+                is_overdue = is_latest_publish_overdue(latest_publish_time)
 
                 rows.append({
                     "account_id": aid_int,

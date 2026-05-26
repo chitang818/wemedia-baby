@@ -27,6 +27,7 @@ from playwright.async_api import Locator, Page
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from src.plugins.core.wait_helper import PluginWaitHelper
 from ._base import BasePublishStep, StepOutcome
+from ._schedule_picker import blur_publish_form_focus, dismiss_schedule_date_picker_and_wait
 from ..selectors import Selectors
 from .step_06A_original_declaration import _scroll_locator_to_center
 
@@ -41,6 +42,16 @@ _SCHEDULE_SWITCH_RESPONSE_WAIT_MS = 2500
 _SCHEDULE_SWITCH_POLL_MS = 200
 _SCHEDULE_SWITCH_CLICK_MAX_ATTEMPTS = 3
 _SCHEDULE_POST_CLICK_SETTLE_MS = 300
+_SCHEDULE_PICKER_CLOSE_WAIT_MS = 3000
+_SCHEDULE_PICKER_POLL_MS = 150
+_SCHEDULE_TIME_VERIFY_RETRIES = 2
+_RIGHT_BLANK_CLICK_SELECTORS: Sequence[str] = (
+    "div[class*='preview']",
+    "[class*='phone-preview']",
+    "[class*='video-preview']",
+    ".publish-preview",
+    ".publish-page-container",
+)
 
 _PRIVACY_TO_XHS_LABEL: Dict[str, str] = {
     "public": "公开可见",
@@ -816,6 +827,169 @@ class PublishSettingsStep(BasePublishStep):
                 continue
         return None
 
+    async def _is_schedule_picker_visible(self, page: Page) -> bool:
+        for sel in Selectors.SETTINGS.get("SCHEDULE_DATE_PICKER", []) or []:
+            try:
+                loc = page.locator(sel).first
+                if await loc.count() > 0 and await loc.is_visible():
+                    return True
+            except Exception:
+                continue
+        return False
+
+    async def _find_visible_schedule_picker(self, page: Page) -> Optional[Locator]:
+        for sel in Selectors.SETTINGS.get("SCHEDULE_DATE_PICKER", []) or []:
+            try:
+                loc = page.locator(sel).first
+                if await loc.count() > 0 and await loc.is_visible():
+                    return loc
+            except Exception:
+                continue
+        return None
+
+    async def _click_publish_page_right_blank(
+        self, page: Page, wait_ms: Callable[[int], int]
+    ) -> bool:
+        """在页面右侧预览区空白处点击，用于关闭定时时间选择浮层。"""
+        for sel in _RIGHT_BLANK_CLICK_SELECTORS:
+            try:
+                loc = page.locator(sel).first
+                if await loc.count() == 0:
+                    continue
+                box = await loc.bounding_box()
+                if not box or box.get("width", 0) < 40 or box.get("height", 0) < 40:
+                    continue
+                x = box["x"] + box["width"] * 0.55
+                y = box["y"] + box["height"] * 0.35
+                await page.mouse.click(x, y)
+                await page.wait_for_timeout(wait_ms(150))
+                logger.debug("已在右侧预览区空白点击: %s", sel)
+                return True
+            except Exception as e:
+                logger.debug("右侧空白点击失败 %s: %s", sel, e)
+                continue
+        try:
+            vp = await page.evaluate(
+                "() => ({ w: window.innerWidth, h: window.innerHeight })"
+            )
+            w = float(vp.get("w") or 1200)
+            h = float(vp.get("h") or 800)
+            await page.mouse.click(w * 0.82, h * 0.4)
+            await page.wait_for_timeout(wait_ms(150))
+            logger.debug("已在视口右侧空白点击")
+            return True
+        except Exception as e:
+            logger.debug("视口右侧空白点击失败: %s", e)
+            return False
+
+    async def _dismiss_schedule_date_picker_and_wait(
+        self, page: Page, wait_ms: Callable[[int], int]
+    ) -> bool:
+        """设置完时间后：点右侧空白关浮层，并轮询直到浮层消失。"""
+        if not await self._is_schedule_picker_visible(page):
+            return True
+
+        await self._click_publish_page_right_blank(page, wait_ms)
+        elapsed = 0
+        while elapsed < _SCHEDULE_PICKER_CLOSE_WAIT_MS:
+            if not await self._is_schedule_picker_visible(page):
+                logger.debug("定时日期浮层已关闭（右侧空白点击）")
+                return True
+            await page.wait_for_timeout(_SCHEDULE_PICKER_POLL_MS)
+            elapsed += _SCHEDULE_PICKER_POLL_MS
+
+        try:
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(wait_ms(120))
+        except Exception:
+            pass
+        await self._click_publish_page_right_blank(page, wait_ms)
+
+        elapsed = 0
+        while elapsed < _SCHEDULE_PICKER_CLOSE_WAIT_MS:
+            if not await self._is_schedule_picker_visible(page):
+                return True
+            await page.wait_for_timeout(_SCHEDULE_PICKER_POLL_MS)
+            elapsed += _SCHEDULE_PICKER_POLL_MS
+        return not await self._is_schedule_picker_visible(page)
+
+    async def _dismiss_schedule_date_picker(
+        self, page: Page, wait_ms: Callable[[int], int]
+    ) -> None:
+        """兼容旧调用：关浮层并等待关闭。"""
+        await self._dismiss_schedule_date_picker_and_wait(page, wait_ms)
+
+    async def _verify_schedule_time_matches_task(
+        self, page: Page, st_str: str
+    ) -> Tuple[bool, str]:
+        inp = await self._find_schedule_time_display(page)
+        actual = (
+            await self._read_schedule_input_value(inp) if inp is not None else ""
+        )
+        return self._schedule_input_value_matches(actual, st_str), actual
+
+    async def _apply_schedule_time_with_verify(
+        self,
+        page: Page,
+        inp: Locator,
+        st_str: str,
+        parts: Tuple[int, int, int, int, int],
+        metadata: Dict[str, Any],
+        config: Dict[str, Any],
+        wait_ms: Callable[[int], int],
+        speed_rate: float,
+    ) -> bool:
+        """写入定时 → 右侧空白关浮层 → 校验与任务一致；不一致则重新设置。"""
+        max_attempts = 1 + _SCHEDULE_TIME_VERIFY_RETRIES
+        picker: Optional[Locator] = await self._find_visible_schedule_picker(page)
+
+        for attempt in range(1, max_attempts + 1):
+            if attempt > 1:
+                logger.info("定时时间与任务不一致，第 %s 次重新设置", attempt)
+                USER_LOG.info(
+                    "[步骤7 发布设置] ▶ 定时校验未通过，正在第 %s 次重新设置",
+                    attempt,
+                )
+                if not await self._click_schedule_time_display(
+                    page, inp, metadata, config, wait_ms
+                ):
+                    logger.warning("重设定时：无法再次打开时间浮层")
+                    continue
+                picker = await self._find_visible_schedule_picker(page)
+
+            filled = await self._set_schedule_time_via_input(
+                page, inp, st_str, wait_ms, speed_rate,
+            )
+            if not filled and picker is not None:
+                await self._pick_schedule_in_date_picker(
+                    page, picker, parts, metadata, config, wait_ms,
+                )
+                await page.wait_for_timeout(wait_ms(300))
+
+            closed = await self._dismiss_schedule_date_picker_and_wait(page, wait_ms)
+            if not closed:
+                USER_LOG.warning("[步骤7 发布设置] ▷ 定时浮层未能确认关闭")
+
+            ok, actual = await self._verify_schedule_time_matches_task(page, st_str)
+            if ok:
+                logger.info(
+                    "定时时间校验通过: 页面=%s 任务=%s", actual or st_str, st_str
+                )
+                USER_LOG.info(
+                    "[步骤7 发布设置] ▶ 定时时间已校验一致: %s",
+                    actual or st_str,
+                )
+                return True
+
+            logger.warning(
+                "定时时间校验未通过 (attempt=%s): 页面=%r 任务=%r",
+                attempt,
+                actual,
+                st_str,
+            )
+
+        return False
+
     async def _pick_schedule_in_date_picker(
         self,
         page: Page,
@@ -972,62 +1146,49 @@ class PublishSettingsStep(BasePublishStep):
                     failed_step=self._FAILED_STEP,
                 )
 
-            picker = None
-            for sel in Selectors.SETTINGS.get("SCHEDULE_DATE_PICKER", []):
-                try:
-                    loc = page.locator(sel).first
-                    await loc.wait_for(state="visible", timeout=5000)
-                    if await loc.count() > 0:
-                        picker = loc
-                        break
-                except Exception:
-                    continue
-
-            filled = await self._set_schedule_time_via_input(
-                page, inp, st_str, wait_ms, speed_rate,
+            time_ok = await self._apply_schedule_time_with_verify(
+                page,
+                inp,
+                st_str,
+                parts,
+                metadata,
+                config,
+                wait_ms,
+                speed_rate,
             )
-            if not filled and picker is not None:
-                filled = await self._pick_schedule_in_date_picker(
-                    page, picker, parts, metadata, config, wait_ms,
+            if not time_ok:
+                await self._ensure_schedule_switch_on(page, metadata, config, wait_ms)
+                logger.warning("定时时间与任务不一致或未能写入")
+                USER_LOG.warning(
+                    "[步骤7 发布设置] ✗ 定时时间与任务不一致，设置失败"
                 )
-                await page.wait_for_timeout(wait_ms(300))
-                filled = self._schedule_input_value_matches(
-                    await self._read_schedule_input_value(inp), st_str
-                )
-
-            if not filled:
-                filled = await self._fill_schedule_input_fallback(
-                    page, inp, st_str, wait_ms, speed_rate,
+                return PublishResult(
+                    success=False,
+                    error_message=f"定时发布时间与任务不一致（期望 {st_str}）",
+                    failed_step=self._FAILED_STEP,
                 )
 
-            if filled:
-                await self._ensure_schedule_switch_on(
-                    page, metadata, config, wait_ms,
-                )
-                if not await self._read_schedule_switch_visual_on(
-                    self._schedule_wrapper(page)
-                ):
-                    logger.warning("定时时间已写入但开关仍为关闭")
-                    USER_LOG.warning(
-                        "[步骤7 发布设置] ✗ 定时时间已填但开关被关闭，请人工核对"
-                    )
-                    return PublishResult(
-                        success=False,
-                        error_message="定时时间已设置但定时发布开关被关闭",
-                        failed_step=self._FAILED_STEP,
-                    )
-                logger.info("已设置定时时间: %s", st_str)
-                USER_LOG.info("[步骤7 发布设置] ▶ 已设置定时: %s", st_str)
-                return None
-
-            await self._ensure_schedule_switch_on(page, metadata, config, wait_ms)
-            logger.warning("定时时间设置失败")
-            USER_LOG.warning("[步骤7 发布设置] ✗ 定时时间设置失败")
-            return PublishResult(
-                success=False,
-                error_message="定时发布时间设置失败",
-                failed_step=self._FAILED_STEP,
+            await self._ensure_schedule_switch_on(
+                page, metadata, config, wait_ms,
             )
+            if not await self._read_schedule_switch_visual_on(
+                self._schedule_wrapper(page)
+            ):
+                logger.warning("定时时间已校验通过但开关仍为关闭")
+                USER_LOG.warning(
+                    "[步骤7 发布设置] ✗ 定时时间已填但开关被关闭，请人工核对"
+                )
+                return PublishResult(
+                    success=False,
+                    error_message="定时时间已设置但定时发布开关被关闭",
+                    failed_step=self._FAILED_STEP,
+                )
+
+            logger.info("已设置并校验定时时间: %s", st_str)
+            USER_LOG.info("[步骤7 发布设置] ▶ 已设置定时: %s", st_str)
+            await dismiss_schedule_date_picker_and_wait(page, wait_ms)
+            await blur_publish_form_focus(page, wait_ms)
+            return None
         except Exception as e:
             logger.warning("定时/立即发布设置异常: %s", e)
             if schedule_time:

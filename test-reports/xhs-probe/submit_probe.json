@@ -1,0 +1,39 @@
+{
+  "publish_url": "https://creator.xiaohongshu.com/publish/publish?from=homepage&target=video",
+  "user_data_dir": "C:\\Users\\chitang\\AppData\\Local\\WeMediaBaby\\data\\xiaohongshu\\profile_372f0de53dc7\\browser\\user_data",
+  "initial_host_count": 0,
+  "warning": "未检测到 xhs-publish-btn：请先上传视频并填必填项，或检查登录态",
+  "state_a_immediate": {
+    "label": "no_host",
+    "captured_at": "2026-05-25T21:15:01",
+    "snapshot": {
+      "url": "https://creator.xiaohongshu.com/publish/publish?from=homepage&target=video",
+      "pickerOpen": false,
+      "schedule": {
+        "found": false
+      },
+      "focusInSchedule": false,
+      "activeElementTag": "BODY",
+      "hostCount": 0,
+      "hosts": []
+    },
+    "pierce_selectors": {
+      ".publish-page-content xhs-publish-btn >> button.ce-btn.bg-red": {
+        "selector": ".publish-page-content xhs-publish-btn >> button.ce-btn.bg-red",
+        "count": 0
+      },
+      ".publish-page-container xhs-publish-btn >> button.ce-btn.bg-red": {
+        "selector": ".publish-page-container xhs-publish-btn >> button.ce-btn.bg-red",
+        "count": 0
+      },
+      "#publish-container xhs-publish-btn >> button.ce-btn.bg-red": {
+        "selector": "#publish-container xhs-publish-btn >> button.ce-btn.bg-red",
+        "count": 0
+      },
+      "xhs-publish-btn >> button.ce-btn.bg-red": {
+        "selector": "xhs-publish-btn >> button.ce-btn.bg-red",
+        "count": 0
+      }
+    }
+  }
+}

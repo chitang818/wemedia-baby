@@ -18,6 +18,20 @@
     "max": 300
   },
   "selectors_file": "config/selectors/xiaohongshu_selectors.json",
-  "status": "reserved"
+  "status": "reserved",
+  "anti_risk": {
+    "delay_jitter_ratio": 0.15,
+    "step_interval_base_seconds": 0.2,
+    "step_interval_jitter_seconds": 0.4,
+    "enable_human_like": true,
+    "enable_mouse_wander": true,
+    "enable_browse_before_action": true,
+    "browse_probability": 0.25,
+    "operation_delay_min_seconds": 0.4,
+    "operation_delay_max_seconds": 2.0,
+    "operation_delay_before_click": true,
+    "operation_delay_before_type": true,
+    "type_mistake_probability": 0.02
+  }
 }
 

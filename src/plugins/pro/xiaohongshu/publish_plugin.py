@@ -158,7 +158,26 @@ class XiaohongshuPublishPlugin(PublishPluginInterface):
                 if isinstance(platform_data.get("anti_risk"), dict)
                 else {}
             )
-            metadata_for_runner = {**metadata, "anti_risk_config": anti_risk_config}
+            from .selectors import Selectors
+
+            # pierce（>>）对 closed Shadow 无效，仅作参考；以诊断包 xhs_publish_probe.json 为准
+            probes: Dict[str, Any] = {
+                "xhs_publish_host": (
+                    ".publish-page-content xhs-publish-btn[is-publish='true'], "
+                    "xhs-publish-btn[is-publish='true']"
+                ),
+                "schedule_wrapper": ", ".join(
+                    Selectors.SETTINGS.get("SCHEDULE_WRAPPER", []) or [],
+                ),
+                "schedule_picker": ", ".join(
+                    Selectors.SETTINGS.get("SCHEDULE_DATE_PICKER", []) or [],
+                ),
+            }
+            metadata_for_runner = {
+                **metadata,
+                "anti_risk_config": anti_risk_config,
+                "selector_probes": probes,
+            }
 
             runner = StepRunner(
                 page=page,

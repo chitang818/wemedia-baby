@@ -206,10 +206,8 @@ async def test_xhs_original_declaration_enable_calls_dialog_complete(monkeypatch
     step = OriginalDeclarationStep()
     checkbox = _FakeCheckbox(checked=False)
     order: list[str] = []
-
-    async def fake_click_switch(*_args, **_kwargs):
-        order.append("switch")
-        return True
+    dialog_open = {"v": False}
+    verify_state = {"enabled": False}
 
     async def fake_wait_outcome(*_args, **_kwargs):
         order.append("wait")
@@ -218,21 +216,26 @@ async def test_xhs_original_declaration_enable_calls_dialog_complete(monkeypatch
     async def fake_complete(*_args, **_kwargs):
         order.append("complete")
         checkbox.checked = True
+        verify_state["enabled"] = True
         return True
 
-    verify_calls = 0
+    async def fake_dialog(_page):
+        return dialog_open["v"]
+
+    async def fake_click_switch(*_args, **_kwargs):
+        order.append("switch")
+        dialog_open["v"] = True
+        return True
 
     async def fake_verify(_page, _cb):
-        nonlocal verify_calls
-        verify_calls += 1
-        return verify_calls >= 2
+        return verify_state["enabled"]
 
     empty_wrapper = MagicMock()
     empty_wrapper.count = AsyncMock(return_value=0)
 
     monkeypatch.setattr(step, "_original_wrapper", lambda _page: empty_wrapper)
     monkeypatch.setattr(step, "_verify_original_enabled", fake_verify)
-    monkeypatch.setattr(step, "_is_original_dialog_open", AsyncMock(return_value=False))
+    monkeypatch.setattr(step, "_is_original_dialog_open", fake_dialog)
     monkeypatch.setattr(step, "_click_switch_to_open", fake_click_switch)
     monkeypatch.setattr(step, "_wait_dialog_or_enabled", fake_wait_outcome)
     monkeypatch.setattr(step, "_complete_original_dialog", fake_complete)
@@ -240,7 +243,7 @@ async def test_xhs_original_declaration_enable_calls_dialog_complete(monkeypatch
     ok = await step._enable_original(_FakePage(), empty_wrapper, checkbox, {}, {})
 
     assert ok is True
-    assert order == ["switch", "wait", "complete"]
+    assert order == ["switch", "complete"]
     assert checkbox.check_calls == 0
 
 
@@ -567,14 +570,14 @@ async def test_xhs_content_type_declaration_reports_missing_panel(monkeypatch) -
     async def fake_entry(_page):
         return entry
 
-    async def fake_open(_page, _entry, _meta, _cfg):
-        return None
+    async def fake_apply(_page, _entry, _label, _meta, _cfg):
+        return False
 
     monkeypatch.setattr(step, "_ensure_no_blocking_dialog", _noop_scroll)
     monkeypatch.setattr(step, "_scroll_content_settings_into_view", _noop_scroll)
     monkeypatch.setattr(step, "_target_label_visible_in_settings", fake_visible)
     monkeypatch.setattr(step, "_find_entry", fake_entry)
-    monkeypatch.setattr(step, "_open_content_type_panel", fake_open)
+    monkeypatch.setattr(step, "_apply_content_type_selection", fake_apply)
 
     result = await step.execute(
         _FakePage(),
@@ -589,7 +592,7 @@ async def test_xhs_content_type_declaration_reports_missing_panel(monkeypatch) -
 
     assert result is not None
     assert result.success is False
-    assert "浮层" in (result.error_message or "")
+    assert "入口" in (result.error_message or "")
 
 
 @pytest.mark.asyncio

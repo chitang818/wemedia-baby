@@ -24,13 +24,17 @@ _CONTENT_PANEL_ANCHOR = "虚构演绎，仅供娱乐"
 _SOURCE_DECLARATION_LABEL = "内容来源声明"
 _ORIGINAL_DIALOG_FEATURE = "笔记完成原创声明后"
 
-_PANEL_WAIT_MS = 10_000
-_PANEL_POLL_MS = 250
-_ENTRY_CLICK_RETRIES = 2
-_POST_6A_SETTLE_MS = 500
+_PANEL_WAIT_MS = 6_000
+_PANEL_POLL_MS = 150
+_ENTRY_CLICK_RETRIES = 3
+_POST_6A_SETTLE_MS = 250
+_ENTRY_VERIFY_MS = 4_000
+_ENTRY_VERIFY_POLL_MS = 150
+_SELECTION_RETRY_MAX = 2
+_SCROLL_SETTLE_MS = 180
 
 
-async def _scroll_locator_to_center(page: Page, locator: Locator, *, wait_ms: int = 350) -> None:
+async def _scroll_locator_to_center(page: Page, locator: Locator, *, wait_ms: int = _SCROLL_SETTLE_MS) -> None:
     try:
         handle = await locator.element_handle()
         if handle:
@@ -104,32 +108,10 @@ class WorkDeclarationStep(BasePublishStep):
             return PublishResult(success=False, error_message=msg, failed_step=self._FAILED_STEP)
 
         config = metadata.get("anti_risk_config") or {}
-        panel = await self._open_content_type_panel(page, entry, metadata, config)
-        if panel is None:
-            msg = "小红书内容类型声明：未出现内容类型下拉浮层"
-            logger.warning(msg)
-            USER_LOG.warning("%s ✗ %s", prefix, msg)
-            return PublishResult(success=False, error_message=msg, failed_step=self._FAILED_STEP)
-
-        option_clicked = await self._click_target_option(page, panel, target_label, metadata, config)
-        if not option_clicked:
-            msg = f"小红书内容类型声明：未找到目标选项「{target_label}」"
-            logger.warning(msg)
-            USER_LOG.warning("%s ✗ %s", prefix, msg)
-            return PublishResult(success=False, error_message=msg, failed_step=self._FAILED_STEP)
-
-        await page.wait_for_timeout(300)
-        await self._click_confirm_if_present(page)
-
-        if target_label == _SOURCE_DECLARATION_LABEL:
-            await page.wait_for_timeout(400)
-            sub_panel = await self._wait_content_type_panel(page, timeout_ms=4000)
-            if sub_panel is not None:
-                logger.info("小红书内容类型声明：已展开「内容来源声明」子项浮层")
-
-        await page.wait_for_timeout(400)
-
-        if not await self._target_label_visible_in_settings(page, target_label):
+        applied = await self._apply_content_type_selection(
+            page, entry, target_label, metadata, config
+        )
+        if not applied:
             msg = f"小红书内容类型声明：选择后入口未显示「{target_label}」"
             logger.warning(msg)
             USER_LOG.warning("%s ✗ %s", prefix, msg)
@@ -215,6 +197,9 @@ class WorkDeclarationStep(BasePublishStep):
         return None
 
     async def _target_label_visible_in_settings(self, page: Page, target_label: str) -> bool:
+        if await self._target_label_visible_via_evaluate(page, target_label):
+            return True
+
         root = self._content_settings_root(page)
         try:
             if await root.count() > 0:
@@ -237,6 +222,105 @@ class WorkDeclarationStep(BasePublishStep):
                     return True
             except Exception:
                 continue
+        return False
+
+    async def _target_label_visible_via_evaluate(self, page: Page, target_label: str) -> bool:
+        try:
+            return bool(
+                await page.evaluate(
+                    """(label) => {
+                        const root = document.querySelector(
+                            '.publish-page-content-content-extra'
+                        );
+                        if (!root) return false;
+                        const wrappers = root.querySelectorAll('.d-select-wrapper');
+                        for (const w of wrappers) {
+                            const t = (w.innerText || '').trim();
+                            if (t.includes(label)) return true;
+                        }
+                        return false;
+                    }""",
+                    target_label,
+                )
+            )
+        except Exception as e:
+            logger.debug("evaluate 检测入口文案失败: %s", e)
+            return False
+
+    async def _wait_target_label_in_settings(
+        self,
+        page: Page,
+        target_label: str,
+        *,
+        timeout_ms: int = _ENTRY_VERIFY_MS,
+    ) -> bool:
+        elapsed = 0
+        while elapsed < timeout_ms:
+            if await self._target_label_visible_in_settings(page, target_label):
+                return True
+            await page.wait_for_timeout(_ENTRY_VERIFY_POLL_MS)
+            elapsed += _ENTRY_VERIFY_POLL_MS
+        return await self._target_label_visible_in_settings(page, target_label)
+
+    async def _wait_content_panel_closed(
+        self, page: Page, *, timeout_ms: int = 2_000
+    ) -> None:
+        elapsed = 0
+        while elapsed < timeout_ms:
+            if not await self._is_content_panel_visible(page):
+                return
+            await page.wait_for_timeout(_PANEL_POLL_MS)
+            elapsed += _PANEL_POLL_MS
+
+    async def _apply_content_type_selection(
+        self,
+        page: Page,
+        entry: Locator,
+        target_label: str,
+        metadata: Dict[str, Any],
+        config: Dict[str, Any],
+    ) -> bool:
+        for attempt in range(1, _SELECTION_RETRY_MAX + 1):
+            panel = await self._open_content_type_panel(page, entry, metadata, config)
+            if panel is None:
+                if attempt >= _SELECTION_RETRY_MAX:
+                    logger.warning("小红书内容类型声明：未出现内容类型下拉浮层")
+                    return False
+                await page.wait_for_timeout(200)
+                continue
+
+            if not await self._click_target_option(
+                page, panel, target_label, metadata, config
+            ):
+                await self._dismiss_open_content_panel(page)
+                if attempt >= _SELECTION_RETRY_MAX:
+                    logger.warning(
+                        "小红书内容类型声明：未找到目标选项「%s」", target_label
+                    )
+                    return False
+                await page.wait_for_timeout(200)
+                continue
+
+            await self._click_confirm_if_present(page)
+            await self._wait_content_panel_closed(page)
+
+            if target_label == _SOURCE_DECLARATION_LABEL:
+                sub_panel = await self._wait_content_type_panel(page, timeout_ms=3000)
+                if sub_panel is not None:
+                    logger.info("小红书内容类型声明：已展开「内容来源声明」子项浮层")
+                    await self._click_confirm_if_present(page)
+                    await self._wait_content_panel_closed(page)
+
+            if await self._wait_target_label_in_settings(page, target_label):
+                return True
+
+            logger.debug(
+                "小红书内容类型声明：第 %s 次选择后入口未刷新，准备重试",
+                attempt,
+            )
+            await self._dismiss_open_content_panel(page)
+            await page.wait_for_timeout(200)
+
         return False
 
     def _panel_anchor_text(self) -> str:
@@ -330,12 +414,12 @@ class WorkDeclarationStep(BasePublishStep):
                 continue
 
             panel = await self._wait_content_type_panel(
-                page, timeout_ms=4000 if attempt == 0 else _PANEL_WAIT_MS
+                page, timeout_ms=3000 if attempt == 0 else _PANEL_WAIT_MS
             )
             if panel is not None:
                 return panel
 
-            await page.wait_for_timeout(300)
+            await page.wait_for_timeout(150)
 
         return None
 
@@ -395,9 +479,16 @@ class WorkDeclarationStep(BasePublishStep):
                 if await loc.count() > 0 and await loc.is_visible():
                     await loc.scroll_into_view_if_needed()
                     try:
-                        await human_click(page, loc, metadata, config)
+                        await human_click(
+                            page,
+                            loc,
+                            metadata,
+                            config,
+                            use_operation_delay=False,
+                        )
                     except Exception:
-                        await loc.click(timeout=5000)
+                        await loc.click(timeout=3000)
+                    await page.wait_for_timeout(80)
                     return True
             except Exception:
                 continue

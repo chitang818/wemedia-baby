@@ -277,19 +277,33 @@ class Selectors:
             "div[class*='cover-dialog'] img",
         ],
 
-        # 步骤8：发布按钮（优先限定主表单区，避免误点预览区）
+        # 步骤8：xhs-publish-btn（closed Shadow）内 button.ce-btn.bg-red
+        # 立即：submit-text=发布；定时：submit-text=定时发布；须排除 Shadow 内「暂存离开」
+        # 勿用全局 :has-text('定时发布')，会命中更多设置开关
+        "SUBMIT_BTN_SHADOW": [
+            ".publish-page-content xhs-publish-btn >> button.ce-btn.bg-red",
+            ".publish-page-container xhs-publish-btn >> button.ce-btn.bg-red",
+            "#publish-container xhs-publish-btn >> button.ce-btn.bg-red",
+            "xhs-publish-btn >> button.ce-btn.bg-red",
+        ],
         "SUBMIT_BTN": [
+            ".publish-page-content xhs-publish-btn[is-publish='true']",
+            ".publish-page-container xhs-publish-btn[is-publish='true']",
+            "#publish-container xhs-publish-btn[is-publish='true']",
+            "xhs-publish-btn[is-publish='true']",
             ".publish-page-content button:has-text('发布')",
-            "#publish-container button:has-text('发布')",
             ".publish-page-container button:has-text('发布')",
-            "button:has-text('发布')",
+            ".publish-page-footer button:has-text('发布')",
+            "#publish-container button:has-text('发布')",
+            # 勿用全局 button:has-text('定时发布')，会命中「更多设置」开关而非底部提交钮
             "button[class*='submit']",
             "button[class*='publish']",
         ],
         "SUBMIT_SCOPE": [
             ".publish-page-content",
-            "#publish-container",
             ".publish-page-container",
+            "#publish-container",
+            ".publish-page-footer",
         ],
     }
 
@@ -324,8 +338,16 @@ class Selectors:
             "div[class*='toast']:has-text('发布成功')",
             "div[class*='message']:has-text('发布成功')",
             "span:has-text('发布成功')",
+            "div[class*='toast']:has-text('定时发布成功')",
+            "div[class*='message']:has-text('定时发布')",
+            "span:has-text('定时发布成功')",
         ],
-        "SUCCESS_URL_KEYWORDS": ["publish/success", "manage", "creator"],
+        "SUCCESS_URL_KEYWORDS": [
+            "published=true",
+            "publish/success",
+            "manage",
+            "creator",
+        ],
         "MANAGE_PAGE_INDICATOR": [
             # ✅ 已确认：侧边栏"笔记管理"
             "span.menu-title-wrapper:has-text('笔记管理')",

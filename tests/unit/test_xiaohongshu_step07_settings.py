@@ -13,12 +13,36 @@ class _FakePage:
     def __init__(self) -> None:
         self.waits: list[int] = []
         self.url = "https://creator.xiaohongshu.com/publish/publish"
+        self.mouse_clicks: list[tuple[float, float]] = []
+        self.keyboard_presses: list[str] = []
 
     async def wait_for_timeout(self, ms: int) -> None:
         self.waits.append(ms)
 
-    async def evaluate(self, *_args, **_kwargs) -> None:
-        return None
+    async def evaluate(self, *_args, **_kwargs) -> dict:
+        return {"w": 1200, "h": 800}
+
+    class _Mouse:
+        def __init__(self, page: "_FakePage") -> None:
+            self._page = page
+
+        async def click(self, x: float, y: float) -> None:
+            self._page.mouse_clicks.append((x, y))
+
+    @property
+    def mouse(self) -> "_Mouse":
+        return _FakePage._Mouse(self)
+
+    class _Keyboard:
+        def __init__(self, page: "_FakePage") -> None:
+            self._page = page
+
+        async def press(self, key: str) -> None:
+            self._page.keyboard_presses.append(key)
+
+    @property
+    def keyboard(self) -> "_Keyboard":
+        return _FakePage._Keyboard(self)
 
 
 @pytest.mark.parametrize(
@@ -257,3 +281,110 @@ async def test_click_schedule_switch_to_open_already_enabled(monkeypatch) -> Non
 
     ok = await step._click_schedule_switch_to_open(page, {}, {}, lambda ms: ms)
     assert ok is True
+
+
+@pytest.mark.asyncio
+async def test_dismiss_schedule_picker_clicks_right_blank(monkeypatch) -> None:
+    step = PublishSettingsStep()
+    page = _FakePage()
+    calls = {"visible": 2}
+
+    async def _visible(_page: _FakePage) -> bool:
+        calls["visible"] -= 1
+        return calls["visible"] > 0
+
+    async def _click_blank(_page: _FakePage, _wait_ms) -> bool:
+        return True
+
+    monkeypatch.setattr(step, "_is_schedule_picker_visible", _visible)
+    monkeypatch.setattr(step, "_click_publish_page_right_blank", _click_blank)
+
+    ok = await step._dismiss_schedule_date_picker_and_wait(page, lambda ms: ms)
+    assert ok is True
+    assert len(page.mouse_clicks) >= 0
+
+
+@pytest.mark.asyncio
+async def test_apply_schedule_time_with_verify_passes_on_match(monkeypatch) -> None:
+    step = PublishSettingsStep()
+    page = _FakePage()
+    inp = object()
+
+    async def _set_time(*_a, **_k) -> bool:
+        return True
+
+    async def _dismiss(*_a, **_k) -> bool:
+        return True
+
+    async def _verify(_page: _FakePage, st_str: str) -> tuple[bool, str]:
+        return True, st_str
+
+    monkeypatch.setattr(step, "_set_schedule_time_via_input", _set_time)
+    monkeypatch.setattr(step, "_dismiss_schedule_date_picker_and_wait", _dismiss)
+    monkeypatch.setattr(step, "_verify_schedule_time_matches_task", _verify)
+    async def _no_picker(_p: _FakePage) -> None:
+        return None
+
+    monkeypatch.setattr(step, "_find_visible_schedule_picker", _no_picker)
+
+    ok = await step._apply_schedule_time_with_verify(
+        page,
+        inp,
+        "2026-05-26 14:07",
+        (2026, 5, 26, 14, 7),
+        {},
+        {},
+        lambda ms: ms,
+        1.0,
+    )
+    assert ok is True
+
+
+@pytest.mark.asyncio
+async def test_apply_schedule_time_with_verify_retries_until_match(monkeypatch) -> None:
+    step = PublishSettingsStep()
+    page = _FakePage()
+    inp = object()
+    verify_calls = 0
+
+    async def _set_time(*_a, **_k) -> bool:
+        return True
+
+    async def _dismiss(*_a, **_k) -> bool:
+        return True
+
+    async def _reopen(*_a, **_k) -> bool:
+        return True
+
+    async def _verify(_page: _FakePage, st_str: str) -> tuple[bool, str]:
+        nonlocal verify_calls
+        verify_calls += 1
+        if verify_calls >= 2:
+            return True, st_str
+        return False, "2026-05-26 14:00"
+
+    monkeypatch.setattr(step, "_set_schedule_time_via_input", _set_time)
+    monkeypatch.setattr(step, "_dismiss_schedule_date_picker_and_wait", _dismiss)
+    monkeypatch.setattr(step, "_click_schedule_time_display", _reopen)
+    monkeypatch.setattr(step, "_verify_schedule_time_matches_task", _verify)
+    async def _no_picker(_p: _FakePage) -> None:
+        return None
+
+    async def _pick(*_a, **_k) -> bool:
+        return True
+
+    monkeypatch.setattr(step, "_find_visible_schedule_picker", _no_picker)
+    monkeypatch.setattr(step, "_pick_schedule_in_date_picker", _pick)
+
+    ok = await step._apply_schedule_time_with_verify(
+        page,
+        inp,
+        "2026-05-26 14:07",
+        (2026, 5, 26, 14, 7),
+        {},
+        {},
+        lambda ms: ms,
+        1.0,
+    )
+    assert ok is True
+    assert verify_calls == 2

@@ -66,7 +66,7 @@ def test_reveal_reminders_offline_row_has_red_status_dot(qapp):
                     "account_id": 2,
                     "account_name": "离线视频号",
                     "latest_publish_time": "-",
-                    "reminder_text": "账号离线",
+                    "reminder_text": "从未发布",
                     "is_online": False,
                 }
             ],

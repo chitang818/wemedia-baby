@@ -88,6 +88,12 @@ class GenericStepRunner:
         """返回 True 时跳过该步骤前的拟人浏览。默认不跳过。"""
         return False
 
+    def _should_skip_step_interval(
+        self, completed_step: str, next_step: Optional[str],
+    ) -> bool:
+        """返回 True 时跳过步骤间长间隔（同页连续子步骤可覆写为极短停顿）。"""
+        return False
+
     def _get_retry_delay(self, step_name: str, attempt: int, base_delay: float) -> float:
         """返回本次重试的延迟秒数。默认固定间隔。"""
         return base_delay
@@ -189,9 +195,20 @@ class GenericStepRunner:
                 # None → 本步成功
                 if outcome is None:
                     USER_LOG.info(f"{prefix} ✓ 完成")
+                    next_step_name: Optional[str] = None
+                    if i + 1 < len(step_list):
+                        next_step_name = step_list[i + 1].__class__.__name__
                     try:
-                        from src.infrastructure.anti_risk.delays import step_interval
-                        await step_interval(self.page, self.metadata, self.metadata.get("anti_risk_config"))
+                        if self._should_skip_step_interval(step_name, next_step_name):
+                            rate = max(0.1, float(self.metadata.get("speed_rate", 1.0)))
+                            await self.page.wait_for_timeout(max(50, int(80 * rate)))
+                        else:
+                            from src.infrastructure.anti_risk.delays import step_interval
+                            await step_interval(
+                                self.page,
+                                self.metadata,
+                                self.metadata.get("anti_risk_config"),
+                            )
                     except Exception:
                         pass
                     i += 1
