@@ -178,19 +178,25 @@ class Selectors:
         "TOPIC_DROPDOWN": [
             "[class*='_edit-desc-container_'] [class*='_dropdown-container_']",
             "[class*='_edit-desc-container_'] [class*='_desc-dropdown_']",
+            "[class*='_caption-v2-container_'] [class*='_dropdown-container_']",
+            "[class*='_caption-v2-container_'] [class*='_desc-dropdown_']",
+            "[class*='_desc-dropdown_']",
         ],
         "TOPIC_SUGGESTION": [
             "[class*='_edit-desc-container_'] [class*='_topic-item_']",
+            "[class*='_caption-v2-container_'] [class*='_topic-item_']",
             "[class*='_desc-dropdown_'] [class*='_topic-item_']",
         ],
         "TOPIC_SUGGESTION_ACTIVE": [
             "[class*='_edit-desc-container_'] [class*='_topic-item_'][class*='_active_']",
+            "[class*='_caption-v2-container_'] [class*='_topic-item_'][class*='_active_']",
             "[class*='_desc-dropdown_'] [class*='_topic-item_'][class*='_active_']",
         ],
         # 已收成话题：诊断页 CSS 为 .at-tag-item（蓝色 #385080），纯文本 # 不算
         "TOPIC_CHIP": [
             "#work-description-edit .at-tag-item",
             "[class*='_edit-desc-container_'] .at-tag-item",
+            "[class*='_caption-v2-container_'] .at-tag-item",
         ],
         "TOPIC_AI_BUTTON": [
             "#ai-bar-container :text('智能话题')",

@@ -54,6 +54,29 @@ class UploadMediaStep(BasePublishStep):
 
     # ------------------------------------------------------------------
     # 视频上传（原有逻辑）
+from ..selectors import Selectors
+
+logger = logging.getLogger(__name__)
+USER_LOG = logging.getLogger("publish.user_log")
+
+
+class UploadMediaStep(BasePublishStep):
+    """上传视频或图片步骤。"""
+
+    async def execute(self, page: Page, file_path: str, metadata: Dict[str, Any]) -> StepOutcome:
+        await self._await_pause(metadata)
+        file_type = (metadata.get("file_type") or "video").lower()
+        # 动态步骤前缀，供子方法日志使用
+        self._prefix_video = self._step_prefix(metadata, "上传视频")
+        self._prefix_image = self._step_prefix(metadata, "上传图片")
+
+        if file_type == "image":
+            return await self._upload_images(page, file_path, metadata)
+        else:
+            return await self._upload_video(page, file_path, metadata)
+
+    # ------------------------------------------------------------------
+    # 视频上传（原有逻辑）
     # ------------------------------------------------------------------
 
     async def _upload_video(
@@ -61,7 +84,11 @@ class UploadMediaStep(BasePublishStep):
     ) -> StepOutcome:
         logger.info("===== 开始上传视频文件 =====")
         base = os.path.basename(str(file_path))
-        USER_LOG.info(f"{self._prefix_video} ▶ 开始 文件={base}")
+        prefix = metadata.get("_step_prefix", "")
+        if prefix:
+            USER_LOG.info(f"{prefix} · 文件: {base}")
+        else:
+            USER_LOG.info(f"· 文件: {base}")
 
         file_input_selectors = Selectors.PUBLISH.get("FILE_INPUT", [])
         first_selector = file_input_selectors[0] if file_input_selectors else None
@@ -88,7 +115,6 @@ class UploadMediaStep(BasePublishStep):
         """等待视频上传完成。"""
         max_wait_seconds = int(metadata.get("upload_timeout_seconds") or 180)
         logger.info("等待视频上传/处理就绪（最长 %s 秒）...", max_wait_seconds)
-        USER_LOG.info("%s 正在上传中，等待上传成功（最长 %d 秒）…", self._prefix_video, max_wait_seconds)
         speed_rate = max(0.5, float(metadata.get("speed_rate", 1.0)))
         config = metadata.get("anti_risk_config") or {}
 
@@ -105,7 +131,7 @@ class UploadMediaStep(BasePublishStep):
             if attempt % 60 == 0:
                 logger.info("等待上传中... (%ss/%ss)", elapsed, max_wait_seconds)
             if attempt > 0 and attempt % 30 == 0:
-                USER_LOG.info("%s 正在上传中，已等待 %d 秒…", self._prefix_video, elapsed)
+                logger.info("正在上传中，已等待 %d 秒…", elapsed)
 
         matched = await PluginWaitHelper.wait_for_any_visible(
             page,
@@ -117,12 +143,15 @@ class UploadMediaStep(BasePublishStep):
         )
         if matched:
             logger.info("检测到上传完成标志（is_visible）: %s", matched)
-            USER_LOG.info("%s ✓ 上传成功", self._prefix_video)
             await dismiss_kuaishou_publish_guides(page, metadata)
             return None
 
         logger.error("视频上传状态检测超时，终止发布流程")
-        USER_LOG.error("%s ✖ 上传超时，未检测到完成标志，请检查网络后重试", self._prefix_video)
+        prefix = metadata.get("_step_prefix", "")
+        if prefix:
+            USER_LOG.error("%s ✖ 上传超时，未检测到完成标志，请检查网络后重试", prefix)
+        else:
+            USER_LOG.error("✖ 上传超时，未检测到完成标志，请检查网络后重试")
         return PublishResult(
             success=False,
             error_message="视频上传超时，未检测到上传完成标志，请检查网络或视频文件后重试",
@@ -198,7 +227,11 @@ class UploadMediaStep(BasePublishStep):
 
         names = [os.path.basename(p) for p in image_paths]
         logger.info("===== 开始上传图片（共 %d 张）=====", len(image_paths))
-        USER_LOG.info("%s ▶ 开始 共 %d 张: %s", self._prefix_image, len(image_paths), ", ".join(names))
+        prefix = metadata.get("_step_prefix", "")
+        if prefix:
+            USER_LOG.info("%s · 图文数量: %d · 示例文件: %s", prefix, len(image_paths), names[0] if names else "")
+        else:
+            USER_LOG.info("· 图文数量: %d · 示例文件: %s", len(image_paths), names[0] if names else "")
 
         # 找到「上传图片」按钮（DOM: button._upload-btn_ysbff_57）
         upload_btn_sels = Selectors.PUBLISH.get("IMAGE_UPLOAD_BTN", [])
@@ -275,7 +308,6 @@ class UploadMediaStep(BasePublishStep):
         """等待图片上传完成：检测「编辑图片」区域出现。"""
         max_wait_seconds = int(metadata.get("upload_timeout_seconds") or 120)
         logger.info("等待图片上传就绪（最长 %d 秒）...", max_wait_seconds)
-        USER_LOG.info("%s 正在上传中，等待上传成功（最长 %d 秒）…", self._prefix_image, max_wait_seconds)
         speed_rate = max(0.5, float(metadata.get("speed_rate", 1.0)))
         config = metadata.get("anti_risk_config") or {}
 
@@ -292,7 +324,7 @@ class UploadMediaStep(BasePublishStep):
             if attempt % 40 == 0 and attempt > 0:
                 logger.info("等待图片上传中... (%ds/%ds)", elapsed, max_wait_seconds)
             if attempt > 0 and attempt % 30 == 0:
-                USER_LOG.info("%s 正在上传中，已等待 %d 秒…", self._prefix_image, elapsed)
+                logger.info("正在上传中，已等待 %d 秒…", elapsed)
 
         matched = await PluginWaitHelper.wait_for_any_visible(
             page,
@@ -304,12 +336,15 @@ class UploadMediaStep(BasePublishStep):
         )
         if matched:
             logger.info("检测到图片上传完成标志（is_visible）: %s", matched)
-            USER_LOG.info("%s ✓ 上传成功（%d 张）", self._prefix_image, image_count)
             await dismiss_kuaishou_publish_guides(page, metadata)
             return None
 
         logger.error("图片上传状态检测超时，终止发布流程")
-        USER_LOG.error("%s ✖ 上传超时，未检测到「编辑图片」，请检查网络后重试", self._prefix_image)
+        prefix = metadata.get("_step_prefix", "")
+        if prefix:
+            USER_LOG.error("%s ✖ 上传超时，未检测到「编辑图片」，请检查网络后重试", prefix)
+        else:
+            USER_LOG.error("✖ 上传超时，未检测到「编辑图片」，请检查网络后重试")
         return PublishResult(
             success=False,
             error_message="图片上传超时，未检测到上传完成标志（编辑图片区域），请检查网络或图片文件后重试",

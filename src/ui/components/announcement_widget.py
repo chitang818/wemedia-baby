@@ -43,7 +43,9 @@ DEFAULT_ANNOUNCEMENTS = [
     {
         "icon": FluentIcon.VIDEO,
         "title": "平台与插件说明",
-        "content": "软件内测期间支持插件有限，目前抖音、快手、视频号三个平台的视频发布已经可以使用，其他平台及图文发布还在完善中……",
+        "content": "软件内测期间支持插件有限，目前抖音、快手、视频号、小红书这四个平台的视频和图文发布已经可以使用，其他平台及功能逐步在完善中……",
+        "content_color_light": "#FF4D4F",
+        "content_color_dark": "#FF7875",
         "color": "#138496",
     },
 ]
@@ -58,7 +60,9 @@ _52POJIE_ANNOUNCEMENTS = [
     {
         "icon": FluentIcon.VIDEO,
         "title": "平台与插件说明",
-        "content": "目前抖音、快手、视频号三个平台的视频发布已经可以使用，其他平台及图文发布还在完善中……",
+        "content": "软件内测期间支持插件有限，目前抖音、快手、视频号、小红书这四个平台的视频和图文发布已经可以使用，其他平台及功能逐步在完善中……",
+        "content_color_light": "#FF4D4F",
+        "content_color_dark": "#FF7875",
         "color": "#138496",
     },
 ]
@@ -116,8 +120,8 @@ class AnnouncementItem(QWidget):
         icon_layout.setContentsMargins(0, 0, 0, 0)
         icon_w = IconWidget(icon, icon_bg)
         icon_w.setFixedSize(12, 12)
-        icon_layout.addWidget(icon_w, 0, Qt.AlignCenter)
-        layout.addWidget(icon_bg, 0, Qt.AlignVCenter)
+        icon_layout.addWidget(icon_w, 0, Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(icon_bg, 0, Qt.AlignmentFlag.AlignVCenter)
 
         title_color = "#E8E8E8" if dark else "#1A1A1A"
         self._title_label = BodyLabel(self._title_text, self)
@@ -126,15 +130,15 @@ class AnnouncementItem(QWidget):
         )
         self._title_label.setWordWrap(False)
         self._title_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
-        layout.addWidget(self._title_label, 0, Qt.AlignVCenter)
+        layout.addWidget(self._title_label, 0, Qt.AlignmentFlag.AlignVCenter)
 
         sep = BodyLabel("·", self)
         sep.setStyleSheet(
             f"font-size: 13px; color: {'#666' if dark else '#B0B0B0'}; padding: 0 2px;"
         )
         sep.setFixedWidth(12)
-        sep.setAlignment(Qt.AlignCenter)
-        layout.addWidget(sep, 0, Qt.AlignVCenter)
+        sep.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(sep, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._content_label = CaptionLabel(self._content_text, self)
         self._content_label.setStyleSheet(
@@ -142,7 +146,7 @@ class AnnouncementItem(QWidget):
         )
         self._content_label.setWordWrap(False)
         self._content_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        layout.addWidget(self._content_label, 1, Qt.AlignVCenter)
+        layout.addWidget(self._content_label, 1, Qt.AlignmentFlag.AlignVCenter)
 
     @staticmethod
     def _make_divider(parent: QWidget) -> QFrame:
@@ -170,8 +174,8 @@ class AnnouncementItem(QWidget):
         icon_layout.setContentsMargins(0, 0, 0, 0)
         icon_w = IconWidget(icon, icon_bg)
         icon_w.setFixedSize(14, 14)
-        icon_layout.addWidget(icon_w, 0, Qt.AlignCenter)
-        layout.addWidget(icon_bg, 0, Qt.AlignTop)
+        icon_layout.addWidget(icon_w, 0, Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(icon_bg, 0, Qt.AlignmentFlag.AlignTop)
 
         text_layout = QVBoxLayout()
         text_layout.setSpacing(2)
@@ -273,8 +277,9 @@ class AnnouncementWidget(CardWidget):
 
         while self.list_layout.count():
             child = self.list_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+            widget = child.widget()
+            if widget is not None:
+                widget.deleteLater()
 
         for index, item in enumerate(items):
             cc = ""

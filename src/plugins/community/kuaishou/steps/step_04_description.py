@@ -245,6 +245,11 @@ class MetadataFillStep(BasePublishStep):
         speed_rate: float,
         metadata: Dict[str, Any],
     ) -> Tuple[bool, int]:
+        # 图文发布时，# 号不会触发下拉框，直接走「打字 + 空格收成」分支
+        is_image_publish = (metadata.get("file_type") or "video").lower() == "image"
+        if is_image_publish:
+            logger.info("图文发布模式：跳过话题下拉框检测，直接输入 #话题+空格")
+
         if body_text:
             await self._type_plain_body(page, desc_box, body_text, speed_rate)
 
@@ -258,50 +263,67 @@ class MetadataFillStep(BasePublishStep):
                 topic_index=i,
                 has_body=bool(body_text),
                 metadata=metadata,
+                is_image_publish=is_image_publish,
             )
-            chip_after = await self._count_at_tag_items(page, desc_box)
-            if chip_after <= chip_before:
-                logger.warning(
-                    "话题 [%d] %s 未收成（%s, at-tag %d→%d），换智能话题重试",
+            if is_image_publish:
+                # 图文模式：快手不把话题渲染为 .at-tag-item 芯片，无法通过计数验收。话题已写入正文，直接认为生效
+                logger.info(
+                    "话题 [%d] %s 已写入（图文模式，不验证芯片数量）",
                     i + 1,
                     label,
-                    mode,
-                    chip_before,
-                    chip_after,
                 )
-                await self._cleanup_trailing_stray_hash(page, desc_box)
-                chip_before = await self._count_at_tag_items(page, desc_box)
-                mode2 = await self._type_and_confirm_one_topic(
-                    page,
-                    desc_box,
-                    label,
-                    speed_rate,
-                    topic_index=i,
-                    has_body=bool(body_text),
-                    metadata=metadata,
-                    force_topic_btn=True,
-                )
+            else:
+                # 视频模式：通过 at-tag-item 数量验证话题是否收成
                 chip_after = await self._count_at_tag_items(page, desc_box)
-                if chip_after > chip_before:
-                    logger.info(
-                        "话题 [%d] %s 重试收成（%s, at-tag=%d）",
+                if chip_after <= chip_before:
+                    logger.warning(
+                        "话题 [%d] %s 未收成（%s, at-tag %d→%d），换智能话题重试",
                         i + 1,
                         label,
-                        mode2,
+                        mode,
+                        chip_before,
                         chip_after,
                     )
+                    await self._cleanup_trailing_stray_hash(page, desc_box)
+                    chip_before = await self._count_at_tag_items(page, desc_box)
+                    mode2 = await self._type_and_confirm_one_topic(
+                        page,
+                        desc_box,
+                        label,
+                        speed_rate,
+                        topic_index=i,
+                        has_body=bool(body_text),
+                        metadata=metadata,
+                        force_topic_btn=True,
+                        is_image_publish=False,
+                    )
+                    chip_after = await self._count_at_tag_items(page, desc_box)
+                    if chip_after > chip_before:
+                        logger.info(
+                            "话题 [%d] %s 重试收成（%s, at-tag=%d）",
+                            i + 1,
+                            label,
+                            mode2,
+                            chip_after,
+                        )
+                    else:
+                        await self._save_topic_trigger_debug(page, desc_box, label, metadata)
                 else:
-                    await self._save_topic_trigger_debug(page, desc_box, label, metadata)
-            else:
-                logger.info(
-                    "话题 [%d] %s 已收成（%s, at-tag %d→%d）",
-                    i + 1,
-                    label,
-                    mode,
-                    chip_before,
-                    chip_after,
-                )
+                    logger.info(
+                        "话题 [%d] %s 已收成（%s, at-tag %d→%d）",
+                        i + 1,
+                        label,
+                        mode,
+                        chip_before,
+                        chip_after,
+                    )
 
+        if is_image_publish:
+            # 图文模式：话题已全部写入，直接视为成功（快手图文不显示 .at-tag-item 芯片）
+            logger.info("图文发布模式：话题输入完成，默认全部生效（共 %d 个）", len(labels))
+            return True, len(labels)
+
+        # 视频模式：检测最终芯片数量
         chip_count = await self._count_at_tag_items(page, desc_box)
         ok = chip_count >= len(labels)
         if not ok:
@@ -489,8 +511,38 @@ class MetadataFillStep(BasePublishStep):
         has_body: bool,
         metadata: Dict[str, Any],
         force_topic_btn: bool = False,
+        is_image_publish: bool = False,
     ) -> str:
+        """输入并收成一个话题。
+
+        图文发布模式（is_image_publish=True）：
+            快手图文页面输入 # 后不会弹出话题下拉框，
+            直接在光标处输入「空格 + #词名」再敲空格收成即可。
+
+        视频发布模式（is_image_publish=False，默认）：
+            按原有流程：先触发 # 下拉框 → 输词名 → 空格收成。
+        """
         need_space = has_body or topic_index > 0
+
+        if is_image_publish:
+            # ── 图文分支：直接 focus 末尾 → 输「空格+#词名」→ 空格收成 ──
+            await self._focus_editor_end(page, desc_box, speed_rate)
+            if need_space:
+                await page.keyboard.press(" ")
+                await page.wait_for_timeout(_topic_pause_ms(40, speed_rate))
+            await page.keyboard.press("#")
+            await page.wait_for_timeout(_topic_pause_ms(60, speed_rate))
+            chip_before = await self._count_at_tag_items(page, desc_box)
+            delay = _topic_type_delay(speed_rate)
+            await page.keyboard.type(label, delay=delay)
+            await page.wait_for_timeout(_topic_pause_ms(80, speed_rate))
+            confirm_mode = await self._confirm_topic_with_space(
+                page, desc_box, chip_before=chip_before, speed_rate=speed_rate
+            )
+            logger.debug("图文话题收成: label=%s, mode=%s", label, confirm_mode)
+            return f"image_direct+{confirm_mode}"
+
+        # ── 视频分支：原有下拉框触发流程 ──
         trigger, dropdown_ok = await self._trigger_topic_mode(
             page,
             desc_box,
@@ -500,6 +552,7 @@ class MetadataFillStep(BasePublishStep):
         )
 
         if not dropdown_ok:
+            # 视频模式下拉框未出现，视为触发失败，不继续输入（避免乱码写入正文）
             return f"trigger_failed:{trigger}"
 
         # 阶段 B：输入完整词名后空格收成（不点下拉建议）

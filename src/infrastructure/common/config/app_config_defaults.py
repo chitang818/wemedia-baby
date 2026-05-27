@@ -55,7 +55,7 @@ from src.infrastructure.common.config.app_config_keys import (
 )
 
 # 须与 src.utils.plugin_settings.get_default_enabled_platform_ids 默认返回值保持一致
-_DEFAULT_ENABLED_PLATFORM_PLUGINS = ["douyin", "kuaishou", "wechat_video"]
+_DEFAULT_ENABLED_PLATFORM_PLUGINS = ["douyin", "kuaishou", "wechat_video", "xiaohongshu"]
 
 
 def default_app_config_skeleton() -> Dict[str, Any]:

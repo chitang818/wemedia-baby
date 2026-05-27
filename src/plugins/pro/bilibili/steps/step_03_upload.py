@@ -38,7 +38,11 @@ class UploadMediaStep(BasePublishStep):
     async def _upload_video(self, page: Page, file_path: str, metadata: Dict[str, Any]) -> Optional[PublishResult]:
         logger.info("===== 开始上传视频文件 =====")
         base_name = os.path.basename(str(file_path))
-        USER_LOG.info(f"[步骤3 上传] ▶ 开始 文件={base_name}")
+        prefix = metadata.get("_step_prefix", "")
+        if prefix:
+            USER_LOG.info(f"{prefix} · 文件: {base_name}")
+        else:
+            USER_LOG.info(f"· 文件: {base_name}")
 
         if not os.path.exists(file_path):
             return PublishResult(success=False, error_message=f"视频文件不存在: {file_path}")
@@ -74,7 +78,6 @@ class UploadMediaStep(BasePublishStep):
         """等待上传完成：检测上传成功标识或重新上传按钮出现。"""
         max_wait_seconds = int(metadata.get("upload_timeout_seconds") or 300)
         logger.info(f"等待上传就绪（最长 {max_wait_seconds} 秒）…")
-        USER_LOG.info(f"[步骤3 上传] 正在上传中（最长 {max_wait_seconds} 秒）…")
         speed_rate = max(0.5, float(metadata.get("speed_rate", 1.0)))
         poll_ms = max(300, int(700 * speed_rate))
         max_attempts = max(1, int(max_wait_seconds * 1000 / poll_ms))
@@ -91,7 +94,6 @@ class UploadMediaStep(BasePublishStep):
             try:
                 if await page.locator(combined).count() > 0:
                     logger.info("检测到上传成功标识")
-                    USER_LOG.info("[步骤3 上传] ✓ 上传成功")
                     return None
             except Exception:
                 pass
@@ -102,7 +104,6 @@ class UploadMediaStep(BasePublishStep):
                 if await page.locator(title_selector).count() > 0:
                     if await page.locator(title_selector).first.is_visible():
                         logger.info("检测到标题输入框已出现，视为上传就绪")
-                        USER_LOG.info("[步骤3 上传] ✓ 上传成功")
                         return None
             except Exception:
                 pass
@@ -111,7 +112,7 @@ class UploadMediaStep(BasePublishStep):
             if i % 30 == 0 and i > 0:
                 logger.info(f"等待上传中… ({elapsed}s/{max_wait_seconds}s)")
             if i > 0 and i % 15 == 0:
-                USER_LOG.info(f"[步骤3 上传] 正在上传中，已等待 {elapsed} 秒…")
+                pass
 
             await page.wait_for_timeout(poll_ms)
 

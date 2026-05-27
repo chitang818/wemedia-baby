@@ -55,6 +55,32 @@ class UploadMediaStep(BasePublishStep):
         await self._await_pause(metadata)
         file_type = (metadata.get("file_type") or "video").lower()
 
+
+logger = logging.getLogger(__name__)
+USER_LOG = logging.getLogger("publish.user_log")
+
+
+_FOLDER_MARKER_PREFIX = "__FOLDER__:"
+
+
+def _parse_image_paths(file_path: str, metadata: Dict[str, Any]) -> List[str]:
+    paths = metadata.get("image_paths")
+    if isinstance(paths, list) and paths:
+        return [str(p).strip() for p in paths if str(p).strip()]
+    # 兼容历史：逗号分隔，过滤文件夹来源标记
+    return [
+        p.strip() for p in str(file_path).split(",")
+        if p.strip() and not p.strip().startswith(_FOLDER_MARKER_PREFIX)
+    ]
+
+
+class UploadMediaStep(BasePublishStep):
+    """统一上传步骤：根据 file_type 上传视频或图文。"""
+
+    async def execute(self, page: Page, file_path: str, metadata: Dict[str, Any]) -> StepOutcome:
+        await self._await_pause(metadata)
+        file_type = (metadata.get("file_type") or "video").lower()
+
         if file_type == "image":
             return await self._upload_images(page, file_path, metadata)
         return await self._upload_video(page, file_path, metadata)
@@ -62,7 +88,11 @@ class UploadMediaStep(BasePublishStep):
     async def _upload_video(self, page: Page, file_path: str, metadata: Dict[str, Any]) -> Optional[PublishResult]:
         logger.info("===== 开始上传视频文件 =====")
         base = os.path.basename(str(file_path))
-        USER_LOG.info(f"[步骤3/9 上传视频/图文] ▶ 开始 文件={base} 路径={file_path}")
+        prefix = metadata.get("_step_prefix", "")
+        if prefix:
+            USER_LOG.info(f"{prefix} · 文件: {base}")
+        else:
+            USER_LOG.info(f"· 文件: {base}")
 
         # 唯一方案：通过 FILE_INPUT 的第一个选择器直接 set_input_files
         first_selector = Selectors.PUBLISH["FILE_INPUT"][0]
@@ -81,7 +111,6 @@ class UploadMediaStep(BasePublishStep):
         """等待视频上传完成：仅当页面出现「重新上传」区域（label.upload-btn-PdfuUv）时判定为成功。"""
         max_wait_seconds = int(metadata.get("upload_timeout_seconds") or 180)
         logger.info("等待视频上传/转码就绪（最长 %s 分钟），检测「重新上传」按钮是否出现...", max_wait_seconds // 60)
-        USER_LOG.info("[步骤3/9 上传视频/图文] 正在上传中，等待上传成功（最长 %d 秒）…", max_wait_seconds)
         speed_rate = max(0.5, float(metadata.get("speed_rate", 1.0)))
         # 唯一判定：出现 label.upload-btn-PdfuUv（重新上传）即代表视频已上传成功
         success_markers = Selectors.PUBLISH["VIDEO_UPLOAD_SUCCESS_MARKER"]
@@ -91,7 +120,7 @@ class UploadMediaStep(BasePublishStep):
             if attempt % 60 == 0:
                 logger.info("等待上传中... (%ss/%ss)", elapsed, max_wait_seconds)
             if attempt > 0 and attempt % 30 == 0:
-                USER_LOG.info("[步骤3/9 上传视频/图文] 正在上传中，已等待 %d 秒，等待「重新上传」按钮出现…", elapsed)
+                logger.info("正在上传中，已等待 %d 秒，等待「重新上传」按钮出现…", elapsed)
 
         matched = await PluginWaitHelper.wait_for_any_visible(
             page,
@@ -103,7 +132,6 @@ class UploadMediaStep(BasePublishStep):
         )
         if matched:
             logger.info("检测到「重新上传」按钮已出现，视频上传成功: %s", matched)
-            USER_LOG.info("[步骤3/9 上传视频/图文] ✓ 上传成功")
             return None
 
         return PublishResult(success=False, error_message=f"等待视频上传超时 ({max_wait_seconds}秒)")
@@ -112,7 +140,11 @@ class UploadMediaStep(BasePublishStep):
         logger.info("===== 开始上传图文图片 =====")
         image_paths = _parse_image_paths(file_path, metadata)
         base = os.path.basename(str(image_paths[0])) if image_paths else ""
-        USER_LOG.info(f"[步骤3/9 上传视频/图文] ▶ 开始 图文数量={len(image_paths)} 文件示例={base} 路径={file_path}")
+        prefix = metadata.get("_step_prefix", "")
+        if prefix:
+            USER_LOG.info(f"{prefix} · 图文数量: {len(image_paths)} · 示例文件: {base}")
+        else:
+            USER_LOG.info(f"· 图文数量: {len(image_paths)} · 示例文件: {base}")
 
         if not image_paths:
             return PublishResult(success=False, error_message="图文上传失败: 未提供图片路径")
@@ -149,7 +181,6 @@ class UploadMediaStep(BasePublishStep):
     async def _wait_for_images_upload_complete(self, page: Page, metadata: Dict[str, Any]) -> Optional[PublishResult]:
         max_wait_seconds = int(metadata.get("image_upload_timeout_seconds") or 180)
         logger.info("等待图文上传完成：检测「清空并重新上传」按钮（最长 %s 分钟）...", max_wait_seconds // 60)
-        USER_LOG.info("[步骤3/9 上传视频/图文] 正在上传图文，等待「清空并重新上传」出现（最长 %d 秒）…", max_wait_seconds)
         speed_rate = max(0.5, float(metadata.get("speed_rate", 1.0)))
 
         def _log_wait(attempt: int) -> None:
@@ -157,7 +188,7 @@ class UploadMediaStep(BasePublishStep):
             if attempt % 20 == 0:
                 logger.info("等待图文上传就绪... (%ss/%ss)", elapsed, max_wait_seconds)
             if attempt > 0 and attempt % 30 == 0:
-                USER_LOG.info("[步骤3/9 上传视频/图文] 正在上传图文，已等待 %d 秒，等待「清空并重新上传」…", elapsed)
+                logger.info("正在上传图文，已等待 %d 秒，等待「清空并重新上传」…", elapsed)
 
         matched = await PluginWaitHelper.wait_for_condition(
             page,
@@ -169,7 +200,6 @@ class UploadMediaStep(BasePublishStep):
         )
         if matched:
             logger.info("已检测到「清空并重新上传」按钮，图文上传成功")
-            USER_LOG.info("[步骤3/9 上传视频/图文] ✓ 上传成功")
             return None
 
         return PublishResult(

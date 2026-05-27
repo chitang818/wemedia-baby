@@ -6,8 +6,8 @@
 类名：MorePublishSettingsCard
 
 设计目标：
-- 左栏：位置、带货推广、设置权限、原创声明、作品申明。
-- 右栏：按所选平台/账号组条件展示特殊项（如抖音打卡/带货模式、图文音乐等）。
+- 左栏：位置、带货推广、设置权限、原创声明、作品申明；图文模式另含「选择音乐」。
+- 右栏：按所选平台/账号组条件展示特殊项（如抖音打卡/带货模式等）。
 - 完善后切换提交/回填并删除下方旧版「发布设置」卡片。
 """
 from __future__ import annotations
@@ -145,6 +145,10 @@ class MorePublishSettingsCard(CardWidget):
         shared_layout.addWidget(self._row_promotion)
         self._row_privacy = self._finalize_settings_row(self._build_privacy_row())
         shared_layout.addWidget(self._row_privacy)
+        self._row_music = None
+        if self._is_image_mode:
+            self._row_music = self._finalize_settings_row(self._build_music_row())
+            shared_layout.addWidget(self._row_music)
         self._declaration_panel = DeclarationSettingsPanel(self._panel_shared)
         shared_layout.addWidget(self._declaration_panel)
         shared_layout.addStretch(1)
@@ -318,16 +322,13 @@ class MorePublishSettingsCard(CardWidget):
         pc_layout.setContentsMargins(0, 0, 0, 0)
         pc_layout.setSpacing(ROW_GAP)
 
-        self._row_music = self._finalize_settings_row(self._build_music_row())
-        pc_layout.addWidget(self._row_music)
-
         self._platform_content.hide()
         layout.addWidget(self._platform_content)
         section.hide()
         return section
 
     def _build_music_row(self) -> QWidget:
-        row_w = QWidget(self._platform_content)
+        row_w = QWidget(self._panel_shared)
         row = QHBoxLayout(row_w)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(H_GAP)
@@ -337,6 +338,7 @@ class MorePublishSettingsCard(CardWidget):
         self._music_type_combo = ComboBox(row_w)
         self._music_type_combo.addItems(["不选音乐", "随机音乐", "指定音乐"])
         self._music_type_combo.setFixedWidth(TAG_TYPE_COMBO_WIDTH + 16)
+        self._music_type_combo.currentTextChanged.connect(self._on_music_type_changed)
 
         self._music_name_edit = LineEdit(row_w)
         self._music_name_edit.setPlaceholderText("请输入音乐名称")
@@ -473,6 +475,14 @@ class MorePublishSettingsCard(CardWidget):
             self._clear_promotion_to_none()
         self._apply_douyin_location_promotion_mutex()
 
+    def _on_music_type_changed(self, text: str = "") -> None:
+        if not getattr(self, "_music_name_edit", None):
+            return
+        show_name = (text or self._music_type_combo.currentText()) == "指定音乐"
+        self._music_name_edit.setVisible(show_name)
+        if not show_name:
+            self._music_name_edit.clear()
+
     def _on_promotion_type_changed(self, text: str) -> None:
         if self._includes_douyin and text != "无":
             if self._location_selector.get_selected_short_name():
@@ -538,20 +548,14 @@ class MorePublishSettingsCard(CardWidget):
         self._privacy_combo.setVisible(True)
         self._allow_download_check.setVisible(True)
 
+        if getattr(self, "_row_music", None) is not None:
+            self._row_music.setVisible(self._is_image_mode)
+
         show_wx = context == "wechat_video" or bool(
             cap and cap.show_wechat_empty_location
         )
         self._wx_empty_loc.set_row_visible(show_wx)
         self._sync_promotion_subcontrols()
-
-    def _platform_section_has_content(
-        self,
-        cap: Optional[PublishOptionsCapabilities],
-        context: AccountContext,
-    ) -> bool:
-        if context in ("none", "mixed") or cap is None:
-            return False
-        return bool(cap.show_music)
 
     def _apply_right_column(
         self,
@@ -561,13 +565,12 @@ class MorePublishSettingsCard(CardWidget):
         includes_douyin: bool,
         platforms_in_selection: Optional[Set[str]] = None,
     ) -> None:
-        has_music_block = self._platform_section_has_content(cap, context)
         plats = platforms_in_selection or set()
         has_group_decl = (
             context == "mixed"
             and self._group_declaration_panel.has_content(plats)
         )
-        has_right = includes_douyin or has_music_block or has_group_decl
+        has_right = includes_douyin or has_group_decl
 
         self._panel_platform.setVisible(has_right)
         self._split_divider.setVisible(has_right)
@@ -583,11 +586,5 @@ class MorePublishSettingsCard(CardWidget):
             self._sync_location_mode_from_tag_values()
 
         section = self._platform_section_title.parentWidget()
-        if has_music_block:
-            assert cap is not None and section is not None
-            section.show()
-            self._platform_section_title.show()
-            self._platform_content.show()
-            self._row_music.setVisible(cap.show_music)
-        elif section is not None:
+        if section is not None:
             section.hide()

@@ -193,6 +193,35 @@ class Selectors:
             "div[class*='image-item'] img",
         ],
 
+        # ---- 图文发布专用选择器 ----
+        # 图文 input[type=file]：优先限定 accept=image/* 避免误取视频 input
+        "IMAGE_FILE_INPUT": [
+            "input[type='file'][accept*='image']",
+            "input[type='file'][accept*='png']",
+            "input[type='file'][accept*='jpg']",
+            "input[type='file']:not([accept*='video'])",
+            "input[type='file']",
+        ],
+        # 图文发布页上传触发按钮 / 拖拽区域
+        "IMAGE_UPLOAD_BTN": [
+            "div[class*='upload-wrapper']",
+            "div[class*='upload-input']",
+            "div[class*='drag-over']",
+            "div[class*='upload']",
+            "button:has-text('上传图片')",
+            "div:has-text('点击上传')",
+        ],
+        # 图文上传完成标志：出现预览图即视为上传就绪
+        # 小红书图文页以缩略图或图片计数作为就绪信号
+        "IMAGE_UPLOAD_SUCCESS": [
+            "div[class*='image-item'] img",
+            "div[class*='thumbnail'] img",
+            "div[class*='preview'] img",
+            "div[class*='upload-list'] img",
+            "div[class*='file-list'] img",
+            "img[class*='preview']",
+        ],
+
         # 步骤5：标题与描述
         # ⏳ 标题输入框（小红书标题限 20 字，需在发布页采集精确选择器）
         "TITLE_INPUT": [

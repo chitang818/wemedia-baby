@@ -65,7 +65,6 @@ from src.ui.components.publish_settings_card import PublishSettingsCard
 from src.ui.utils.fluent_tooltips import apply_instructional_tooltip, ToolTipPosition
 from src.utils.platform_names import get_platform_display_name
 from qfluentwidgets import InfoBar, FluentIcon, PushButton
-from src.ui.dialogs.publish_diagnostic_dialog import PublishDiagnosticDialog
 from src.ui.pages.publish.publish_validators import (
     wechat_video_short_title_validation_error,
     publish_file_missing_error,
@@ -117,9 +116,8 @@ class PublishListPage(PublishRecordsPage):
         self._list_table_ctx_retry = None
         self._list_table_ctx_delete = None
         self._list_ctx_failed_records: List[Dict[str, Any]] = []
-        self._list_ctx_selected_rows: List[int] = []
+        self._list_table_ctx_selected_rows: List[int] = []
         self._shown_diagnostic_paths: set[str] = set()
-        self._diagnostic_dialogs: List[QDialog] = []
         # 发布队列本轮仅处理点击「发布」时表格筛选内的待发布任务（ID 快照）
         self._publish_queue_scoped_ids: Optional[FrozenSet[int]] = None
         # 媒体库规则自动改写发布后文件处理后，待弹窗展示的说明（进入待发布页或本页刷新后弹出）
@@ -1393,11 +1391,12 @@ class PublishListPage(PublishRecordsPage):
                     self._publish_queue_natural_complete = True
                     break
 
-                # 首次进入循环时初始化任务总览快照
+                # 首次进入循环时初始化任务总览快照（以当前表格视图为底本，避免总计数字跳变）
                 if run_task_items is None:
-                    run_total = len(pending_records)
+                    records_snapshot = getattr(self, "_filtered_records", None) or []
+                    run_total = len(records_snapshot)
                     run_task_items = []
-                    for r in pending_records:
+                    for r in records_snapshot:
                         platform = r.get("platform") or ""
                         account = (r.get("platform_username") or "").strip()
                         fp = r.get("file_path") or ""
@@ -1411,9 +1410,11 @@ class PublishListPage(PublishRecordsPage):
                             "account": account,
                             "type_zh": type_zh,
                             "file_basename": basename,
-                            "status": "pending",
+                            "status": r.get("status", "pending"),
                         })
-                    self.task_overview_card.set_task_overview(run_total, run_total, 0, run_task_items)
+                    
+                    initial_remaining = sum(1 for item in run_task_items if item["status"] == "pending")
+                    self.task_overview_card.set_task_overview(run_total, initial_remaining, 0, run_task_items)
                     # 构建文件引用分组表（仅在队列首次启动时执行一次）
                     if post_publish_action != "none":
                         try:
@@ -1895,7 +1896,7 @@ class PublishListPage(PublishRecordsPage):
         task_id: object = None,
         platform: str = "",
     ) -> None:
-        """发布失败：InfoBar + 模态诊断窗（或仅错误说明）。"""
+        """发布失败：InfoBar 提示和日志记录。"""
         from PySide6.QtWidgets import QApplication
 
         parent = QApplication.activeWindow() or self.window() or self
@@ -1925,18 +1926,11 @@ class PublishListPage(PublishRecordsPage):
                 error_message=error_message,
                 platform=platform,
             )
-            return
-
-        try:
-            from src.ui.utils.fluent_dialogs import show_info
-
-            show_info(
-                parent,
-                title,
-                f"{error_message or '未知错误'}\n\n（未生成诊断包，请查看发布日志）",
-            )
-        except Exception as e:
-            logger.warning("发布失败说明弹窗展示失败: %s", e, exc_info=True)
+        else:
+            if getattr(self, "log_widget", None) is not None:
+                self.log_widget.append_warning(
+                    f"❌ {title}: {error_message or '未知错误'}\n（未生成诊断包，请查看发布日志）"
+                )
 
     def _handle_publish_diagnostic_ready(
         self,
@@ -1945,7 +1939,7 @@ class PublishListPage(PublishRecordsPage):
         error_message: Optional[str] = None,
         platform: str = "",
     ) -> None:
-        """记录并提示失败诊断结果已生成。"""
+        """记录失败诊断结果已生成。"""
         path = (diagnostic_path or "").strip()
         if not path:
             return
@@ -1959,65 +1953,7 @@ class PublishListPage(PublishRecordsPage):
 
         if getattr(self, "log_widget", None) is not None:
             self.log_widget.append_warning(
-                "🧩 已保存失败诊断包，可在弹窗中打开文件夹或复制路径发给开发者。"
-            )
-        self._show_diagnostic_dialog(
-            path,
-            error_message=error_message,
-            platform=platform,
-        )
-
-    def _open_diagnostic_folder(self, path: str) -> None:
-        """在系统文件管理器中打开诊断结果目录。"""
-        folder = os.path.abspath(os.path.normpath(path or ""))
-        parent = self.window() or self
-        if not folder or not os.path.isdir(folder):
-            InfoBar.warning("无法打开诊断目录", "诊断结果目录不存在或已被清理。", parent=parent)
-            return
-        if not QDesktopServices.openUrl(QUrl.fromLocalFile(folder)):
-            InfoBar.warning("无法打开诊断目录", "系统未能打开该诊断结果目录。", parent=parent)
-
-    def _show_diagnostic_dialog(
-        self,
-        path: str,
-        *,
-        error_message: Optional[str] = None,
-        platform: str = "",
-    ) -> None:
-        """显示诊断结果模态弹窗（需用户点击「知道了」）。"""
-        from PySide6.QtWidgets import QApplication
-
-        parent = QApplication.activeWindow() or self.window() or self
-        analysis_hints: list[str] = []
-        if (platform or "").strip().lower() == "xiaohongshu":
-            try:
-                from src.plugins.pro.xiaohongshu.publish_failure_diagnostics import (
-                    load_analysis_hints_from_bundle,
-                )
-
-                analysis_hints = load_analysis_hints_from_bundle(path)
-            except Exception:
-                pass
-        try:
-            dialog = PublishDiagnosticDialog(
-                parent,
-                diagnostic_path=path,
-                error_message=error_message,
-                on_open_folder=self._open_diagnostic_folder,
-                platform=platform,
-                analysis_hints=analysis_hints,
-            )
-            dialog.setWindowModality(Qt.WindowModality.WindowModal)
-            dialog.raise_()
-            dialog.activateWindow()
-            dialog.exec()
-        except Exception as exc:
-            logger.warning("显示诊断结果弹窗失败，降级为 InfoBar: %s", exc, exc_info=True)
-            InfoBar.warning(
-                "发布失败 · 已保存诊断信息",
-                "已保存失败诊断结果，可在发布记录详情中查看诊断目录。",
-                parent=parent,
-                duration=8000,
+                f"🧩 发布失败（{platform}）：{error_message or '未知错误'}\n已保存诊断包至: {path}"
             )
 
     def _on_stop_publish(self):

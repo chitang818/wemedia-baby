@@ -19,7 +19,7 @@ def get_default_enabled_platform_ids() -> List[str]:
 
     须与 app_config_defaults._DEFAULT_ENABLED_PLATFORM_PLUGINS 保持一致。
     """
-    return ["douyin", "kuaishou", "wechat_video"]
+    return ["douyin", "kuaishou", "wechat_video", "xiaohongshu"]
 
 
 def _enabled_ids_from_app_dict(app: dict) -> List[str]:
