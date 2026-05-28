@@ -124,6 +124,9 @@ class PublishExecutor:
                     return PublishResult(success=False, error_message=f"未在数据库中找到账号: {account_name} (平台: {platform})")
                 
                 logger.info(f"发布任务: 账号={account_name}, 数据库ID={account_db_id}, 平台={platform}")
+                if str(platform).strip().lower() == "xiaohongshu" and headless:
+                    logger.info("小红书 strict_real_browser：发布流程强制使用可见浏览器")
+                    headless = False
                 
                 # Step 3: 复用模块化方法打开浏览器（headless 与发布页「显示浏览器」勾选一致）
                 browser_wrapper = await pw_service.open_browser_for_db_account(

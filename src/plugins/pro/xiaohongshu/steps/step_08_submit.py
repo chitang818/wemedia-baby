@@ -247,7 +247,7 @@ async def _xhs_host_submit_unlocked(page: Page) -> bool:
 
 
 async def _read_xhs_publish_host_state(
-    page: Page, primary_label: str,
+    page: Page, primary_label: str, *, include_shadow_probe: bool = True,
 ) -> Dict[str, Any]:
     state: Dict[str, Any] = {
         "submit_text": "",
@@ -258,15 +258,16 @@ async def _read_xhs_publish_host_state(
         "focus_in_schedule": False,
     }
     try:
-        snap = await snapshot_xhs_publish_btn(page)
-        summary = summarize_snapshot_for_log(snap)
-        state.update(summary)
+        if include_shadow_probe:
+            snap = await snapshot_xhs_publish_btn(page)
+            summary = summarize_snapshot_for_log(snap)
+            state.update(summary)
         state["schedule_picker_open"] = bool(
-            summary.get("schedule_picker_open")
+            state.get("schedule_picker_open")
             or await is_schedule_picker_visible(page),
         )
         host = await _get_xhs_publish_host(page)
-        if await host.count() > 0:
+        if include_shadow_probe and await host.count() > 0:
             sr_state = await evaluate_sr_red_button_state(host, primary_label)
             state["sr_red_ready"] = bool(sr_state.get("ready"))
             if sr_state.get("submitText"):
@@ -282,18 +283,41 @@ async def _read_xhs_publish_host_state(
     return state
 
 
-async def _xhs_submit_clickable(page: Page, primary_label: str) -> bool:
+async def _xhs_submit_clickable(
+    page: Page, primary_label: str, *, strict_real_browser: bool = False,
+) -> bool:
     if not await _xhs_host_submit_unlocked(page):
         return False
     host = await _get_xhs_publish_host(page)
     if await host.count() == 0:
         return False
+    if strict_real_browser:
+        try:
+            return bool(await host.is_visible() and await host.bounding_box())
+        except Exception:
+            return False
     sr_state = await evaluate_sr_red_button_state(host, primary_label)
     return bool(sr_state.get("ready"))
 
 
 def _url_indicates_success(url: str) -> bool:
     return url_indicates_publish_success(url)
+
+
+def _xhs_strict_real_browser_enabled(metadata: Dict[str, Any]) -> bool:
+    return bool(metadata.get("xhs_strict_real_browser", True))
+
+
+def _xhs_auto_click_submit_enabled(metadata: Dict[str, Any]) -> bool:
+    return bool(metadata.get("xhs_auto_click_submit", False))
+
+
+def _xhs_manual_submit_timeout_ms(metadata: Dict[str, Any]) -> int:
+    try:
+        seconds = int(metadata.get("xhs_manual_submit_timeout_seconds", 600))
+    except (TypeError, ValueError):
+        seconds = 600
+    return max(30, min(seconds, 3600)) * 1000
 
 
 async def _page_shows_publish_success_text(page: Page) -> bool:
@@ -562,7 +586,23 @@ async def _click_submit_with_fallback(
     config: Dict[str, Any],
     target_desc: str = "",
     primary_label: str = _SUBMIT_TEXT_IMMEDIATE,
+    *,
+    strict_real_browser: bool = False,
 ) -> None:
+    if strict_real_browser:
+        box = await target_btn.bounding_box()
+        if not box:
+            raise RuntimeError("发布按钮没有可点击区域")
+        await _simulate_mouse_click_at(
+            page,
+            box["x"] + box["width"] / 2,
+            box["y"] + box["height"] / 2,
+            metadata,
+            config,
+            desc=target_desc or "strict-real-submit",
+        )
+        return
+
     if await _page_has_xhs_publish_btn(page) or target_desc == _XHS_HOST_DESC:
         if await _click_xhs_publish_via_sr(page, primary_label, metadata, config):
             return
@@ -587,6 +627,37 @@ async def _click_submit_with_fallback(
         )
 
 
+async def _wait_for_manual_submit(page: Page, metadata: Dict[str, Any]) -> PublishResult:
+    timeout_ms = _xhs_manual_submit_timeout_ms(metadata)
+    try:
+        await page.bring_to_front()
+    except Exception:
+        pass
+    USER_LOG.info(
+        "[XHS submit] Safe mode is waiting. Please click Publish in the browser."
+    )
+    logger.info(
+        "XHS strict_real_browser: waiting up to %s seconds for manual publish",
+        timeout_ms // 1000,
+    )
+    if await _check_publish_success(
+        page,
+        timeout_ms=timeout_ms,
+        poll_interval_ms=500,
+    ):
+        current_url = page.url if not page.is_closed() else ""
+        USER_LOG.info("[XHS submit] Publish success detected (%s)", current_url)
+        return PublishResult(success=True, publish_url=current_url)
+    return PublishResult(
+        success=False,
+        error_message=(
+            "XHS safe mode filled the form and stopped before publishing; "
+            "please click Publish manually in the browser."
+        ),
+        failed_step=_FAILED_STEP,
+    )
+
+
 class SubmitStep(BasePublishStep):
     _FAILED_STEP = _FAILED_STEP
 
@@ -596,6 +667,8 @@ class SubmitStep(BasePublishStep):
         speed_rate = max(0.5, float(metadata.get("speed_rate", 1.0)))
         wait_ms = lambda ms: int(ms * speed_rate)
         config = metadata.get("anti_risk_config") or {}
+        strict_real_browser = _xhs_strict_real_browser_enabled(metadata)
+        auto_click_submit = _xhs_auto_click_submit_enabled(metadata)
 
         try:
             if page.is_closed():
@@ -617,7 +690,9 @@ class SubmitStep(BasePublishStep):
         await _prepare_submit_surface(page, wait_ms, full_unlock=True, scroll_form=True)
 
         if await _page_has_xhs_publish_btn(page):
-            if await _xhs_submit_clickable(page, primary_label):
+            if await _xhs_submit_clickable(
+                page, primary_label, strict_real_browser=strict_real_browser,
+            ):
                 skip_ready_wait = True
                 logger.info("步骤8 发布钮已就绪，跳过等待轮询")
                 USER_LOG.info("[步骤8 点击发布] ▷ 发布钮已就绪，直接点击")
@@ -645,10 +720,16 @@ class SubmitStep(BasePublishStep):
                     full_unlock=full_unlock,
                     scroll_form=poll_counter["n"] == 0,
                 )
-                if await _xhs_submit_clickable(page, current):
+                if await _xhs_submit_clickable(
+                    page, current, strict_real_browser=strict_real_browser,
+                ):
                     return True
                 elapsed = _time.monotonic() - wait_started
-                if not staged_done["v"] and elapsed >= _STAGED_FALLBACK_WAIT_SEC:
+                if (
+                    not strict_real_browser
+                    and not staged_done["v"]
+                    and elapsed >= _STAGED_FALLBACK_WAIT_SEC
+                ):
                     staged_done["v"] = True
                     if await _try_staged_click_despite_disabled(
                         page, current, metadata, config,
@@ -656,7 +737,11 @@ class SubmitStep(BasePublishStep):
                         return True
                 poll_counter["n"] += 1
                 if poll_counter["n"] % _SUBMIT_WAIT_STATUS_LOG_EVERY_POLLS == 0:
-                    st = await _read_xhs_publish_host_state(page, current)
+                    st = await _read_xhs_publish_host_state(
+                        page,
+                        current,
+                        include_shadow_probe=not strict_real_browser,
+                    )
                     last_host_state.clear()
                     last_host_state.update(st)
                     USER_LOG.info(
@@ -679,10 +764,16 @@ class SubmitStep(BasePublishStep):
                     on_poll=lambda _a: logger.info("发布钮尚未可点，继续等待…"),
                 )
             primary_label = label_state["primary"]
-            if not clickable and not await _xhs_submit_clickable(page, primary_label):
+            if not clickable and not await _xhs_submit_clickable(
+                page, primary_label, strict_real_browser=strict_real_browser,
+            ):
                 if not last_host_state:
                     last_host_state.update(
-                        await _read_xhs_publish_host_state(page, primary_label),
+                        await _read_xhs_publish_host_state(
+                            page,
+                            primary_label,
+                            include_shadow_probe=not strict_real_browser,
+                        ),
                     )
                 await _attach_submit_diagnostic_snapshot(metadata, page)
                 return PublishResult(
@@ -710,6 +801,10 @@ class SubmitStep(BasePublishStep):
                     error_message=f"未找到 xhs-publish-btn（已等待约 {_MAX_FIND_BTN_SEC} 秒）",
                     failed_step=self._FAILED_STEP,
                 )
+
+        if strict_real_browser and not auto_click_submit:
+            metadata["xhs_manual_submit_required"] = True
+            return await _wait_for_manual_submit(page, metadata)
 
         last_click_error: Optional[str] = None
         post_verify_ms = (
@@ -744,7 +839,13 @@ class SubmitStep(BasePublishStep):
                     await page.wait_for_timeout(wait_ms(200))
 
                 await _click_submit_with_fallback(
-                    page, loc, metadata, config, selector, primary_label,
+                    page,
+                    loc,
+                    metadata,
+                    config,
+                    selector,
+                    primary_label,
+                    strict_real_browser=strict_real_browser,
                 )
                 USER_LOG.info("[步骤8 点击发布] ▶ 第 %d 次已触发「%s」", attempt, primary_label)
             except Exception as e:

@@ -122,7 +122,7 @@ ORM 模型位于 `src/infrastructure/storage/orm_models/`，包括用户、订�
 - `requirements-build.txt`：打包依赖。
 - `constraints.txt`：锁定依赖版本，用于可复现安装。
 - `pytest.ini`：pytest 路径、marker、异步模式、临时目录和默认参数。
-- `version.json`：当前版本与更新信息。当前版本为 `1.3.6`，发布日期为 `2026-05-17`。
+- `version.json`：当前版本与更新信息。当前版本为 `1.3.9`，发布日期为 `2026-05-27`。
 - `config/platforms/*.json`：平台基础配置，包含 URL、支持格式、大小限制、超时、发布间隔、选择器文件、反风控参数等。
 - `config/selectors/*.json`：平台页面选择器配置。
 

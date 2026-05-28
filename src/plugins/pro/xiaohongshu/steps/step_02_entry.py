@@ -44,7 +44,19 @@ class EnterPublishEntryStep(BasePublishStep):
         speed_rate = max(0.5, float(metadata.get("speed_rate", 1.0)))
         config = metadata.get("anti_risk_config") or {}
         file_type = (metadata.get("file_type") or "video").lower()
-        pause_cb = lambda: self._await_pause(metadata)
+        pause_cb = lambda: self._await_pause(metadata)
+
+        strict_real_browser = bool(metadata.get("xhs_strict_real_browser", True))
+        if strict_real_browser:
+            logger.info("小红书 strict_real_browser：优先从创作者首页自然进入发布页")
+            if await self._enter_from_home_card(page, file_type, metadata, config, speed_rate):
+                metadata["xhs_entry_strategy"] = "home_card"
+                guard_err = await self._finalize_publish_entry(page, file_type, metadata)
+                if guard_err is not None:
+                    return guard_err
+                return None
+            logger.warning("小红书首页入口未成功，降级使用发布页直达兜底")
+            metadata["xhs_entry_strategy"] = "direct_url_fallback"
 
         # 策略1：直接进入对应类型发布页。首页卡片点击后的真实 URL 会带
         # openFilePicker=true 并弹出系统文件选择器；自动化入口这里去掉该参数，
@@ -327,5 +339,4 @@ class EnterPublishEntryStep(BasePublishStep):
             pass
 
         logger.warning("小红书发布页已加载但类型未匹配: expected=%s url=%s", expected, getattr(page, "url", ""))
-        return False
-
+        return False

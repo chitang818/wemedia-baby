@@ -173,10 +173,29 @@ class XiaohongshuPublishPlugin(PublishPluginInterface):
                     Selectors.SETTINGS.get("SCHEDULE_DATE_PICKER", []) or [],
                 ),
             }
+            try:
+                from src.infrastructure.common.config.app_config_merge import get_app_config_for_read
+
+                app_cfg = get_app_config_for_read()
+            except Exception:
+                app_cfg = {}
+            auto_click_submit = bool(
+                metadata.get(
+                    "xhs_auto_click_submit",
+                    app_cfg.get("xiaohongshu_auto_click_submit_high_risk", False),
+                )
+            )
             metadata_for_runner = {
                 **metadata,
                 "anti_risk_config": anti_risk_config,
                 "selector_probes": probes,
+                "browser_fingerprint_strategy": "strict_real_browser",
+                "xhs_strict_real_browser": True,
+                "xhs_auto_click_submit": auto_click_submit,
+                "xhs_manual_submit_timeout_seconds": metadata.get(
+                    "xhs_manual_submit_timeout_seconds",
+                    app_cfg.get("xiaohongshu_manual_submit_timeout_seconds", 600),
+                ),
             }
 
             runner = StepRunner(
