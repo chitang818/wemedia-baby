@@ -118,6 +118,8 @@ logger = logging.getLogger(__name__)
 
 
 SUPPORTED_VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.flv', '.mkv', '.wmv', '.m4v', '.webm'}
+SUPPORTED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
+FOLDER_MARKER_PREFIX = "__FOLDER__:"
 TITLE_MAX_LENGTH = 30
 # 预览表行高：低于发布列表 42px，单行文字 + 略紧内边距，同屏多显示几行
 BATCH_PREVIEW_TABLE_ROW_HEIGHT = 30
@@ -134,8 +136,24 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
     _lazy_content = True
     _enable_show_fade = False
 
-    def __init__(self, parent: Optional[QWidget] = None):
-        super().__init__(title="批量视频任务", parent=parent)  # type: ignore
+    def __init__(
+        self,
+        parent: Optional[QWidget] = None,
+        *,
+        media_type: str = "video",
+        page_title: Optional[str] = None,
+    ):
+        self._media_type = "image" if media_type == "image" else "video"
+        self._media_label = "图片" if self._media_type == "image" else "视频"
+        self._task_label = "图文" if self._media_type == "image" else "视频"
+        self._media_library_label = "图文库" if self._media_type == "image" else "视频库"
+        self._file_type = "image" if self._media_type == "image" else "video"
+        self._supported_media_extensions = (
+            SUPPORTED_IMAGE_EXTENSIONS
+            if self._media_type == "image"
+            else SUPPORTED_VIDEO_EXTENSIONS
+        )
+        super().__init__(title=page_title or f"批量{self._task_label}任务", parent=parent)  # type: ignore
         from src.services.auth import CurrentUserService
         self._current_user_svc = CurrentUserService()
         self.user_id = self._current_user_svc.get_user_id_or_default(1)
@@ -189,6 +207,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         self._batch_wechat_empty_location_open_picker: bool = _loc_wx
         self.goods_text = ""
         self.anchor_text = ""
+        self.music_info = ""
         self.declare_original_checked = load_persisted_declare_original()
         _wdecl = load_persisted_work_declaration()
         self.douyin_work_declaration = normalize_douyin_value(_wdecl.get(KEY_DOUYIN))
@@ -224,8 +243,39 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         if self._lazy_video_auto_matcher is None:
             from src.pro_features.batch.services.material_auto_matcher import MaterialAutoMatcher
 
-            self._lazy_video_auto_matcher = MaterialAutoMatcher(media_type="video")
+            self._lazy_video_auto_matcher = MaterialAutoMatcher(media_type=self._media_type)
         return self._lazy_video_auto_matcher
+
+    def _material_display_name_for_path(self, file_path: str) -> str:
+        """图文文件夹任务显示文件夹名；其它任务显示文件名。"""
+        raw = (file_path or "").strip()
+        if self._media_type == "image":
+            for part in raw.split(","):
+                part = part.strip()
+                if part.startswith(FOLDER_MARKER_PREFIX):
+                    folder = part[len(FOLDER_MARKER_PREFIX):].strip()
+                    if folder:
+                        return os.path.basename(folder)
+        first = raw.split(",", 1)[0].strip()
+        return os.path.basename(first)
+
+    def _media_paths_from_folder(self, folder: str) -> List[str]:
+        """按单图文页规则读取文件夹内图片（一层），返回排序后的绝对路径。"""
+        paths: List[str] = []
+        try:
+            for fn in sorted(os.listdir(folder)):
+                fp = os.path.join(folder, fn)
+                if not os.path.isfile(fp):
+                    continue
+                if os.path.splitext(fn)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS:
+                    paths.append(os.path.abspath(fp))
+        except OSError:
+            return []
+        return paths
+
+    def _image_folder_composite_path(self, folder: str) -> str:
+        images = self._media_paths_from_folder(folder)
+        return ",".join([f"{FOLDER_MARKER_PREFIX}{os.path.abspath(folder)}", *images])
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -376,7 +426,8 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
 
         flow_l.addWidget(_flow_arrow(card_flow), 0, Qt.AlignmentFlag.AlignVCenter)
 
-        self.btn_add_video = PrimaryPushButton(FluentIcon.VIDEO, "③添加视频", card_flow)
+        add_icon = FluentIcon.PHOTO if self._media_type == "image" else FluentIcon.VIDEO
+        self.btn_add_video = PrimaryPushButton(add_icon, f"③添加{self._media_label}", card_flow)
         self.btn_add_video.clicked.connect(self._on_add_video_clicked)
         _toolbar_btn_style(self.btn_add_video)
         self.btn_add_video.setEnabled(False)
@@ -417,6 +468,20 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             position=ToolTipPosition.BOTTOM,
         )
         extra_l.addWidget(self._btn_work_declaration, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._btn_music_settings = PushButton("音乐设置", card_extra)
+        self._btn_music_settings.setFixedHeight(30)
+        self._btn_music_settings.setSizePolicy(
+            QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed,
+        )
+        self._btn_music_settings.clicked.connect(self._on_music_settings_clicked)
+        self._btn_music_settings.setVisible(self._media_type == "image")
+        apply_instructional_tooltip(
+            "设置图文任务音乐；当前仅支持随机音乐",
+            self._btn_music_settings,
+            position=ToolTipPosition.BOTTOM,
+        )
+        extra_l.addWidget(self._btn_music_settings, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._chk_batch_location = CheckBox("位置设置", card_extra)
         self._chk_batch_location.stateChanged.connect(
@@ -586,7 +651,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
     # ------------------------------------------------------------------
 
     def _is_auto_match_enabled(self) -> bool:
-        return load_auto_match_pref("video")
+        return load_auto_match_pref(self._media_type)
 
     def _show_material_shortage_dialog(self, message: str, *, title: str = "素材不足") -> None:
         """素材不足或无待发布视频时使用模态弹窗提醒（替代顶部 InfoBar）。"""
@@ -749,7 +814,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
 
         if all_issues_outcome is not None and all_issues_outcome.has_issues:
             self._show_material_shortage_dialog(
-                all_issues_outcome.build_dialog_message("video"),
+                all_issues_outcome.build_dialog_message(self._media_type),
                 title=all_issues_outcome.dialog_title(),
             )
 
@@ -835,10 +900,10 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         dlg = AddBatchMediaChoiceDialog(
             self.window() or self,
             batch_page=self,
-            media_label="视频",
-            auto_match_label="自动从视频库添加视频",
-            load_pref=lambda: load_auto_match_pref("video"),
-            save_pref=lambda v: save_auto_match_pref(v, "video"),
+            media_label=self._media_label,
+            auto_match_label=f"自动从{self._media_library_label}添加{self._task_label}",
+            load_pref=lambda: load_auto_match_pref(self._media_type),
+            save_pref=lambda v: save_auto_match_pref(v, self._media_type),
         )
         accepted = dlg.exec() == int(QDialog.DialogCode.Accepted)
         if accepted:
@@ -1007,7 +1072,15 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         from src.ui.dialogs.file_select_dialog import FileSelectDialog
         files = FileSelectDialog.select_files(self)
         if files:
-            self._schedule_add_video_files(files, apply_assign_strategy=True)
+            if self._media_type == "image":
+                image_files = [
+                    os.path.abspath(p) for p in files
+                    if os.path.splitext(str(p))[1].lower() in SUPPORTED_IMAGE_EXTENSIONS
+                ]
+                if image_files:
+                    self._schedule_add_video_files([",".join(image_files)], apply_assign_strategy=True)
+            else:
+                self._schedule_add_video_files(files, apply_assign_strategy=True)
 
     def _on_import_folder(self):
         return self._batch_controller.import_folder()
@@ -1016,6 +1089,19 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         from src.ui.dialogs.file_select_dialog import FileSelectDialog
         folder = FileSelectDialog.select_folder(self)
         if folder:
+            if self._media_type == "image":
+                image_files = self._media_paths_from_folder(folder)
+                if image_files:
+                    self._schedule_add_video_files([self._image_folder_composite_path(folder)], apply_assign_strategy=True)
+                else:
+                    InfoBar.info(
+                        "提示",
+                        "所选文件夹中没有支持的图片文件",
+                        parent=self,
+                        position=InfoBarPosition.TOP,
+                        duration=3000,
+                    )
+                return
             video_files = []
             for root, _, filenames in os.walk(folder):
                 for fn in sorted(filenames):
@@ -1039,6 +1125,66 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         pairs = distribute_items_to_targets(file_paths, plain_accounts, self._library_assign_strategy)
         return [(str(item), account) for item, account in pairs]
 
+    def _normalize_media_input_path(self, file_path: str) -> str:
+        if self._media_type != "image":
+            return os.path.abspath(file_path)
+        parts: List[str] = []
+        for raw in str(file_path or "").split(","):
+            part = raw.strip()
+            if not part:
+                continue
+            if part.startswith(FOLDER_MARKER_PREFIX):
+                folder = part[len(FOLDER_MARKER_PREFIX):].strip()
+                parts.append(f"{FOLDER_MARKER_PREFIX}{os.path.abspath(folder)}")
+            else:
+                parts.append(os.path.abspath(part))
+        return ",".join(parts)
+
+    def _media_real_paths(self, file_path: str) -> List[str]:
+        paths: List[str] = []
+        for raw in str(file_path or "").split(","):
+            part = raw.strip()
+            if not part or part.startswith(FOLDER_MARKER_PREFIX):
+                continue
+            paths.append(part)
+        return paths
+
+    def _media_folder_marker(self, file_path: str) -> Optional[str]:
+        for raw in str(file_path or "").split(","):
+            part = raw.strip()
+            if part.startswith(FOLDER_MARKER_PREFIX):
+                return part[len(FOLDER_MARKER_PREFIX):].strip() or None
+        return None
+
+    def _media_input_is_supported(self, file_path: str) -> bool:
+        if self._media_type == "image":
+            return any(
+                os.path.splitext(p)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS
+                for p in self._media_real_paths(file_path)
+            )
+        ext = os.path.splitext(file_path)[1].lower()
+        return ext in SUPPORTED_VIDEO_EXTENSIONS
+
+    def _media_input_size(self, file_path: str) -> int:
+        total = 0
+        if self._media_type == "image":
+            for p in self._media_real_paths(file_path):
+                try:
+                    total += os.path.getsize(p)
+                except OSError:
+                    pass
+            return total
+        return os.path.getsize(file_path)
+
+    def _media_input_is_occupied(self, file_path: str, occupied_paths: set[str]) -> bool:
+        from src.infrastructure.common.path_utils import normalize_media_path
+        if self._media_type == "image":
+            folder = self._media_folder_marker(file_path)
+            if folder and normalize_media_path(folder) in occupied_paths:
+                return True
+            return normalize_media_path(file_path) in occupied_paths
+        return normalize_media_path(file_path) in occupied_paths
+
     def _schedule_add_video_files(
         self, file_paths: List[str], *, apply_assign_strategy: bool = False
     ) -> None:
@@ -1060,11 +1206,20 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
     ) -> None:
         from src.infrastructure.common.path_utils import normalize_media_path
         existing_paths = {v["file_path"] for v in self.video_list}
+        active_paths = await self._load_publish_list_exclude_paths()
         occupied_paths = {
             normalize_media_path(p)
-            for p in (await self._load_publish_list_exclude_paths())
+            for p in active_paths
             if p
         }
+        for active in active_paths:
+            for part in str(active or "").split(","):
+                part = part.strip()
+                if part.startswith(FOLDER_MARKER_PREFIX):
+                    part = part[len(FOLDER_MARKER_PREFIX):].strip()
+                norm = normalize_media_path(part)
+                if norm:
+                    occupied_paths.add(norm)
         added = 0
         blocked_paths: List[str] = []
         pairs = (
@@ -1072,23 +1227,22 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             if apply_assign_strategy else [(fp, None) for fp in file_paths]
         )
         for fp, assigned_account in pairs:
-            fp = os.path.abspath(fp)
-            ext = os.path.splitext(fp)[1].lower()
-            if ext not in SUPPORTED_VIDEO_EXTENSIONS:
+            fp = self._normalize_media_input_path(fp)
+            if not self._media_input_is_supported(fp):
                 continue
-            if normalize_media_path(fp) in occupied_paths:
+            if self._media_input_is_occupied(fp, occupied_paths):
                 blocked_paths.append(fp)
                 continue
             if fp in existing_paths:
                 continue
             try:
-                size = os.path.getsize(fp)
+                size = self._media_input_size(fp)
             except OSError:
                 size = 0
             title, desc = await self._resolve_title_desc_async(fp)
             self.video_list.append({
                 "file_path": fp,
-                "file_name": os.path.basename(fp),
+                "file_name": self._material_display_name_for_path(fp),
                 "file_size": size,
                 "title": title,
                 "description": desc,
@@ -1106,8 +1260,8 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             if len(blocked_paths) > 8:
                 extra = f"\n...其余 {len(blocked_paths) - 8} 个文件已省略"
             InfoBar.warning(
-                "视频已被占用",
-                f"以下视频已在待发布/发布中任务中使用，已自动过滤：\n{show_lines}{extra}",
+                f"{self._task_label}已被占用",
+                f"以下{self._task_label}已在待发布/发布中任务中使用，已自动过滤：\n{show_lines}{extra}",
                 parent=self,
                 position=InfoBarPosition.TOP,
                 duration=4500,
@@ -1121,7 +1275,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         return self._batch_controller.choose_from_library()
 
     def _on_choose_from_library_legacy(self):
-        """从媒体库弹窗选择视频，并按当前策略将视频与已选账号配对后加入发布列表。"""
+        """从媒体库弹窗选择素材，并按当前策略将素材与已选账号配对后加入发布列表。"""
         from src.infrastructure.common.material_library_manager import MaterialLibraryManager
 
         if MaterialLibraryManager.get_root_base_dir() is None:
@@ -1137,7 +1291,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         if not self.selected_accounts:
             InfoBar.warning(
                 "提示",
-                "请先选择账号，媒体库将只显示已添加账号的视频。",
+                f"请先选择账号，媒体库将只显示已添加账号的{self._task_label}素材。",
                 parent=self,
                 position=InfoBarPosition.TOP,
                 duration=3000,
@@ -1145,14 +1299,19 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             return
 
         try:
-            files = MaterialLibraryManager.list_video_entries_for_accounts(
-                self.selected_accounts
-            )
+            if self._media_type == "image":
+                files = MaterialLibraryManager.list_image_entries_for_accounts(
+                    self.selected_accounts
+                )
+            else:
+                files = MaterialLibraryManager.list_video_entries_for_accounts(
+                    self.selected_accounts
+                )
         except Exception as e:
-            logger.error("扫描媒体库视频失败: %s", e, exc_info=True)
+            logger.error("扫描媒体库%s失败: %s", self._task_label, e, exc_info=True)
             InfoBar.error(
                 "错误",
-                "读取媒体库视频列表失败，请稍后重试。",
+                f"读取媒体库{self._task_label}列表失败，请稍后重试。",
                 parent=self,
                 position=InfoBarPosition.TOP,
                 duration=4000,
@@ -1160,11 +1319,11 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             return
 
         if not files:
-            InfoBar.info("提示", "已选账号的视频库中暂无未发布视频，请先为对应账号分配视频素材",
+            InfoBar.info("提示", f"已选账号的{self._media_library_label}中暂无未发布{self._task_label}，请先为对应账号分配素材",
                          parent=self, position=InfoBarPosition.TOP, duration=3000)
             return
 
-        dlg = LibraryMediaSelectDialog(files, self.window() or self, media_label="视频")
+        dlg = LibraryMediaSelectDialog(files, self.window() or self, media_label=self._media_label)
         if dlg.exec() != int(QDialog.DialogCode.Accepted):
             return
 
@@ -1201,7 +1360,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
     async def _add_from_library_async(
         self, pairs: List[tuple[dict, Optional[dict]]]
     ) -> None:
-        """从媒体库批量添加视频，异步解析文案并合并一次预览刷新。"""
+        """从媒体库批量添加素材，异步解析文案并合并一次预览刷新。"""
         existing_paths = {v["file_path"] for v in self.video_list}
         added = 0
         for file_info, assigned_account in pairs:
@@ -1212,11 +1371,11 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                 size = file_info.get("file_size", 0) or os.path.getsize(fp)
             except OSError:
                 size = 0
-            name = file_info.get("file_name") or file_info.get("original_name") or os.path.basename(fp)
+            name = file_info.get("file_name") or file_info.get("original_name") or self._material_display_name_for_path(fp)
             title, desc = await self._resolve_title_desc_async(fp, name_for_work_id=name)
             entry: dict = {
                 "file_path": fp,
-                "file_name": os.path.basename(fp),
+                "file_name": self._material_display_name_for_path(fp),
                 "file_size": size,
                 "title": title,
                 "description": desc,
@@ -1235,7 +1394,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         strategy_name = self._library_assign_strategy.display_name()
         InfoBar.success(
             "已添加",
-            f"按{strategy_name}策略从媒体库添加 {added} 个视频",
+            f"按{strategy_name}策略从媒体库添加 {added} 个{self._task_label}",
             parent=self,
             position=InfoBarPosition.TOP,
             duration=2000,
@@ -1382,7 +1541,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         pill_row.setContentsMargins(0, 0, 0, 0)
         b1, v1 = self._stat_chip(
             "总数",
-            "视频总数：该账号/账号组媒体库「视频 → 未发布」目录中的视频文件数",
+            f"{self._task_label}总数：该账号/账号组媒体库「{self._task_label} → 未发布」目录中的素材数",
             "#444444", "#f5f5f5", "#ddd", row,
         )
         b2, v2 = self._stat_chip(
@@ -1507,8 +1666,9 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                 rows.append((matcher.owner_display_name(acc), 0, 0, 0))
             return rows
 
-        video_by_acc = getattr(getattr(stats, "video", None), "by_account_id", {}) or {}
-        video_by_grp = getattr(getattr(stats, "video", None), "by_group_id", {}) or {}
+        media_stats = getattr(stats, "image" if self._media_type == "image" else "video", None)
+        video_by_acc = getattr(media_stats, "by_account_id", {}) or {}
+        video_by_grp = getattr(media_stats, "by_group_id", {}) or {}
 
         for acc in self.selected_accounts or []:
             name = matcher.owner_display_name(acc)
@@ -1613,7 +1773,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                 and (getattr(self, "cover_path", "") or "").strip()
             )
             self._combo_batch_cover.setCurrentIndex(1 if is_custom else 0)
-            tip = "使用视频首帧作为封面"
+            tip = "使用视频首帧作为封面" if self._media_type == "video" else "使用首张图片作为封面"
             if is_custom:
                 tip = f"本地封面：{os.path.basename(self.cover_path)}"
             apply_instructional_tooltip(
@@ -1637,7 +1797,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             use_auto_vid = (
                 bool(video_auto_match)
                 if video_auto_match is not None
-                else load_auto_match_pref("video")
+                else load_auto_match_pref(self._media_type)
             )
             self._combo_batch_video.setCurrentIndex(0 if use_auto_vid else 1)
             
@@ -1684,7 +1844,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
 
     def _on_batch_video_combo_changed(self, _index: int) -> None:
         auto = self._combo_batch_video.currentIndex() == 0
-        save_auto_match_pref(auto, "video")
+        save_auto_match_pref(auto, self._media_type)
         if auto:
             self._schedule_auto_match_if_enabled(force_run=True)
 
@@ -1780,6 +1940,52 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             self._combo_batch_cover.blockSignals(True)
             self._sync_batch_cover_combo_from_state()
             self._combo_batch_cover.blockSignals(False)
+
+    def _on_music_settings_clicked(self) -> None:
+        """批量图文音乐设置；当前仅支持随机音乐。"""
+        if self._media_type != "image":
+            return
+
+        dlg = AppMessageBoxBase(self.window() or self, header_title="音乐设置")
+        hint = BodyLabel("当前仅支持随机音乐设置", dlg)
+        hint.setWordWrap(True)
+        dlg.viewLayout.addWidget(hint)
+
+        chk_random = CheckBox("随机音乐", dlg)
+        current = (getattr(self, "music_info", "") or "").strip()
+        checked = False
+        if current:
+            try:
+                md = json.loads(current)
+                checked = isinstance(md, dict) and md.get("music_type") == "random"
+            except (json.JSONDecodeError, TypeError):
+                checked = False
+        chk_random.setChecked(checked)
+        dlg.viewLayout.addWidget(chk_random)
+
+        dlg.yesButton.setText("确定")
+        dlg.cancelButton.setText("取消")
+        if dlg.exec() != int(QDialog.DialogCode.Accepted):
+            return
+
+        if chk_random.isChecked():
+            self.music_info = json.dumps({"music_type": "random"}, ensure_ascii=False)
+        else:
+            self.music_info = ""
+        self._sync_music_settings_button_state()
+        self._schedule_preview_refresh()
+
+    def _sync_music_settings_button_state(self) -> None:
+        btn = getattr(self, "_btn_music_settings", None)
+        if btn is None:
+            return
+        has_music = bool((getattr(self, "music_info", "") or "").strip())
+        btn.setText("音乐设置：随机" if has_music else "音乐设置")
+        apply_instructional_tooltip(
+            "已启用随机音乐" if has_music else "设置图文任务音乐；当前仅支持随机音乐",
+            btn,
+            position=ToolTipPosition.BOTTOM,
+        )
 
     def _on_work_declaration_clicked(self) -> None:
         from src.pro_features.batch.dialogs.work_declaration_dialog import (
@@ -2060,15 +2266,15 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
 
         video_row = QHBoxLayout()
         video_row.setSpacing(12)
-        v_lab = BodyLabel("视频配置", card)
+        v_lab = BodyLabel(f"{self._task_label}配置", card)
         v_lab.setFixedWidth(label_w)
         self._combo_batch_video = ComboBox(card)
         self._combo_batch_video.addItems(["自动匹配", "手动匹配"])
         self._combo_batch_video.setMinimumWidth(160)
         self._combo_batch_video.setFixedHeight(32)
         _tip_vid = (
-            "自动匹配：选账号或添加视频时，从各账号媒体库「视频 → 未发布」拉取素材\n"
-            "手动匹配：仅从「添加视频」手动选择或从库挑选，不自动批量拉取"
+            f"自动匹配：选账号或添加{self._media_label}时，从各账号媒体库「{self._task_label} → 未发布」拉取素材\n"
+            f"手动匹配：仅从「添加{self._media_label}」手动选择或从库挑选，不自动批量拉取"
         )
         apply_instructional_tooltip(
             _tip_vid,
@@ -2140,12 +2346,12 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         c_lab = BodyLabel("封面配置", card)
         c_lab.setFixedWidth(label_w)
         self._combo_batch_cover = ComboBox(card)
-        self._combo_batch_cover.addItems(["视频首帧", "本地图片"])
+        self._combo_batch_cover.addItems(["视频首帧" if self._media_type == "video" else "首张图片", "本地图片"])
         self._combo_batch_cover.setMinimumWidth(160)
         self._combo_batch_cover.setFixedHeight(32)
         _tip_cov = (
-            "视频首帧：发布时使用视频第一帧\n"
-            "本地图片：打开封面设置，可选择或更换本地封面图"
+            ("视频首帧：发布时使用视频第一帧\n" if self._media_type == "video" else "首张图片：发布时使用图文素材首图\n")
+            + "本地图片：打开封面设置，可选择或更换本地封面图"
         )
         apply_instructional_tooltip(
             _tip_cov,
@@ -2204,13 +2410,13 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         content_layout.setAlignment(Qt.AlignTop)
 
         # 按钮1：清空视频
-        self.btn_clear_videos = PushButton(FluentIcon.DELETE, "清空视频", content)
+        self.btn_clear_videos = PushButton(FluentIcon.DELETE, f"清空{self._task_label}", content)
         self.btn_clear_videos.setFixedHeight(32)
         self.btn_clear_videos.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed,
         )
         apply_instructional_tooltip(
-            "仅清空视频与描述配置，不清空账号和发布时间。",
+            f"仅清空{self._task_label}与描述配置，不清空账号和发布时间。",
             self.btn_clear_videos,
             position=ToolTipPosition.BOTTOM,
         )
@@ -2224,7 +2430,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed,
         )
         _tip_del_sel = (
-            "从预览中移除选中任务（不写回发布列表）；不取消已选账号、不删除本地视频文件。"
+            f"从预览中移除选中任务（不写回发布列表）；不取消已选账号、不删除本地{self._task_label}素材。"
             "快捷键：Delete / Backspace"
         )
         apply_instructional_tooltip(
@@ -2242,7 +2448,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed,
         )
         _tip_clr = (
-            "从预览中移除当前表格里的全部任务（无需选中行）；不取消已选账号、不删除本地视频文件。"
+            f"从预览中移除当前表格里的全部任务（无需选中行）；不取消已选账号、不删除本地{self._task_label}素材。"
         )
         apply_instructional_tooltip(
             _tip_clr, self.btn_clear, position=ToolTipPosition.BOTTOM
@@ -2399,7 +2605,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         mapping = {
             "task":    f"{n_tasks} 条任务",
             "account": f"{n_acc} 个账号",
-            "video":   f"{n_vid} 个视频",
+            "video":   f"{n_vid} 个{self._task_label}",
             "time":    time_label,
         }
         for key, text in mapping.items():
@@ -2576,6 +2782,8 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         self.same_desc_text = ""
         self.goods_text = ""
         self.anchor_text = ""
+        self.music_info = ""
+        self._sync_music_settings_button_state()
         clear_publish_description_dialog_session()
         save_persisted_publish_description_prefs(
             {
@@ -2635,6 +2843,8 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             common,
             False,
             self._preview_exclusion,
+            file_type=self._file_type,
+            media_label=self._media_label,
         )
         # 预览已无行但草稿里仍有账号等数据时，步骤②③④会误判为可点；与「删除全部任务」一致回到①
         if (
@@ -2650,7 +2860,8 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             return
 
         logger.info(
-            "批量视频预览刷新: branch=%s n_preview=%s n_acc=%s n_time=%s n_vid=%s status=%r",
+            "批量%s预览刷新: branch=%s n_preview=%s n_acc=%s n_time=%s n_vid=%s status=%r",
+            self._task_label,
             br.branch, br.n_preview, br.n_acc, br.n_time, br.n_vid, br.status_text,
         )
 
@@ -2659,7 +2870,8 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
 
         preview_title = self.same_title_text if self.apply_description_to_all_tasks else ""
         preview_desc = self.same_desc_text if self.apply_description_to_all_tasks else ""
-        cover_text = "本地" if getattr(self, "cover_type", "first_frame") == "custom" and getattr(self, "cover_path", "") else "首帧"
+        default_cover_text = "首图" if self._media_type == "image" else "首帧"
+        cover_text = "本地" if getattr(self, "cover_type", "first_frame") == "custom" and getattr(self, "cover_path", "") else default_cover_text
         n_vid = br.n_vid
         n_time = br.n_time
 
@@ -2672,7 +2884,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             self.preview_table.setRowCount(br.n_preview)
             for row, t in enumerate(br.tasks):
                 raw_file = (t.get("file_path", "") or "").strip()
-                file_display = os.path.basename(raw_file)
+                file_display = self._material_display_name_for_path(raw_file)
                 if "待配置" in file_display:
                     file_cell = "待配置"
                 else:
@@ -2933,7 +3145,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         )
 
     def _on_clear_videos_only(self):
-        """清空视频与描述配置，保留账号与时间。"""
+        """清空素材与描述配置，保留账号与时间。"""
         n = len(self.video_list)
         self.video_list.clear()
         self._get_video_auto_matcher().reset()
@@ -2945,8 +3157,8 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         self._refresh_preview()
         self._sync_batch_publish_settings_ui()
         InfoBar.success(
-            "已清空视频",
-            f"已清空 {n} 个视频，并重置描述配置；账号与发布时间已保留。",
+            f"已清空{self._task_label}",
+            f"已清空 {n} 个{self._task_label}，并重置描述配置；账号与发布时间已保留。",
             parent=self, position=InfoBarPosition.TOP, duration=3000,
         )
 
@@ -2969,29 +3181,36 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         raw = self._preview_resolve_video_path_for_row(rows[0])
         if not raw or "待配置" in raw:
             return None
+        if self._media_type == "image":
+            folder = self._media_folder_marker(raw)
+            if folder:
+                return os.path.normpath(folder)
+            real_paths = self._media_real_paths(raw)
+            if real_paths:
+                return os.path.normpath(real_paths[0])
         path = os.path.normpath(raw)
         return path if path else None
 
     def _batch_preview_ctx_open_flags(self) -> Tuple[bool, bool]:
         path = self._preview_primary_selected_video_path()
-        if not path or not os.path.isfile(path):
+        if not path or not (os.path.isfile(path) or os.path.isdir(path)):
             return False, False
-        folder = os.path.dirname(path)
+        folder = path if os.path.isdir(path) else os.path.dirname(path)
         folder_ok = bool(folder and os.path.isdir(folder))
-        return folder_ok, True
+        return folder_ok, os.path.isfile(path)
 
     def _on_preview_open_video_folder(self) -> None:
         path = self._preview_primary_selected_video_path()
-        if not path or not os.path.isfile(path):
+        if not path or not (os.path.isfile(path) or os.path.isdir(path)):
             InfoBar.warning(
-                "提示", "当前选中行没有可用的本地视频文件路径",
+                "提示", f"当前选中行没有可用的本地{self._task_label}素材路径",
                 parent=self, position=InfoBarPosition.TOP,
             )
             return
-        folder = os.path.dirname(path)
+        folder = path if os.path.isdir(path) else os.path.dirname(path)
         if not folder or not os.path.isdir(folder):
             InfoBar.warning(
-                "提示", "无法解析视频所在文件夹",
+                "提示", f"无法解析{self._task_label}素材所在文件夹",
                 parent=self, position=InfoBarPosition.TOP,
             )
             return
@@ -3006,7 +3225,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         path = self._preview_primary_selected_video_path()
         if not path or not os.path.isfile(path):
             InfoBar.warning(
-                "提示", "当前选中行没有可用的本地视频文件或文件已不存在",
+                "提示", f"当前选中行没有可用的本地{self._task_label}文件或文件已不存在",
                 parent=self, position=InfoBarPosition.TOP,
             )
             return
@@ -3135,6 +3354,8 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             "micro_app_info": "",
             "cart_info": goods_out,
             "anchor_info": anchor_out,
+            "music_info": (getattr(self, "music_info", "") or "").strip()
+            if self._media_type == "image" else "",
             "privacy_settings": privacy_settings,
         }
 
@@ -3165,7 +3386,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             InfoBar.warning("提示", "请先选择发布账号", parent=self, position=InfoBarPosition.TOP)
             return
         if not self.video_list:
-            InfoBar.warning("提示", "请先导入视频文件", parent=self, position=InfoBarPosition.TOP)
+            InfoBar.warning("提示", f"请先导入{self._media_label}文件", parent=self, position=InfoBarPosition.TOP)
             return
         if not self.time_slots:
             InfoBar.warning(
@@ -3194,6 +3415,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                 user_id=self.user_id,
                 group_service=self.group_service,
                 publish_record_repo=repo,
+                file_type=self._file_type,
             )
 
             for gname in br.empty_group_names:
@@ -3215,7 +3437,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                     self,
                     "部分任务未添加",
                     f"以下 {len(br.skip_dup_lines)} 条与发布列表中已有任务重复"
-                    f"（相同视频完整路径、同平台同账号、且为待发布或进行中），已跳过：\n\n"
+                    f"（相同{self._task_label}素材、同平台同账号、且为待发布或进行中），已跳过：\n\n"
                     + "\n".join(br.skip_dup_lines[:25])
                     + ("\n…" if len(br.skip_dup_lines) > 25 else ""),
                 )
@@ -3223,7 +3445,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             if not br.tasks:
                 msg = "未生成任何任务，请检查配置"
                 if br.skip_dup_lines:
-                    msg = "所选任务均在发布列表中已存在相同视频，未写入。"
+                    msg = f"所选任务均在发布列表中已存在相同{self._task_label}，未写入。"
                 InfoBar.warning("提示", msg, parent=self, position=InfoBarPosition.TOP, duration=5000)
                 return
 
@@ -3309,6 +3531,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         save_batch_location_prefs("", False)
         self.goods_text = ""
         self.anchor_text = ""
+        self.music_info = ""
         self.cover_type = "first_frame"
         self.cover_path = ""
 
@@ -3333,4 +3556,5 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
 
         if hasattr(self, "_sync_batch_publish_settings_ui"):
             self._sync_batch_publish_settings_ui()
+        self._sync_music_settings_button_state()
         self._refresh_preview()

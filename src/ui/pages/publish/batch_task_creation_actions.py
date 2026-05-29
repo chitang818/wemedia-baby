@@ -163,6 +163,7 @@ def _build_task(
         "micro_app_info": common.get("micro_app_info", ""),
         "cart_info": common.get("cart_info", ""),
         "anchor_info": common.get("anchor_info", ""),
+        "music_info": common.get("music_info", ""),
         "privacy_settings": common.get("privacy_settings", ""),
         "scheduled_publish_time": scheduled_time,
         "task_source": task_source,

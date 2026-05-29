@@ -3,6 +3,8 @@
 覆盖：PermissionCheckFilterAsync 的缓存逻辑、限流、降级放行
 """
 import time
+import tempfile
+from pathlib import Path
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -170,6 +172,121 @@ class TestPipelineFactoryAsync:
             PublishExecutionFilter,
             RecordSaveFilterAsync,
         ]
+
+
+class TestMediaValidateFilterAsync:
+    def _validator(self):
+        validator = MagicMock()
+        validator.validate_format.return_value = True
+        validator.validate_size.return_value = True
+        return validator
+
+    @pytest.mark.asyncio
+    async def test_image_folder_marker_composite_path_passes(self):
+        with tempfile.TemporaryDirectory() as td:
+            folder = Path(td) / "pack"
+            folder.mkdir()
+            img1 = folder / "a.jpg"
+            img2 = folder / "b.png"
+            img1.write_bytes(b"a")
+            img2.write_bytes(b"b")
+            composite = f"__FOLDER__:{folder},{img1},{img2}"
+            validator = self._validator()
+            filt = MediaValidateFilterAsync(validator)
+            ctx = _publish_context(
+                file_path=composite,
+                file_type="image",
+                publish_type="image",
+            )
+
+            ok = await filt.process(ctx)
+
+            assert ok is True
+            assert validator.validate_format.call_count == 2
+            validator.validate_format.assert_any_call(str(img1), "image", "xiaohongshu")
+            validator.validate_format.assert_any_call(str(img2), "image", "xiaohongshu")
+
+    @pytest.mark.asyncio
+    async def test_image_comma_paths_pass(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            img1 = root / "a.jpg"
+            img2 = root / "b.webp"
+            img1.write_bytes(b"a")
+            img2.write_bytes(b"b")
+            validator = self._validator()
+            filt = MediaValidateFilterAsync(validator)
+            ctx = _publish_context(
+                file_path=f"{img1},{img2}",
+                file_type="image",
+                publish_type="image",
+            )
+
+            ok = await filt.process(ctx)
+
+            assert ok is True
+            assert validator.validate_size.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_image_composite_reports_missing_partial_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            folder = Path(td) / "pack"
+            folder.mkdir()
+            img1 = folder / "a.jpg"
+            missing = folder / "missing.png"
+            img1.write_bytes(b"a")
+            filt = MediaValidateFilterAsync(self._validator())
+            ctx = _publish_context(
+                file_path=f"__FOLDER__:{folder},{img1},{missing}",
+                file_type="image",
+                publish_type="image",
+            )
+
+            ok = await filt.process(ctx)
+
+            assert ok is False
+            assert "部分图片不存在" in filt.get_error()
+            assert "missing.png" in filt.get_error()
+
+    @pytest.mark.asyncio
+    async def test_image_folder_marker_without_images_fails(self):
+        with tempfile.TemporaryDirectory() as td:
+            folder = Path(td) / "pack"
+            folder.mkdir()
+            filt = MediaValidateFilterAsync(self._validator())
+            ctx = _publish_context(
+                file_path=f"__FOLDER__:{folder}",
+                file_type="image",
+                publish_type="image",
+            )
+
+            ok = await filt.process(ctx)
+
+            assert ok is False
+            assert filt.get_error() == "未指定发布图片路径"
+
+    @pytest.mark.asyncio
+    async def test_video_single_file_still_uses_video_validation(self):
+        with tempfile.TemporaryDirectory() as td:
+            video = Path(td) / "v.mp4"
+            video.write_bytes(b"video")
+            validator = self._validator()
+            filt = MediaValidateFilterAsync(validator)
+            ctx = _publish_context(
+                file_path=str(video),
+                file_type="video",
+                publish_type="video",
+            )
+
+            ok = await filt.process(ctx)
+
+            assert ok is True
+            validator.validate_format.assert_called_once_with(
+                str(video), "video", "xiaohongshu"
+            )
+            validator.validate_size.assert_called_once_with(
+                str(video), "video", "xiaohongshu"
+            )
 
 
 def _publish_context(**kwargs) -> PublishContext:

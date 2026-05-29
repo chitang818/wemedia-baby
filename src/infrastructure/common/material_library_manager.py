@@ -688,6 +688,112 @@ class MaterialLibraryManager:
         return out
 
     @classmethod
+    def list_image_entries_for_accounts(
+        cls,
+        accounts: Iterable[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """只扫描指定账号/账号组「图文/未发布」目录中的图文素材。
+
+        子文件夹按一篇图文素材返回，file_path 与单图文页一致：
+        ``__FOLDER__:<folder>,<image1>,<image2>...``。目录根部的散图也会
+        作为可选图片返回，供批量图文页手动选择。
+        """
+        root = cls.ensure_initialized()
+        if root is None:
+            return []
+
+        image_exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
+        marker = "__FOLDER__:"
+        out: List[Dict[str, Any]] = []
+
+        def image_paths_in_folder(folder: Path) -> List[str]:
+            paths: List[str] = []
+            try:
+                for entry in os.scandir(str(folder)):
+                    if not entry.is_file():
+                        continue
+                    if os.path.splitext(entry.name)[1].lower() in image_exts:
+                        paths.append(os.path.abspath(entry.path))
+            except OSError:
+                return []
+            paths.sort(key=lambda p: os.path.basename(p).lower())
+            return paths
+
+        def append_dir(target_dir: Path, owner_label: str) -> None:
+            if not target_dir.exists():
+                return
+            try:
+                for entry in os.scandir(str(target_dir)):
+                    if entry.is_dir():
+                        folder = Path(entry.path)
+                        imgs = image_paths_in_folder(folder)
+                        if not imgs:
+                            continue
+                        size = 0
+                        for img in imgs:
+                            try:
+                                size += os.path.getsize(img)
+                            except OSError:
+                                pass
+                        folder_abs = os.path.abspath(str(folder))
+                        out.append(
+                            {
+                                "file_path": ",".join([f"{marker}{folder_abs}", *imgs]),
+                                "file_name": folder.name,
+                                "original_name": folder.name,
+                                "file_size": size,
+                                "owner_label": owner_label,
+                                "source_folder": folder_abs,
+                                "image_count": len(imgs),
+                            }
+                        )
+                        continue
+                    if not entry.is_file():
+                        continue
+                    if os.path.splitext(entry.name)[1].lower() not in image_exts:
+                        continue
+                    fp = os.path.abspath(entry.path)
+                    try:
+                        size = entry.stat().st_size
+                    except OSError:
+                        size = 0
+                    out.append(
+                        {
+                            "file_path": fp,
+                            "file_name": entry.name,
+                            "original_name": entry.name,
+                            "file_size": size,
+                            "owner_label": owner_label,
+                        }
+                    )
+            except OSError as e:
+                logger.warning("扫描图文目录失败 (%s): %s", target_dir, e)
+
+        for acc in accounts:
+            if acc.get("_type") == "group":
+                group_name = (acc.get("group_name") or "").strip()
+                if not group_name:
+                    continue
+                scan_dir = cls.group_image_unpublished_dir(root, group_name)
+                label = cls.owner_label_for_group_material_folder(
+                    cls.account_group_material_folder_name(group_name)
+                )
+                append_dir(scan_dir, label)
+            else:
+                scan_dir = cls.resolve_account_image_unpublished_dir(root, acc)
+                try:
+                    folder_name = scan_dir.parent.parent.name
+                except (IndexError, AttributeError):
+                    folder_name = cls.platform_account_folder_name(
+                        str(acc.get("platform") or ""),
+                        str(acc.get("platform_username") or acc.get("account_name") or ""),
+                    )
+                append_dir(scan_dir, cls.owner_label_for_account_library_entry(folder_name))
+
+        out.sort(key=lambda x: str(x.get("file_path") or "").lower())
+        return out
+
+    @classmethod
     async def initialize_and_sync(cls) -> Optional[Path]:
         """初始化静态目录后，立即根据数据库同步「账号库」下账号与账号组文件夹。"""
         root = cls.ensure_initialized()

@@ -21,6 +21,8 @@ from src.infrastructure.common.path_utils import normalize_media_path
 
 logger = logging.getLogger(__name__)
 
+_FOLDER_MARKER_PREFIX = "__FOLDER__:"
+
 
 class MaterialAutoMatcher:
     """素材自动匹配器
@@ -76,7 +78,24 @@ class MaterialAutoMatcher:
         调用方在匹配前从发布列表查询已占用的 file_path 并传入，
         匹配时这些文件会被跳过，避免同一视频重复分配。
         """
-        self._exclude_paths = {normalize_media_path(p) for p in paths if p}
+        excludes: set[str] = set()
+        for raw in paths or set():
+            text = str(raw or "").strip()
+            if not text:
+                continue
+            parts = [p.strip() for p in text.split(",") if p.strip()]
+            if not parts:
+                parts = [text]
+            for part in parts:
+                if part.startswith(_FOLDER_MARKER_PREFIX):
+                    part = part[len(_FOLDER_MARKER_PREFIX):].strip()
+                norm = normalize_media_path(part)
+                if norm:
+                    excludes.add(norm)
+            norm_all = normalize_media_path(text)
+            if norm_all:
+                excludes.add(norm_all)
+        self._exclude_paths = excludes
 
     # ------------------------------------------------------------------
     # 核心接口：为指定账号/账号组取 N 条素材
@@ -162,10 +181,11 @@ class MaterialAutoMatcher:
             1 for f in all_files
             if normalize_media_path(f) in self._exclude_paths
         )
+        media_label = "视频" if self._media_type == "video" else "图文"
         parts = [f"{owner_label} 的素材不足：需要 {count} 个"]
         if n_excluded > 0:
             parts.append(
-                f"目录中共 {total_on_disk} 个视频，"
+                f"目录中共 {total_on_disk} 个{media_label}，"
                 f"其中 {n_excluded} 个已在发布列表中，"
                 f"剩余可用 {max(0, remaining)} 个"
             )
@@ -182,15 +202,7 @@ class MaterialAutoMatcher:
         for fp in candidates:
             if len(matched) >= count:
                 break
-            try:
-                size = os.path.getsize(fp)
-            except OSError:
-                size = 0
-            matched.append({
-                "file_path": fp,
-                "file_name": os.path.basename(fp),
-                "file_size": size,
-            })
+            matched.append(self._build_media_item(fp))
         return matched
 
     def _pick_sequential(
@@ -204,15 +216,7 @@ class MaterialAutoMatcher:
             scan_idx += 1
             if normalize_media_path(fp) in self._exclude_paths:
                 continue
-            try:
-                size = os.path.getsize(fp)
-            except OSError:
-                size = 0
-            matched.append({
-                "file_path": fp,
-                "file_name": os.path.basename(fp),
-                "file_size": size,
-            })
+            matched.append(self._build_media_item(fp))
         return matched, scan_idx
 
     def _pick_cyclic(
@@ -239,15 +243,7 @@ class MaterialAutoMatcher:
 
         for _ in range(count):
             _, fp = available[idx_in_available % len(available)]
-            try:
-                size = os.path.getsize(fp)
-            except OSError:
-                size = 0
-            matched.append({
-                "file_path": fp,
-                "file_name": os.path.basename(fp),
-                "file_size": size,
-            })
+            matched.append(self._build_media_item(fp))
             idx_in_available += 1
 
         last_orig_idx = available[(idx_in_available - 1) % len(available)][0]
@@ -400,11 +396,15 @@ class MaterialAutoMatcher:
                     return None
                 return MaterialLibraryManager.group_image_unpublished_dir(root, group_name)
             else:
-                return MaterialLibraryManager.account_image_unpublished_dir(root, account)
+                return MaterialLibraryManager.resolve_account_image_unpublished_dir(root, account)
         return None
 
     def _scan_sorted_files(self, directory: Path) -> List[str]:
-        """扫描目录下符合条件的文件，按文件名排序返回绝对路径列表。"""
+        """扫描目录下符合条件的素材，按名称排序返回绝对路径列表。
+
+        视频模式返回视频文件；图文模式优先返回含图片的子文件夹，每个文件夹
+        作为一篇图文任务的素材包，同时也兼容目录根部的散图文件。
+        """
         if not directory.exists():
             return []
 
@@ -417,6 +417,11 @@ class MaterialAutoMatcher:
         files: List[str] = []
         try:
             for entry in os.scandir(str(directory)):
+                if self._media_type == "image" and entry.is_dir():
+                    image_paths = self._image_paths_in_folder(entry.path)
+                    if image_paths:
+                        files.append(os.path.abspath(entry.path))
+                    continue
                 if not entry.is_file():
                     continue
                 suffix = os.path.splitext(entry.name)[1].lower()
@@ -429,3 +434,46 @@ class MaterialAutoMatcher:
 
         files.sort(key=lambda p: os.path.basename(p).lower())
         return files
+
+    def _image_paths_in_folder(self, folder_path: str) -> List[str]:
+        """返回文件夹内按文件名排序的图片路径（一层，与单图文页保持一致）。"""
+        paths: List[str] = []
+        try:
+            for item in os.scandir(str(folder_path)):
+                if not item.is_file():
+                    continue
+                suffix = os.path.splitext(item.name)[1].lower()
+                if suffix in self.SUPPORTED_IMAGE_EXTENSIONS:
+                    paths.append(os.path.abspath(item.path))
+        except OSError:
+            return []
+        paths.sort(key=lambda p: os.path.basename(p).lower())
+        return paths
+
+    def _build_media_item(self, path: str) -> Dict[str, Any]:
+        """将扫描结果转成页面可直接加入 video_list 的素材条目。"""
+        if self._media_type == "image" and os.path.isdir(path):
+            image_paths = self._image_paths_in_folder(path)
+            total_size = 0
+            for img in image_paths:
+                try:
+                    total_size += os.path.getsize(img)
+                except OSError:
+                    pass
+            composite = ",".join([f"{_FOLDER_MARKER_PREFIX}{os.path.abspath(path)}", *image_paths])
+            return {
+                "file_path": composite,
+                "file_name": os.path.basename(path),
+                "file_size": total_size,
+                "source_folder": os.path.abspath(path),
+                "image_count": len(image_paths),
+            }
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = 0
+        return {
+            "file_path": os.path.abspath(path),
+            "file_name": os.path.basename(path),
+            "file_size": size,
+        }

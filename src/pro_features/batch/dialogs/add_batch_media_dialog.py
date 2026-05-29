@@ -76,16 +76,16 @@ class AddBatchMediaChoiceDialog(AppMessageBoxBase):
         row.addWidget(btn_library, 1)
         self.viewLayout.addLayout(row)
 
-        # 添加视频分配策略（对所有添加方式生效）
+        # 添加素材分配策略（对所有添加方式生效）
         strategy_row = QHBoxLayout()
         strategy_row.setSpacing(8)
-        strategy_label = BodyLabel("添加视频分配策略", self)
+        strategy_label = BodyLabel(f"添加{media_label}分配策略", self)
         self._strategy_combo = ComboBox(self)
         self._strategy_combo.addItems(STRATEGY_DISPLAY_NAMES)
         self._strategy_combo.setCurrentText(load_assign_strategy("batch").display_name())
         self._strategy_combo.setFixedHeight(28)
         self._strategy_combo.setMinimumWidth(130)
-        _st_tip = "添加视频时，视频分配给多账号的算法"
+        _st_tip = f"添加{media_label}时，素材分配给多账号的算法"
         apply_instructional_tooltip(
             _st_tip,
             strategy_label,

@@ -52,6 +52,7 @@ class PreviewTask(TypedDict, total=False):
     micro_app_info: str
     cart_info: str
     anchor_info: str
+    music_info: str
     privacy_settings: str
     scheduled_publish_time: Optional[str]
 
@@ -86,6 +87,7 @@ class PublishTaskPayload(TypedDict, total=False):
     micro_app_info: str
     cart_info: str
     anchor_info: str
+    music_info: str
     privacy_settings: str
     scheduled_publish_time: Optional[str]
     task_source: Optional[str]

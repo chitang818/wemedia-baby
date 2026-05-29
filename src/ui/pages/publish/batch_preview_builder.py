@@ -108,6 +108,9 @@ def build_preview_tasks(
     common_fields: Dict[str, Any],
     immediate_publish: bool,
     exclusion: PreviewExclusionSet,
+    *,
+    file_type: str = "video",
+    media_label: str = "视频",
 ) -> PreviewBuildResult:
     """根据当前选择状态生成预览数据（纯函数，不涉及 UI）。
 
@@ -205,7 +208,7 @@ def build_preview_tasks(
     # ---- 状态 2: no_video — 有账号+时间，未添加视频 ----
     if n_vid == 0:
         result.branch = "no_video"
-        result.status_text = "请③添加视频"
+        result.status_text = f"请③添加{media_label}"
 
         mock_videos = _no_video_mock_media_items(selected_accounts, n_time)
         mock_time = (
@@ -215,7 +218,7 @@ def build_preview_tasks(
         )
 
         raw = generate_batch_tasks_isolated(
-            selected_accounts, mock_videos, mock_time, common_fields,
+            selected_accounts, mock_videos, mock_time, common_fields, file_type,
             expanded_accounts=None,
             immediate_publish=imm,
         )
@@ -273,7 +276,7 @@ def build_preview_tasks(
     result.branch = "full"
 
     raw = generate_batch_tasks_isolated(
-        selected_accounts, video_list, time_slots, common_fields,
+        selected_accounts, video_list, time_slots, common_fields, file_type,
         expanded_accounts=None,
         immediate_publish=imm,
     )

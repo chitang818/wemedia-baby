@@ -79,6 +79,7 @@ async def build_publish_tasks_for_batch(
     user_id: int = 1,
     group_service: Optional[Any] = None,
     publish_record_repo: Optional[Any] = None,
+    file_type: str = "video",
 ) -> PublishBuildResult:
     """执行批量发布任务的完整构建流水线。
 
@@ -125,6 +126,7 @@ async def build_publish_tasks_for_batch(
         video_list,
         time_slots,
         common_fields,
+        file_type,
         expanded_accounts=expanded,
         immediate_publish=immediate_publish,
     )
