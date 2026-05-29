@@ -12,6 +12,8 @@ from src.infrastructure.common.config.app_config_defaults import (
     default_app_config_skeleton,
 )
 from src.infrastructure.common.config.app_config_keys import (
+    BROWSER_TRUST_MODE,
+    BROWSER_TRUST_MODE_REAL,
     KEY_BATCH_PUBLISH,
     BATCH_PUBLISH_DESCRIPTION,
     BATCH_LOCATION,
@@ -22,6 +24,9 @@ from src.infrastructure.common.config.app_config_keys import (
     SINGLE_COPYWRITING_RANDOM_CATEGORY,
     START_IN_TRAY_NEXT_LAUNCH,
     MAIN_WINDOW_CLOSE_BEHAVIOR,
+    PUBLISH_FORCE_VISIBLE_BROWSER,
+    PUBLISH_RESPECT_PLATFORM_INTERVAL,
+    PUBLISH_STOP_ON_RISK_PROMPT,
 )
 from src.infrastructure.common.config.config_center import ConfigCenter
 
@@ -34,6 +39,10 @@ def test_apply_defaults_fills_only_missing_keys():
     assert cfg["material_library_root"] == "D:\\"
     assert cfg["minimize_to_tray"] is True
     assert cfg.get("chrome_executable_path") == ""
+    assert cfg[BROWSER_TRUST_MODE] == BROWSER_TRUST_MODE_REAL
+    assert cfg[PUBLISH_FORCE_VISIBLE_BROWSER] is True
+    assert cfg[PUBLISH_RESPECT_PLATFORM_INTERVAL] is True
+    assert cfg[PUBLISH_STOP_ON_RISK_PROMPT] is True
     assert KEY_BATCH_PUBLISH in cfg
     assert cfg[KEY_BATCH_PUBLISH][BATCH_LOCATION] == {
         BATCH_LOCATION_POI_INFO: "",
@@ -57,6 +66,10 @@ def test_default_skeleton_has_expected_top_level_keys():
         "material_library_root",
         "chrome_executable_path",
         "browser_scheme",
+        BROWSER_TRUST_MODE,
+        PUBLISH_FORCE_VISIBLE_BROWSER,
+        PUBLISH_RESPECT_PLATFORM_INTERVAL,
+        PUBLISH_STOP_ON_RISK_PROMPT,
         "minimize_to_tray",
         START_IN_TRAY_NEXT_LAUNCH,
         MAIN_WINDOW_CLOSE_BEHAVIOR,

@@ -40,7 +40,7 @@ from .list_settings_dialog import (
     get_speed_index,
     SPEED_OPTIONS,
     get_first_platform,
-    get_publish_interval_seconds,
+    get_effective_publish_interval_seconds,
     get_post_publish_action,
     get_publish_show_browser,
     get_precheck_account_online_enabled,
@@ -52,6 +52,7 @@ from .list_settings_dialog import (
     MODE_PLATFORM,
     MODE_ACCOUNT,
 )
+from src.infrastructure.browser.browser_launch_policy import should_stop_on_risk_prompt
 from src.infrastructure.common.publish_material_path_policy import (
     desired_persisted_post_publish_action,
     message_for_auto_post_publish_change,
@@ -59,6 +60,25 @@ from src.infrastructure.common.publish_material_path_policy import (
 )
 from src.infrastructure.common.async_task_registry import get_async_task_registry
 from src.ui.components.log_display_widget import LogDisplayWidget
+
+
+_RISK_PROMPT_KEYWORDS = (
+    "操作频繁",
+    "风控",
+    "异常验证",
+    "安全验证",
+    "验证失败",
+    "环境异常",
+    "账号异常",
+    "稍后重试",
+)
+
+
+def _looks_like_platform_risk_prompt(message: str) -> bool:
+    text = str(message or "")
+    return any(k in text for k in _RISK_PROMPT_KEYWORDS)
+
+
 from src.ui.components.task_overview_card import TaskOverviewCard
 from src.ui.components.task_description_card import TaskDescriptionCard
 from src.ui.components.publish_settings_card import PublishSettingsCard
@@ -1068,7 +1088,8 @@ class PublishListPage(PublishRecordsPage):
             user_log.info("[间隔] 下一任务为其他平台，跳过任务间隔，短暂衔接后继续")
             await self._interruptible_sleep_for_publish_queue(0.5)
             return
-        base = get_publish_interval_seconds()
+        current_platform = str(getattr(self, "_current_publish_platform", "") or "")
+        base = get_effective_publish_interval_seconds(current_platform)
         if base > 0:
             delay = sample_publish_interval_delay_seconds(base)
         else:
@@ -1334,6 +1355,7 @@ class PublishListPage(PublishRecordsPage):
             )
 
             _current_retry_count = 0
+            _risk_blocked_accounts: set[tuple[str, str]] = set()
 
             while self._is_publishing_loop_active:
                 await self._publish_queue_checkpoint()
@@ -1443,6 +1465,23 @@ class PublishListPage(PublishRecordsPage):
                 account_name = (task.get('platform_username') or '').strip()
                 platform = task.get('platform')
                 file_path = task.get('file_path')
+                self._current_publish_platform = platform or ""
+                if (platform or "", account_name) in _risk_blocked_accounts:
+                    skip_msg = "检测到该账号/平台本轮已有异常验证或操作频繁提示，已停止后续任务，请人工检查后再继续。"
+                    self.log_widget.append_warning(f"⚠️ {skip_msg}")
+                    if db_publish:
+                        await db_publish.update_status(task_id, 'failed', error_message=skip_msg)
+                    if post_publish_action != "none":
+                        PostPublishFileHandler.on_task_failed(task_id, file_groups)
+                    if run_task_items:
+                        for item in run_task_items:
+                            if item.get("task_id") == task_id:
+                                item["status"] = "failed"
+                                break
+                    self._update_task_status_in_memory(task_id, "failed", error_message=skip_msg)
+                    if _pending_deque and _pending_deque[0].get("id") == task_id:
+                        _pending_deque.popleft()
+                    continue
                 
                 # 识别当前发布类型
                 publish_type = "video"
@@ -1718,6 +1757,13 @@ class PublishListPage(PublishRecordsPage):
                     else:
                          msg = result.error_message if result else "未知错误"
                          self.log_widget.append_error(f"❌ 任务发布失败: {msg}")
+                         if should_stop_on_risk_prompt() and _looks_like_platform_risk_prompt(msg):
+                             _risk_blocked_accounts.add((platform or "", account_name))
+                             user_log.warning(
+                                 "[风险控制] 检测到平台异常提示，停止本轮该账号后续任务: 平台=%s 账号=%s",
+                                 platform,
+                                 account_name,
+                             )
                          diagnostic_path = getattr(result, "diagnostic_path", None) if result else None
                          if not diagnostic_path and msg and "SubmitStep" in msg:
                              logger.warning(

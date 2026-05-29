@@ -124,6 +124,16 @@ class PublishExecutor:
                     return PublishResult(success=False, error_message=f"未在数据库中找到账号: {account_name} (平台: {platform})")
                 
                 logger.info(f"发布任务: 账号={account_name}, 数据库ID={account_db_id}, 平台={platform}")
+                try:
+                    from src.infrastructure.browser.browser_launch_policy import (
+                        should_force_visible_publish_browser,
+                    )
+                    force_visible = should_force_visible_publish_browser()
+                except Exception:
+                    force_visible = True
+                if force_visible and headless:
+                    logger.info("发布流程配置为使用可见本机 Chrome，已强制关闭无头模式")
+                    headless = False
                 if str(platform).strip().lower() == "xiaohongshu" and headless:
                     logger.info("小红书 strict_real_browser：发布流程强制使用可见浏览器")
                     headless = False
@@ -133,6 +143,7 @@ class PublishExecutor:
                     account_db_id,
                     headless=headless,
                     maximize_for_publish=True,
+                    publish_mode=True,
                 )
                 if not browser_wrapper or not browser_wrapper.context:
                     return PublishResult(success=False, error_message="未能正确拉起或获取浏览器组件实例")

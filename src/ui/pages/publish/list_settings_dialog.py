@@ -6,7 +6,9 @@
 """
 
 import logging
+import json
 import random
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -56,6 +58,11 @@ from src.infrastructure.common.publish_material_path_policy import (
     pending_records_any_public_pool,
     sanitize_post_publish_action_for_save,
 )
+from src.infrastructure.browser.browser_launch_policy import (
+    should_force_visible_publish_browser,
+    should_respect_platform_publish_interval,
+)
+from src.infrastructure.common.path_manager import PathManager
 
 # 兼容旧代码引用的「逻辑键名」常量（已映射到 app_config.publish_list 下的 snake_case）
 DISPLAY_MODE_KEY = "publish_list/display_mode"
@@ -76,7 +83,6 @@ POST_PUBLISH_ACTION_DELETE = "delete"
 SPEED_OPTIONS = [
     ("正常", 1.0),
     ("快速", 0.5),
-    ("极速", 0.25),
     ("慢速", 2.0),
 ]
 
@@ -175,6 +181,30 @@ def get_publish_interval_seconds() -> int:
     return max(MIN_PUBLISH_INTERVAL_SEC, min(v, MAX_PUBLISH_INTERVAL_SEC))
 
 
+def _platform_publish_interval_min_seconds(platform: str) -> int:
+    platform_id = str(platform or "").strip()
+    if not platform_id:
+        return 0
+    try:
+        p = Path(PathManager.get_resource_path(f"config/platforms/{platform_id}.json"))
+        if not p.is_file():
+            return 0
+        data = json.loads(p.read_text(encoding="utf-8"))
+        interval = data.get("publish_interval") if isinstance(data, dict) else None
+        if not isinstance(interval, dict):
+            return 0
+        return max(0, int(interval.get("min", 0) or 0))
+    except Exception:
+        return 0
+
+
+def get_effective_publish_interval_seconds(platform: str = "") -> int:
+    base = get_publish_interval_seconds()
+    if not should_respect_platform_publish_interval():
+        return base
+    return max(base, _platform_publish_interval_min_seconds(platform))
+
+
 def sample_publish_interval_delay_seconds(base: int) -> float:
     """在 [max(0, base-3), base+3] 上均匀随机；调用方应在「下一任务与当前同平台」时才使用。"""
     b = max(MIN_PUBLISH_INTERVAL_SEC, min(int(base), MAX_PUBLISH_INTERVAL_SEC))
@@ -215,7 +245,9 @@ def set_post_publish_action(action: str) -> None:
 
 
 def get_publish_show_browser() -> bool:
-    """True：有头模式（显示浏览器窗口）；False：无头后台运行。"""
+    """True：有头模式（显示浏览器窗口）；发布流程默认强制显示本机 Chrome。"""
+    if should_force_visible_publish_browser():
+        return True
     pl = _publish_list_dict()
     v = pl.get(PUBLISH_LIST_SHOW_BROWSER)
     if v is None:
@@ -271,7 +303,7 @@ def format_publish_settings_summary() -> str:
     retry_ct = get_publish_queue_retry_count()
     lines.append(f"失败重试：{'关闭' if retry_ct == 0 else f'{retry_ct}次'}")
 
-    lines.append(f"浏览器：{'显示' if get_publish_show_browser() else '后台（无头）'}")
+    lines.append(f"浏览器：{'显示本机 Chrome' if get_publish_show_browser() else '后台运行'}")
     lines.append(f"发布前检测账号在线：{'开启' if get_precheck_account_online_enabled() else '关闭'}")
     action = get_post_publish_action()
     if action == POST_PUBLISH_ACTION_MOVE:
@@ -421,8 +453,7 @@ class ListSettingsDialog(AppMessageBoxBase):
         _tip_speed = (
             "正常：推荐默认设置；"
             "快速：操作节奏加倍，等待时间缩短一半；"
-            "极速：操作节奏为正常的4倍，等待时间极短，风控风险较高；"
-            "慢速：等待时间延长一倍，更为保守，适合对风控要求较高的账号。"
+            "慢速：等待时间延长一倍，更为保守，适合需要稳定发布节奏的账号。"
         )
         lab_speed_row = QWidget(card_sched)
         _lsr = QHBoxLayout(lab_speed_row)
@@ -495,7 +526,7 @@ class ListSettingsDialog(AppMessageBoxBase):
         lay_run.setContentsMargins(14, 12, 14, 12)
         lay_run.setSpacing(8)
         lay_run.addWidget(SubtitleLabel("发布行为", card_run))
-        self.check_show_browser = CheckBox("显示浏览器", card_run)
+        self.check_show_browser = CheckBox("显示本机 Chrome", card_run)
         _row_br = QWidget(card_run)
         _rbr = QHBoxLayout(_row_br)
         _rbr.setContentsMargins(0, 0, 0, 0)
@@ -503,7 +534,7 @@ class ListSettingsDialog(AppMessageBoxBase):
         _rbr.addWidget(self.check_show_browser)
         _rbr.addStretch(1)
         apply_instructional_tooltip(
-            "勾选：显示浏览器窗口（有头模式）\n未勾选：后台静默运行（无头模式）",
+            "发布流程默认显示本机 Chrome，以保持更接近正常使用的浏览器环境。",
             self.check_show_browser,
         )
         lay_run.addWidget(_row_br)
@@ -710,6 +741,8 @@ class ListSettingsDialog(AppMessageBoxBase):
 
     def _load_browser_and_shutdown(self) -> None:
         self.check_show_browser.setChecked(get_publish_show_browser())
+        if should_force_visible_publish_browser():
+            self.check_show_browser.setEnabled(False)
         self.check_auto_shutdown.setChecked(is_publish_after_shutdown_one_shot_armed())
         self.check_precheck_online.setChecked(get_precheck_account_online_enabled())
 
@@ -813,7 +846,7 @@ class ListSettingsDialog(AppMessageBoxBase):
             PUBLISH_LIST_FIRST_PLATFORM: first_platform,
             PUBLISH_LIST_POST_PUBLISH_FILE_ACTION: post_action,
             PUBLISH_LIST_QUEUE_RETRY_COUNT: self.combo_retry.currentIndex(),
-            PUBLISH_LIST_SHOW_BROWSER: self.check_show_browser.isChecked(),
+            PUBLISH_LIST_SHOW_BROWSER: True if should_force_visible_publish_browser() else self.check_show_browser.isChecked(),
             PUBLISH_LIST_PRECHECK_ACCOUNT_ONLINE: self.check_precheck_online.isChecked(),
         }
 

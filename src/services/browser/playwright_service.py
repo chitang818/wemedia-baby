@@ -224,6 +224,7 @@ class PlaywrightBrowserService(QObject):
         headless: Optional[bool] = None,
         *,
         maximize_for_publish: bool = False,
+        publish_mode: bool = False,
     ) -> Optional['SimpleBrowserWrapper']:
         # per-account 锁防止同账号并发开启两个浏览器
         _aid = str(account_id)
@@ -235,6 +236,7 @@ class PlaywrightBrowserService(QObject):
                     account_id,
                     headless,
                     maximize_for_publish=maximize_for_publish,
+                    publish_mode=publish_mode,
                 )
 
     async def _open_browser_for_db_account_impl(
@@ -243,6 +245,7 @@ class PlaywrightBrowserService(QObject):
         headless: Optional[bool] = None,
         *,
         maximize_for_publish: bool = False,
+        publish_mode: bool = False,
     ) -> Optional['SimpleBrowserWrapper']:
         """根据数据库账号ID打开浏览器（模块化方法，供账号库和发布执行器复用）
         
@@ -354,6 +357,7 @@ class PlaywrightBrowserService(QObject):
             profile_folder_name=profile_folder_name,
             headless=headless,
             maximize_for_publish=maximize_for_publish,
+            publish_mode=publish_mode,
             inject_cookies=not skip_cookies,
             _launch_slot_acquired=True,
         )
@@ -399,6 +403,7 @@ class PlaywrightBrowserService(QObject):
         headless: bool = False,
         *,
         maximize_for_publish: bool = False,
+        publish_mode: bool = False,
         inject_cookies: bool = True,
         _launch_slot_acquired: bool = False,
     ):
@@ -413,6 +418,7 @@ class PlaywrightBrowserService(QObject):
                     profile_folder_name=profile_folder_name,
                     headless=headless,
                     maximize_for_publish=maximize_for_publish,
+                    publish_mode=publish_mode,
                     inject_cookies=inject_cookies,
                     _launch_slot_acquired=True,
                 )
@@ -427,6 +433,7 @@ class PlaywrightBrowserService(QObject):
             profile_folder_name=profile_folder_name,
             headless=headless,
             maximize_for_publish=maximize_for_publish,
+            publish_mode=publish_mode,
         )
 
     async def open_new_account_window(
@@ -508,6 +515,7 @@ class PlaywrightBrowserService(QObject):
         profile_folder_name: Optional[str] = None,
         headless: bool = False,
         maximize_for_publish: bool = False,
+        publish_mode: bool = False,
     ):
         try:
             logger.info(f"正在启动 Playwright 浏览器 for {platform_username}... (headless={headless})")
@@ -524,6 +532,7 @@ class PlaywrightBrowserService(QObject):
             context = await browser_service.launch(
                 headless=headless,
                 maximize_window=maximize_for_publish,
+                publishing=publish_mode,
             )
             if not context:
                 raise Exception("无法启动浏览器服务")

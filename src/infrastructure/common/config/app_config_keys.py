@@ -12,6 +12,14 @@ KEY_PUBLISH_LIST = "publish_list"
 KEY_UI = "ui"
 KEY_PUBLISH_DIAGNOSTICS = "publish_diagnostics"
 
+# browser / publishing safety
+BROWSER_TRUST_MODE = "browser_trust_mode"
+BROWSER_TRUST_MODE_REAL = "real_browser"
+BROWSER_TRUST_MODE_COMPAT_STEALTH = "compat_stealth"
+PUBLISH_FORCE_VISIBLE_BROWSER = "publish_force_visible_browser"
+PUBLISH_RESPECT_PLATFORM_INTERVAL = "publish_respect_platform_interval"
+PUBLISH_STOP_ON_RISK_PROMPT = "publish_stop_on_risk_prompt"
+
 # publish_diagnostics
 PUBLISH_DIAGNOSTICS_ENABLED = "enabled"
 PUBLISH_DIAGNOSTICS_CAPTURE_HTML = "capture_html"

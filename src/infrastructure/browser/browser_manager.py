@@ -322,6 +322,7 @@ class UndetectedBrowserManager:
         headless: bool = True,
         *,
         maximize_window: bool = False,
+        publishing: bool = False,
     ) -> Optional[BrowserContext]:
         """启动浏览器并返回 Context (Persistent)
 
@@ -334,7 +335,17 @@ class UndetectedBrowserManager:
             maximize_window: 有头模式下是否通过 CDP 将宿主窗口最大化（发布流程建议开启）
         """
         try:
+            from .browser_launch_policy import get_browser_launch_policy
+
+            launch_policy = get_browser_launch_policy()
             strict_real_browser = self.is_strict_real_browser_platform()
+            compat_stealth = launch_policy.use_compat_stealth and not strict_real_browser
+            real_browser_mode = not compat_stealth
+            if publishing and launch_policy.force_visible_publish and headless:
+                logger.info(
+                    "[BrowserManager] publishing uses visible real Chrome; forcing headless=False"
+                )
+                headless = False
             if strict_real_browser and headless:
                 logger.info(
                     "[BrowserManager] %s uses strict_real_browser; forcing a visible real Chrome window",
@@ -355,7 +366,7 @@ class UndetectedBrowserManager:
                     logger.warning(f"关闭旧浏览器实例时出错: {e}")
             
             # 启动参数
-            args = [] if strict_real_browser else self._get_launch_args()
+            args = self._get_launch_args() if compat_stealth else []
             _wx_channels = (self.platform or "").strip().lower() == "wechat_video"
             
             # 仅使用本地 Chrome
@@ -401,9 +412,9 @@ class UndetectedBrowserManager:
                 pass
             
             # 1. 动态生成/获取 User Agent（优先对齐本机 Chrome 版本，进程级缓存避免重复注册表查询）
-            user_agent = None if strict_real_browser else fingerprint.get("user_agent")
+            user_agent = fingerprint.get("user_agent") if compat_stealth else None
             detected_major: Optional[str] = UndetectedBrowserManager._chrome_major_cache
-            if not strict_real_browser and detected_major is None:
+            if compat_stealth and detected_major is None:
                 try:
                     from src.utils.chrome_installer import detect_chrome
                     installed, info = await asyncio.to_thread(detect_chrome)
@@ -425,7 +436,7 @@ class UndetectedBrowserManager:
 
             current_major = _ua_major(user_agent or "")
             # aggressive 策略：只要检测到 Chrome 主版本号，就尽量让 UA 对齐（首次生成或不一致时更新）
-            need_regen = (not strict_real_browser) and (
+            need_regen = compat_stealth and (
                 (not user_agent) or (detected_major is not None and detected_major != current_major)
             )
 
@@ -447,9 +458,9 @@ class UndetectedBrowserManager:
             # 请求头对齐（尽力而为）：Accept-Language 与 fingerprint.languages/locale 一致
             extra_headers = None
             try:
-                fp = self.profile_manager.get_fingerprint() if not strict_real_browser else {}
+                fp = self.profile_manager.get_fingerprint() if compat_stealth else {}
                 langs = fp.get("languages")
-                if not strict_real_browser and isinstance(langs, list) and langs:
+                if compat_stealth and isinstance(langs, list) and langs:
                     # Accept-Language 形如：zh-CN,zh;q=0.9,en;q=0.8
                     parts = []
                     for i, lang in enumerate(langs[:3]):
@@ -503,8 +514,8 @@ class UndetectedBrowserManager:
                     "[BrowserManager] 视频号：使用加强版浏览器启动参数（Chromium 沙箱、允许扩展、弱化自动化默认项）以降低扫码风控误杀"
                 )
 
-            context_permissions = [] if strict_real_browser else ["geolocation", "notifications"]
-            if self.platform == "douyin":
+            context_permissions = ["geolocation", "notifications"] if compat_stealth else []
+            if compat_stealth and self.platform == "douyin":
                 # 抖音创作者图文音乐面板会探测媒体/音频环境。保留真实 Chrome 的媒体权限模型，
                 # 避免被脚本伪造的 mediaDevices / permissions 误伤音乐选择状态。
                 context_permissions.extend(["microphone", "camera"])
@@ -524,7 +535,7 @@ class UndetectedBrowserManager:
             # 不论任何平台，统一强制开启沙箱（防止 Playwright 默认自动注入 --no-sandbox 引起不支持警告）
             if user_agent:
                 launch_options["user_agent"] = user_agent
-            if not strict_real_browser:
+            if compat_stealth:
                 launch_options["locale"] = fingerprint.get("locale", "zh-CN")
                 launch_options["timezone_id"] = tz_id
             if context_permissions:
@@ -539,6 +550,12 @@ class UndetectedBrowserManager:
                 self.context = await self.playwright.chromium.launch_persistent_context(**launch_options)
             except Exception as e:
                 # 若显式传入沙箱为 True 但因为权限等启动失败，降级退回无沙箱模式
+                if publishing:
+                    logger.error(
+                        "[BrowserManager] 发布浏览器必须以正常沙箱模式启动，已拒绝回退 no-sandbox: %s",
+                        e,
+                    )
+                    raise
                 if not launch_options.get("chromium_sandbox"):
                     raise
                 logger.warning(
@@ -546,7 +563,7 @@ class UndetectedBrowserManager:
                     e,
                 )
                 launch_options.pop("chromium_sandbox", None)
-                launch_options["args"] = ["--no-sandbox"] if strict_real_browser else [
+                launch_options["args"] = ["--no-sandbox"] if real_browser_mode else [
                     "--no-sandbox",
                 ] + self._stealth_chrome_args_common()
                 self.context = await self.playwright.chromium.launch_persistent_context(**launch_options)
@@ -556,8 +573,8 @@ class UndetectedBrowserManager:
 
             # 指纹 virtual_geo：对浏览器上下文固定 Geolocation
             try:
-                if strict_real_browser:
-                    raise RuntimeError("strict_real_browser skips virtual geolocation")
+                if real_browser_mode:
+                    raise RuntimeError("real_browser skips virtual geolocation")
                 from .virtual_geo import build_playwright_geolocation
 
                 _fp_geo = self.profile_manager.get_fingerprint()
@@ -591,6 +608,17 @@ class UndetectedBrowserManager:
             except Exception as _pid_err:
                 logger.debug("提取/注册 Chrome PID 失败（不影响启动）: %s", _pid_err)
 
+            logger.info(
+                "[BrowserHealth] visible=%s chrome_channel=%s executable=%s profile=%s sandbox=%s trust_mode=%s compat_stealth=%s platform=%s",
+                not headless,
+                channel,
+                executable_path or "system-channel",
+                self.user_data_dir,
+                bool(launch_options.get("chromium_sandbox")),
+                launch_policy.trust_mode,
+                compat_stealth,
+                self.platform or "",
+            )
             logger.info(f"浏览器启动成功 (Persistent, headless={headless})")
             return self.context
             
@@ -854,9 +882,18 @@ class UndetectedBrowserManager:
         if not self.context:
             return
         
-        if self.is_strict_real_browser_platform():
+        try:
+            from .browser_launch_policy import get_browser_launch_policy
+
+            launch_policy = get_browser_launch_policy()
+        except Exception:
+            launch_policy = None
+
+        if self.is_strict_real_browser_platform() or not (
+            launch_policy and launch_policy.use_compat_stealth
+        ):
             logger.info(
-                "[BrowserManager] %s strict_real_browser: skip stealth add_init_script",
+                "[BrowserManager] %s real_browser mode: skip stealth add_init_script",
                 self.platform,
             )
             return

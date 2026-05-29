@@ -24,6 +24,8 @@ from src.domain.publish.work_declaration import (
 )
 from src.infrastructure.common.config.app_config_keys import (
     BATCH_PUBLISH_DESCRIPTION,
+    BROWSER_TRUST_MODE,
+    BROWSER_TRUST_MODE_REAL,
     BATCH_LOCATION,
     BATCH_LOCATION_POI_INFO,
     BATCH_LOCATION_WX_OPEN_PICKER,
@@ -44,6 +46,9 @@ from src.infrastructure.common.config.app_config_keys import (
     MAIN_WINDOW_CLOSE_REMIND,
     MAIN_WINDOW_CLOSE_REMEMBER_CHOICE,
     MAIN_WINDOW_CLOSE_ACTION,
+    PUBLISH_FORCE_VISIBLE_BROWSER,
+    PUBLISH_RESPECT_PLATFORM_INTERVAL,
+    PUBLISH_STOP_ON_RISK_PROMPT,
     SINGLE_AUTO_MATCH_COPYWRITING,
     SINGLE_AUTO_MATCH_VIDEO_LIBRARY,
     SINGLE_COPYWRITING_MATCH_MODE,
@@ -72,6 +77,10 @@ def default_app_config_skeleton() -> Dict[str, Any]:
         "material_library_root": "",
         "chrome_executable_path": "",
         "browser_scheme": "playwright",
+        BROWSER_TRUST_MODE: BROWSER_TRUST_MODE_REAL,
+        PUBLISH_FORCE_VISIBLE_BROWSER: True,
+        PUBLISH_RESPECT_PLATFORM_INTERVAL: True,
+        PUBLISH_STOP_ON_RISK_PROMPT: True,
         "minimize_to_tray": True,
         START_IN_TRAY_NEXT_LAUNCH: False,
         # 新版主窗口关闭行为默认：每次询问
