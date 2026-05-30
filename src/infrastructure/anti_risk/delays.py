@@ -131,30 +131,49 @@ async def cognitive_pause(
     if random.random() >= probability:
         return
         
-    # 分布：70% 概率在 20-50 秒，30% 概率在 50-120 秒
-    if random.random() < 0.7:
-        pause_s = random.uniform(20, 50)
+    # 三段式分布：
+    # 60% 概率：短暂停 5-15秒 (看眼手机)
+    # 30% 概率：中暂停 15-35秒 (回复消息)
+    # 10% 概率：长暂停 35-75秒 (短暂离开)
+    rand_val = random.random()
+    if rand_val < 0.6:
+        base_s = random.uniform(5, 15)
+    elif rand_val < 0.9:
+        base_s = random.uniform(15, 35)
     else:
-        pause_s = random.uniform(50, 120)
+        base_s = random.uniform(35, 75)
         
-    logger.info("触发认知暂停 (CognitivePause)，等待 %.0f 秒以模拟用户分心行为", pause_s)
+    # 应用全局任务速率
+    rate = _speed_rate(metadata)
+    pause_s = max(2.0, base_s * rate)
+        
+    logger.info("触发认知暂停 (CognitivePause)，基准 %.0fs，系数 %.2f，最终等待 %.0f 秒", base_s, rate, pause_s)
     try:
-        USER_LOG.info(f"▶ 触发认知暂停（模拟用户分心），将等待 {pause_s:.0f} 秒")
+        USER_LOG.info(f"▶ 触发认知暂停（模拟用户思考/分心），将等待 {pause_s:.0f} 秒")
     except Exception:
         pass
         
     elapsed = 0.0
     while elapsed < pause_s:
         # 在长暂停中维持极少的互动，防止判定挂机
-        if random.random() < 0.2:
+        if random.random() < 0.3:
             try:
                 from src.infrastructure.browser.human_behavior import HumanBehavior
-                await HumanBehavior.scroll(page, direction='down', smooth=True)
-                await asyncio.sleep(random.uniform(1.0, 3.0))
-                await HumanBehavior.scroll(page, direction='up', smooth=True)
+                if random.random() < 0.7:
+                    # 70% 概率仅进行鼠标漫游（最安全）
+                    if hasattr(HumanBehavior, 'mouse_wander'):
+                        await HumanBehavior.mouse_wander(page, duration=random.uniform(2.0, 5.0))
+                else:
+                    # 30% 概率轻轻滚动一下
+                    await HumanBehavior.scroll(page, direction='down', smooth=True, distance=200)
+                    await asyncio.sleep(random.uniform(1.0, 2.0))
+                    await HumanBehavior.scroll(page, direction='up', smooth=True, distance=200)
             except Exception:
                 pass
                 
         chunk = random.uniform(2.0, 5.0)
-        await asyncio.sleep(chunk)
+        # 避免超出总时长
+        chunk = min(chunk, pause_s - elapsed)
+        if chunk > 0:
+            await asyncio.sleep(chunk)
         elapsed += chunk

@@ -410,3 +410,50 @@ class HumanBehavior:
         
         box = await locator.bounding_box()
         return box is not None and 0 <= box['y'] <= viewport_height
+
+    @staticmethod
+    async def mouse_wander(page: Page, duration: float = 5.0) -> None:
+        """模拟鼠标在屏幕上漫无目的地缓慢游走，用于防挂机保活，而不会触发意外点击或滚动。
+        
+        Args:
+            page: Playwright Page对象
+            duration: 游走总时长(秒)
+        """
+        try:
+            vp = await page.evaluate("() => ({ w: window.innerWidth, h: window.innerHeight })")
+            vw = vp.get("w") or 800
+            vh = vp.get("h") or 600
+        except Exception:
+            vw, vh = 800, 600
+            
+        # 随机取一个初始游走区域中心
+        cx = random.uniform(vw * 0.2, vw * 0.8)
+        cy = random.uniform(vh * 0.2, vh * 0.8)
+        
+        # 先移动到中心附近
+        try:
+            await page.mouse.move(cx, cy, steps=random.randint(15, 30))
+        except Exception:
+            pass
+            
+        elapsed = 0.0
+        while elapsed < duration:
+            # 在中心附近随机取目标点
+            nx = max(10, min(vw - 10, cx + random.uniform(-200, 200)))
+            ny = max(10, min(vh - 10, cy + random.uniform(-200, 200)))
+            
+            # 漫无目的地移动
+            try:
+                await HumanBehavior.mouse_move(page, cx, cy, nx, ny, steps=random.randint(20, 50))
+            except Exception:
+                pass
+            cx, cy = nx, ny
+            
+            # 随机停顿发呆
+            sleep_time = random.uniform(0.5, 2.0)
+            
+            # 避免超时
+            sleep_time = min(sleep_time, duration - elapsed)
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
+            elapsed += sleep_time

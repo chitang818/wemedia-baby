@@ -58,7 +58,8 @@ def should_force_visible_publish_browser() -> bool:
 
 
 def should_respect_platform_publish_interval() -> bool:
-    return get_browser_launch_policy().respect_platform_interval
+    # 应用户要求，不再使用平台兜底限制，统一只参考界面的发布设置
+    return False
 
 
 def should_stop_on_risk_prompt() -> bool:
