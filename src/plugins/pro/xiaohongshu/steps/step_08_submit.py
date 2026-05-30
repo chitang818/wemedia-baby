@@ -29,7 +29,6 @@ from src.plugins.core.wait_helper import PluginWaitHelper
 from ._base import BasePublishStep, NeedsAction, StepOutcome
 from ._schedule_picker import is_schedule_picker_visible, unlock_before_submit
 from .._xhs_submit_probe import (
-    click_via_sr,
     evaluate_sr_red_button_state,
     resolve_sr_click_center,
     snapshot_xhs_publish_btn,
@@ -403,19 +402,27 @@ async def _simulate_mouse_click_at(
         vw, vh = float(vp.get("w") or 800), float(vp.get("h") or 600)
         tx = x + _random.uniform(-3, 3)
         ty = y + _random.uniform(-3, 3)
-        from_x = _random.uniform(0, max(1, vw))
-        from_y = _random.uniform(0, max(1, vh))
+        from_x = vw / 2 + _random.uniform(-100, 100)
+        from_y = vh / 2 + _random.uniform(-100, 100)
         try:
             from src.infrastructure.browser.human_behavior import HumanBehavior
 
             await HumanBehavior.mouse_move(
                 page, from_x, from_y, tx, ty,
-                steps=_random.randint(18, 30),
+                steps=_random.randint(20, 35),
             )
         except Exception:
-            await page.mouse.move(tx, ty)
+            await page.mouse.move(tx, ty, steps=_random.randint(10, 20))
+            
+        await page.mouse.move(tx + _random.uniform(-2, 2), ty + _random.uniform(-2, 2), steps=3)
+        await page.wait_for_timeout(_random.randint(30, 80))
+        await page.mouse.move(tx, ty, steps=2)
         await page.wait_for_timeout(_random.randint(80, 180))
-        await page.mouse.click(tx, ty)
+        
+        await page.mouse.down()
+        await page.wait_for_timeout(_random.randint(60, 180))
+        await page.mouse.up()
+        
         logger.info("模拟鼠标点击发布钮 (%.0f, %.0f)%s", tx, ty, f" [{desc}]" if desc else "")
         return True
     except Exception as e:
@@ -428,14 +435,11 @@ async def _scroll_xhs_publish_btn_into_view(
     wait_ms: Optional[Callable[[int], int]] = None,
 ) -> None:
     try:
-        await page.evaluate(
-            """() => {
-                const host = document.querySelector('.publish-page-content xhs-publish-btn')
-                    || document.querySelector('xhs-publish-btn[is-publish="true"]')
-                    || document.querySelector('xhs-publish-btn');
-                if (host) host.scrollIntoView({ block: 'center', behavior: 'instant' });
-            }"""
-        )
+        from src.infrastructure.browser.human_behavior import HumanBehavior
+        locator = page.locator(".publish-page-content xhs-publish-btn, xhs-publish-btn[is-publish='true'], xhs-publish-btn").first
+        if await locator.count() > 0:
+            await HumanBehavior.scroll_to_locator(page, locator, target_ratio=0.8)
+        
         settle = wait_ms(_SCROLL_SETTLE_MS) if wait_ms else _SCROLL_SETTLE_MS
         await page.wait_for_timeout(settle)
     except Exception as e:
@@ -454,14 +458,9 @@ async def _scroll_publish_form_for_submit(
     wait_ms: Optional[Callable[[int], int]] = None,
 ) -> None:
     try:
-        await page.evaluate(
-            """() => {
-                const el = document.querySelector('.publish-page-container')
-                    || document.querySelector('.publish-page-content');
-                if (el) el.scrollIntoView({ block: 'end', behavior: 'instant' });
-                window.scrollTo(0, document.body.scrollHeight);
-            }"""
-        )
+        from src.infrastructure.browser.human_behavior import HumanBehavior
+        await HumanBehavior.scroll_to_bottom(page)
+        
         settle = wait_ms(_SCROLL_SETTLE_MS) if wait_ms else _SCROLL_SETTLE_MS
         await page.wait_for_timeout(settle)
     except Exception:
@@ -530,31 +529,32 @@ async def _click_xhs_publish_via_sr(
     *,
     ignore_host_disabled: bool = False,
 ) -> bool:
-    """主路径：host._sr 内 button.ce-btn.bg-red.click()。"""
+    """主路径：获取按钮坐标后使用真实鼠标点击。"""
     host = await _get_xhs_publish_host(page)
     if await host.count() == 0:
         return False
-
-    result = await click_via_sr(
-        host, primary_label, ignore_host_disabled=ignore_host_disabled,
-    )
-    if result.get("ok"):
-        logger.info(
-            "通过 _sr 点击发布钮成功：%s (ignore_disabled=%s)",
-            result.get("text"),
-            ignore_host_disabled,
-        )
-        return True
-
-    logger.debug("_sr 点击失败: %s", result.get("reason"))
 
     cx, cy, desc = await resolve_sr_click_center(
         host, primary_label, ignore_host_disabled=ignore_host_disabled,
     )
     if cx is not None and cy is not None:
+        logger.info("通过 _sr 成功获取红钮坐标 (%.0f, %.0f)", cx, cy)
         return await _simulate_mouse_click_at(
             page, cx, cy, metadata, config, desc=desc,
         )
+
+    try:
+        box = await host.bounding_box()
+        if box and box.get("width", 0) > 100:
+            fallback_x = box["x"] + box["width"] - 120
+            fallback_y = box["y"] + 45
+            logger.info("无法获取红钮坐标，使用宿主右下角兜底坐标 (%.0f, %.0f)", fallback_x, fallback_y)
+            return await _simulate_mouse_click_at(
+                page, fallback_x, fallback_y, metadata, config, desc="host_offset_fallback_bbox",
+            )
+    except Exception as e:
+        logger.debug("读取 host bounding_box 失败: %s", e)
+        
     return False
 
 
@@ -862,6 +862,8 @@ class SubmitStep(BasePublishStep):
                 current_url = page.url if not page.is_closed() else ""
                 logger.info("第 %d 次点击后发布成功", attempt)
                 USER_LOG.info("[步骤8 点击发布] ✓ 发布成功 (%s)", current_url)
+                # 发布成功后：模拟用户浏览结果页的收尾行为，避免「立即退出」的自动化特征
+                await self._do_post_publish_browse(page, metadata, config, speed_rate)
                 return PublishResult(success=True, publish_url=current_url)
 
             USER_LOG.warning("[步骤8 点击发布] 第 %d 次未确认成功，将重试", attempt)
@@ -913,10 +915,12 @@ class SubmitStep(BasePublishStep):
         logger.info("===== 验证发布结果 =====")
         speed_rate = max(0.5, float(metadata.get("speed_rate", 1.0)))
 
+        config = metadata.get("anti_risk_config") or {}
         try:
             current_url = page.url
             if _url_indicates_success(current_url) or await _manage_page_visible(page):
                 USER_LOG.info("[步骤8 点击发布] ✓ 发布成功 (%s)", current_url)
+                await self._do_post_publish_browse(page, metadata, config, speed_rate)
                 return PublishResult(success=True, publish_url=current_url)
         except Exception:
             pass
@@ -926,11 +930,13 @@ class SubmitStep(BasePublishStep):
         for _ in range(0, total_wait_ms, poll_interval_ms):
             if await _any_toast_success_visible(page):
                 USER_LOG.info("[步骤8 点击发布] ✓ 发布成功（页面提示）")
+                await self._do_post_publish_browse(page, metadata, config, speed_rate)
                 return PublishResult(success=True, publish_url=page.url)
             try:
                 current_url = page.url
                 if _url_indicates_success(current_url) or await _manage_page_visible(page):
                     USER_LOG.info("[步骤8 点击发布] ✓ 发布成功 (%s)", current_url)
+                    await self._do_post_publish_browse(page, metadata, config, speed_rate)
                     return PublishResult(success=True, publish_url=current_url)
             except Exception:
                 pass
@@ -941,3 +947,62 @@ class SubmitStep(BasePublishStep):
             error_message="发布后未能确认成功（无 published=true / 成功页 / Toast），请手动检查",
             failed_step=self._FAILED_STEP,
         )
+
+    async def _do_post_publish_browse(
+        self,
+        page: Page,
+        metadata: Dict[str, Any],
+        config: Dict[str, Any],
+        speed_rate: float,
+    ) -> None:
+        """发布成功后的随机浏览收尾，模拟用户查看发布结果页后自然离开。
+
+        执行 1-3 次页面随机滚动，总停留 8-25 秒。
+        页面关闭时静默跳过，不影响发布结果判定。
+        """
+        if page.is_closed():
+            return
+        try:
+            import random as _rand
+            from src.infrastructure.anti_risk.delays import random_delay
+
+            # 计划总停留时间（受 speed_rate 影响）
+            total_stay_ms = int(_rand.uniform(8000, 25000) * max(0.5, speed_rate))
+            scroll_times = _rand.randint(1, 3)
+            per_scroll_ms = total_stay_ms // max(1, scroll_times + 1)
+
+            USER_LOG.info(
+                "[步骤8 点击发布] ▷ 发布成功，浏览结果页 %.0f 秒…",
+                total_stay_ms / 1000,
+            )
+            logger.info(
+                "发布后收尾浏览：计划滚动 %d 次，总停留约 %.0fs",
+                scroll_times,
+                total_stay_ms / 1000,
+            )
+
+            for i in range(scroll_times):
+                if page.is_closed():
+                    break
+                await self._await_pause(metadata)
+                # 随机向下或向上轻微滚动，模拟查看发布结果
+                direction = _rand.choice([1, 1, -1])  # 偏向向下浏览
+                scroll_px = _rand.uniform(80, 280)
+                try:
+                    if scroll_px > 50:
+                        await page.mouse.wheel(0, direction * scroll_px)
+                except Exception:
+                    pass
+                # 每次滚动后随机停留
+                if not page.is_closed():
+                    await random_delay(page, per_scroll_ms, metadata, config)
+
+            # 最终停留（剩余时间）
+            if not page.is_closed():
+                remaining_ms = max(0, total_stay_ms - scroll_times * per_scroll_ms)
+                if remaining_ms > 500:
+                    await random_delay(page, remaining_ms, metadata, config)
+
+            logger.info("发布后收尾浏览完成")
+        except Exception as e:
+            logger.debug("发布后收尾浏览异常（已忽略，不影响结果）: %s", e)

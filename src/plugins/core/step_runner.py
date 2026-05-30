@@ -203,12 +203,13 @@ class GenericStepRunner:
                             rate = max(0.1, float(self.metadata.get("speed_rate", 1.0)))
                             await self.page.wait_for_timeout(max(50, int(80 * rate)))
                         else:
-                            from src.infrastructure.anti_risk.delays import step_interval
+                            from src.infrastructure.anti_risk.delays import step_interval, cognitive_pause
                             await step_interval(
                                 self.page,
                                 self.metadata,
                                 self.metadata.get("anti_risk_config"),
                             )
+                            await cognitive_pause(self.page, self.metadata)
                     except Exception:
                         pass
                     i += 1

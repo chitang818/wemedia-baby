@@ -67,7 +67,8 @@ class AuthorServiceStep(BasePublishStep):
         """关联商品挂载完整流程（共6步）。任一步骤失败返回 PublishResult(False)。"""
 
         # 滚动到作者服务区域，确保元素可见
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
+        from src.infrastructure.browser.human_behavior import HumanBehavior
+        await HumanBehavior.scroll_to_bottom(page)
         await page.wait_for_timeout(500)
 
         # ── 重试快速检测：若上一次实际已成功挂载（验证误判），直接返回成功 ──────────
@@ -110,7 +111,8 @@ class AuthorServiceStep(BasePublishStep):
         # 将输入框滚动到视口中央（而非仅确保可见），保证上下均有足够空间；
         # 否则输入框贴底时 Ant Design 会把商品卡片弹窗向上翻转，影响点击兜底
         try:
-            await goods_input.evaluate("el => el.scrollIntoView({block: 'center', inline: 'nearest'})")
+            from src.infrastructure.browser.human_behavior import HumanBehavior
+            await HumanBehavior.scroll_to_locator(page, goods_input, target_ratio=0.5)
         except Exception:
             await goods_input.scroll_into_view_if_needed()
         await page.wait_for_timeout(300)
@@ -334,7 +336,8 @@ class AuthorServiceStep(BasePublishStep):
         try:
             # 点击前先把卡片滚到视口中央，避免因视口边缘导致点击坐标计算偏差
             try:
-                await card.evaluate("el => el.scrollIntoView({block: 'center', inline: 'nearest'})")
+                from src.infrastructure.browser.human_behavior import HumanBehavior
+                await HumanBehavior.scroll_to_locator(page, card, target_ratio=0.5)
             except Exception:
                 await card.scroll_into_view_if_needed()
             await page.wait_for_timeout(200)

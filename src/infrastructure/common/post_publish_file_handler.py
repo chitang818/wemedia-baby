@@ -49,6 +49,9 @@ class FileGroupInfo:
     group_name: str = ""
     # "video" 或 "image"
     file_type: str = "video"
+    # 图文任务且图片来源为文件夹时，存储文件夹的绝对路径（来自 __FOLDER__: 标记）；
+    # 普通散图或视频任务时为空字符串。
+    source_folder: str = ""
 
 
 class PostPublishFileHandler:
@@ -187,6 +190,8 @@ class PostPublishFileHandler:
                     platform_username=str(task.get("platform_username") or ""),
                     group_name=group_name,
                     file_type=file_type,
+                    # 解析 __FOLDER__: 标记，填充文件夹来源路径
+                    source_folder=PostPublishFileHandler._extract_folder_path(fp_raw),
                 )
             if task_id is not None:
                 file_groups[group_key].task_ids.add(task_id)
@@ -323,6 +328,8 @@ class PostPublishFileHandler:
             platform_username=str(task.get("platform_username") or ""),
             group_name=group_name,
             file_type=file_type,
+            # 解析 __FOLDER__: 标记，填充文件夹来源路径
+            source_folder=PostPublishFileHandler._extract_folder_path(file_path_raw),
         )
         path_results = await PostPublishFileHandler._execute_file_action(info, action, user_log)
         # 更新所有引用该文件的任务（包括当前任务和之前已成功的同组任务）
@@ -398,7 +405,7 @@ class PostPublishFileHandler:
             if account is None:
                 return ""
 
-            group_id = account.group_id
+            group_id = getattr(account, "group_id", None)
             if not group_id:
                 logger.debug(
                     "_resolve_group_name_for_task: 账号 %s 的 group_id 为空（该账号未关联到任何组）",
@@ -444,7 +451,7 @@ class PostPublishFileHandler:
                 first_part = rel.parts[0] if rel.parts else ""
             except (ValueError, IndexError):
                 # file_path 不在账号库下，尝试字符串匹配
-                fp_str = str(file_path).replace("\\", "/")
+                fp_str = file_path.replace("\\", "/")
                 lib_str = str(account_lib).replace("\\", "/").rstrip("/")
                 if lib_str not in fp_str:
                     return ""
@@ -483,11 +490,18 @@ class PostPublishFileHandler:
         - 移动成功：对应路径替换为新路径
         - 删除成功：对应路径替换为 "__DELETED__"
         - 操作失败（None）：保留原路径不变
+
+        支持文件夹来源场景：__FOLDER__:xxx 条目和各图片路径均会一并替换。
         """
         if publish_repo is None or not path_results:
             return
 
-        original_parts = PostPublishFileHandler._split_file_paths(original_file_path)
+        prefix = PostPublishFileHandler._FOLDER_MARKER_PREFIX
+
+        # 保留 file_path 的所有条目（含 __FOLDER__: 标记），不过滤
+        original_parts = [
+            p.strip() for p in original_file_path.split(",") if p.strip()
+        ]
         new_parts: List[str] = []
         changed = False
 
@@ -495,29 +509,33 @@ class PostPublishFileHandler:
             orig_key = orig.strip()
             result = path_results.get(orig_key)
             if result is None:
-                # 操作失败或未处理，保留原路径
+                # 操作失败或未处理，保留原条目
                 new_parts.append(orig_key)
             else:
                 new_parts.append(result)
                 changed = True
 
-        # 补充 path_results 中有但 original_parts 里没匹配到的（路径大小写/normalize 差异）
+        # 补充 path_results 中有但上面未匹配到的（路径大小写/normalize 差异）
         if not changed:
-            # 再尝试 normalize 后匹配
-            norm_map = {
-                os.path.normcase(os.path.normpath(k)): v
-                for k, v in path_results.items()
-                if v is not None
-            }
+            norm_map: Dict[str, str] = {}
+            for k, v in path_results.items():
+                if v is not None:
+                    # __FOLDER__: 条目不做路径 normcase（含前缀），只对纯路径部分做
+                    if k.startswith(prefix):
+                        norm_map[k.lower()] = v
+                    else:
+                        norm_map[os.path.normcase(os.path.normpath(k))] = v
             new_parts_retry: List[str] = []
             for orig in original_parts:
-                norm_orig = os.path.normcase(os.path.normpath(orig.strip()))
-                result = norm_map.get(norm_orig)
+                if orig.startswith(prefix):
+                    result = norm_map.get(orig.lower())
+                else:
+                    result = norm_map.get(os.path.normcase(os.path.normpath(orig)))
                 if result is not None:
                     new_parts_retry.append(result)
                     changed = True
                 else:
-                    new_parts_retry.append(orig.strip())
+                    new_parts_retry.append(orig)
             if changed:
                 new_parts = new_parts_retry
 
@@ -584,17 +602,81 @@ class PostPublishFileHandler:
     ) -> Dict[str, Optional[str]]:
         """对分组内所有文件执行移动或删除操作。
 
+        当任务图片来源为文件夹（info.source_folder 非空）时，整体移动/删除文件夹；
+        否则按原有逻辑逐一移动/删除散图文件。
+
         Returns:
             {原始路径字符串: 结果路径字符串}
             - 移动成功：值为新路径字符串
             - 删除成功：值为 "__DELETED__"
             - 操作失败或跳过：值为 None（保留原路径，不更新数据库）
         """
+        import asyncio as _asyncio
         from src.infrastructure.common.material_library_manager import MaterialLibraryManager
 
         date_str = datetime.now().strftime("%Y%m%d")
         path_results: Dict[str, Optional[str]] = {}
+        prefix = PostPublishFileHandler._FOLDER_MARKER_PREFIX
 
+        # ── 图片文件夹来源：整体移动或删除整个文件夹 ──────────────────────
+        if info.source_folder:
+            src_folder = Path(info.source_folder).resolve()
+            # 构造 __FOLDER__: 条目的原始键（与 file_path 字段中的格式保持一致）
+            folder_marker_key = f"{prefix}{info.source_folder}"
+
+            if action == "delete":
+                # 删除整个文件夹目录
+                ok = await _asyncio.to_thread(
+                    PostPublishFileHandler._do_delete_folder, src_folder, user_log
+                )
+                result_val = "__DELETED__" if ok else None
+                # 文件夹标记条目
+                path_results[folder_marker_key] = result_val
+                # 所有图片路径条目
+                for p in info.file_paths:
+                    path_results[p.strip()] = result_val
+                return path_results
+
+            # action == "move"
+            root = MaterialLibraryManager.get_root_dir()
+            if root is None:
+                user_log.warning("[文件整理] ⚠️ 未配置媒体库路径，跳过移动操作")
+                path_results[folder_marker_key] = None
+                for p in info.file_paths:
+                    path_results[p.strip()] = None
+                return path_results
+
+            try:
+                target_dir = PostPublishFileHandler._resolve_target_dir(root, info, date_str)
+            except Exception as e:
+                user_log.warning(f"[文件整理] ⚠️ 解析目标目录失败，跳过（{e}）")
+                path_results[folder_marker_key] = None
+                for p in info.file_paths:
+                    path_results[p.strip()] = None
+                return path_results
+
+            # 整体移动文件夹
+            new_folder = await _asyncio.to_thread(
+                PostPublishFileHandler._do_move_folder, src_folder, target_dir, user_log
+            )
+            if new_folder is None:
+                # 移动失败：所有条目标记为 None（不更新数据库）
+                path_results[folder_marker_key] = None
+                for p in info.file_paths:
+                    path_results[p.strip()] = None
+            else:
+                # 移动成功：更新 __FOLDER__: 条目 → 新文件夹路径
+                path_results[folder_marker_key] = f"{prefix}{new_folder}"
+                # 更新各图片路径 → 新文件夹路径/原文件名
+                for p in info.file_paths:
+                    p = p.strip()
+                    if not p:
+                        continue
+                    img_name = Path(p).name
+                    path_results[p] = str(new_folder / img_name)
+            return path_results
+
+        # ── 普通散图或视频：逐一移动/删除（原有逻辑） ─────────────────────
         for src_path_str in info.file_paths:
             src_path_str = src_path_str.strip()
             if not src_path_str:
@@ -604,7 +686,6 @@ class PostPublishFileHandler:
             basename = src.name
 
             if action == "delete":
-                import asyncio as _asyncio
                 ok = await _asyncio.to_thread(PostPublishFileHandler._do_delete, src, basename, user_log)
                 path_results[src_path_str] = "__DELETED__" if ok else None
                 continue
@@ -625,8 +706,9 @@ class PostPublishFileHandler:
                 path_results[src_path_str] = None
                 continue
 
-            import asyncio as _asyncio
-            new_path = await _asyncio.to_thread(PostPublishFileHandler._do_move, src, target_dir, basename, user_log)
+            new_path = await _asyncio.to_thread(
+                PostPublishFileHandler._do_move, src, target_dir, basename, user_log
+            )
             path_results[src_path_str] = str(new_path) if new_path else None
 
         return path_results
@@ -651,6 +733,52 @@ class PostPublishFileHandler:
             return MaterialLibraryManager.account_video_published_dir(root, account, date_str)
 
     @staticmethod
+    def _do_move_folder(
+        src_folder: Path,
+        target_dir: Path,
+        user_log: logging.Logger,
+    ) -> Optional[Path]:
+        """将图片文件夹整体移动到 target_dir 下，保持文件夹名，重名自动追加序号。
+
+        内部复用 media_library_assign.move_folder_to_assign_target() 的实现逻辑，
+        并额外记录用户日志。返回实际落地的文件夹 Path，失败时返回 None。
+        """
+        if not src_folder.exists() or not src_folder.is_dir():
+            user_log.warning(f"[文件整理] ⚠️ 源文件夹不存在或不是目录，跳过移动：{src_folder}")
+            return None
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            # 目标文件夹路径；同名时追加序号（与 move_folder_to_assign_target 逻辑一致）
+            dst = target_dir / src_folder.name
+            if dst.exists():
+                stem = src_folder.name
+                idx = 1
+                while True:
+                    candidate = target_dir / f"{stem} ({idx})"
+                    if not candidate.exists():
+                        dst = candidate
+                        break
+                    idx += 1
+            shutil.move(str(src_folder), str(dst))
+            user_log.info(f"[文件整理] ✅ 已将文件夹 {src_folder.name} 整体移动至 {target_dir}/")
+            # 异步刷新媒体库统计（非关键路径，失败不影响主流程）
+            try:
+                from src.services.material.media_library_stats_service import get_media_library_stats_service
+                from src.ui.utils.async_helper import run_async_from_ui
+                svc = get_media_library_stats_service()
+                svc.invalidate_bucket_paths(
+                    [src_folder.parent, target_dir], kinds=("image",)
+                )
+                run_async_from_ui(lambda: svc.refresh(min_interval_seconds=0))
+            except Exception:
+                logger.debug("移动图文文件夹后刷新媒体库统计失败", exc_info=True)
+            return dst
+        except Exception as e:
+            user_log.warning(f"[文件整理] ⚠️ 文件夹移动失败（不影响发布结果）：{e}")
+            logger.error("移动文件夹失败 src=%s dst=%s: %s", src_folder, target_dir, e, exc_info=True)
+            return None
+
+    @staticmethod
     def _do_move(
         src: Path,
         target_dir: Path,
@@ -673,12 +801,39 @@ class PostPublishFileHandler:
             return None
 
     @staticmethod
+    def _do_delete_folder(
+        src_folder: Path,
+        user_log: logging.Logger,
+    ) -> bool:
+        """删除整个图片文件夹（shutil.rmtree）。返回是否成功。"""
+        if not src_folder.exists():
+            user_log.warning(f"[文件整理] ⚠️ 源文件夹不存在，跳过删除：{src_folder}")
+            return False
+        try:
+            shutil.rmtree(str(src_folder))
+            user_log.info(f"[文件整理] ✅ 已删除文件夹 {src_folder.name}")
+            # 刷新媒体库统计
+            try:
+                from src.services.material.media_library_stats_service import get_media_library_stats_service
+                from src.ui.utils.async_helper import run_async_from_ui
+                svc = get_media_library_stats_service()
+                svc.invalidate_bucket_paths([src_folder.parent], kinds=("image",))
+                run_async_from_ui(lambda: svc.refresh(min_interval_seconds=0))
+            except Exception:
+                logger.debug("删除图文文件夹后刷新媒体库统计失败", exc_info=True)
+            return True
+        except Exception as e:
+            user_log.warning(f"[文件整理] ⚠️ 文件夹删除失败（不影响发布结果）：{e}")
+            logger.error("删除文件夹失败 src=%s: %s", src_folder, e, exc_info=True)
+            return False
+
+    @staticmethod
     def _do_delete(
         src: Path,
         basename: str,
         user_log: logging.Logger,
     ) -> bool:
-        """删除 src。返回是否成功。"""
+        """删除 src 文件。返回是否成功。"""
         if not src.exists():
             user_log.warning(f"[文件整理] ⚠️ 源文件不存在，跳过删除：{src}")
             return False
@@ -717,6 +872,19 @@ class PostPublishFileHandler:
         return ",".join(parts)
 
     _FOLDER_MARKER_PREFIX = "__FOLDER__:"
+
+    @staticmethod
+    def _extract_folder_path(fp: str) -> str:
+        """从 file_path 字符串中提取 __FOLDER__: 标记后的文件夹路径。
+
+        若不含此标记（散图或视频任务），返回空字符串。
+        """
+        prefix = PostPublishFileHandler._FOLDER_MARKER_PREFIX
+        for part in fp.split(","):
+            part = part.strip()
+            if part.startswith(prefix):
+                return part[len(prefix):].strip()
+        return ""
 
     @staticmethod
     def _split_file_paths(fp: str) -> List[str]:

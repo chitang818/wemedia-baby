@@ -137,6 +137,7 @@ class XiaohongshuPublishPlugin(PublishPluginInterface):
             from .steps.step_06C_location import LocationStep
             from .steps.step_07_settings import PublishSettingsStep
             from .steps.step_08_submit import SubmitStep
+            from .steps.step_09_post_publish import PostPublishBrowseStep
             from .steps.step_runner import StepRunner, RunnerConfig
 
             steps = [
@@ -150,6 +151,7 @@ class XiaohongshuPublishPlugin(PublishPluginInterface):
                 LocationStep(),
                 PublishSettingsStep(),
                 SubmitStep(),
+                PostPublishBrowseStep(),
             ]
 
             platform_data = _platform_config()

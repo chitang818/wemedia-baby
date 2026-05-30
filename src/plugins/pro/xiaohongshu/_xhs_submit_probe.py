@@ -58,30 +58,7 @@ _SR_RED_BUTTON_STATE_JS = """(el, primary) => {
     };
 }"""
 
-# 点击红钮（主路径）
-_SR_CLICK_RED_BUTTON_JS = """(el, args) => {
-    const primary = (args && args.primary) || '发布';
-    const ignoreDisabled = !!(args && args.ignoreDisabled);
-    if (!el) return { ok: false, reason: 'no_host' };
-    if (!ignoreDisabled && el.getAttribute('submit-disabled') === 'true') {
-        return { ok: false, reason: 'submit_disabled' };
-    }
-    const sr = el._sr || el.shadowRoot;
-    if (!sr) return { ok: false, reason: 'no_shadow_access' };
-    const btn = sr.querySelector('button.ce-btn.bg-red');
-    if (!btn) return { ok: false, reason: 'red_btn_missing' };
-    const text = (btn.innerText || btn.textContent || '').trim();
-    const expected = (el.getAttribute('submit-text') || primary || '').trim();
-    if (expected === '定时发布' && text !== '定时发布') {
-        return { ok: false, reason: 'text_mismatch', expected, actual: text };
-    }
-    const r = btn.getBoundingClientRect();
-    if (r.width < 20 || r.height < 8) {
-        return { ok: false, reason: 'red_btn_no_size' };
-    }
-    btn.click();
-    return { ok: true, text, method: '_sr_click' };
-}"""
+
 
 # 红钮中心坐标（鼠标兜底）
 _SR_RED_BUTTON_CENTER_JS = """(el, args) => {
@@ -280,22 +257,7 @@ async def evaluate_sr_red_button_state(
     return {"ready": False, "reason": "evaluate_failed"}
 
 
-async def click_via_sr(
-    host: Locator,
-    primary_label: str,
-    *,
-    ignore_host_disabled: bool = False,
-) -> Dict[str, Any]:
-    try:
-        raw = await host.evaluate(
-            _SR_CLICK_RED_BUTTON_JS,
-            {"primary": primary_label, "ignoreDisabled": ignore_host_disabled},
-        )
-        if isinstance(raw, dict):
-            return raw
-    except Exception as e:
-        return {"ok": False, "reason": str(e)}
-    return {"ok": False, "reason": "evaluate_failed"}
+
 
 
 async def resolve_sr_click_center(

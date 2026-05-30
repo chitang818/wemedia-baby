@@ -30,8 +30,12 @@ dependencies = [
     "watchdog>=3.0.0",
     "openpyxl>=3.1.0",
     "ffmpeg-python>=0.2.0",
+    "pypinyin>=0.40.0",
 ]
 requires-python = ">=3.10"
+
+[project.optional-dependencies]
+stealth = ["patchright>=0.1.0"]
 
 [build-system]
 requires = ["setuptools>=61.0"]

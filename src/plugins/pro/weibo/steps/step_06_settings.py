@@ -43,7 +43,8 @@ class PublishSettingsStep(BasePublishStep):
 
         # 先滚动到底部确保设置区可见
         try:
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            from src.infrastructure.browser.human_behavior import HumanBehavior
+            await HumanBehavior.scroll_to_bottom(page)
             await page.wait_for_timeout(300)
         except Exception as e:
             logger.debug(f"滚动到底部异常: {e}")

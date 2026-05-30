@@ -71,10 +71,18 @@ Object.defineProperty(navigator, "productSub", {
   get: () => "__PRODUCT_SUB__",
 });
 
-// ========== 隐藏 webdriver 属性 ==========
-Object.defineProperty(navigator, "webdriver", {
-  get: () => undefined,
-});
+// ========== 隐藏 webdriver 属性（原型链保护：toString 伪装为 native code）==========
+// 直接 get: () => undefined 可被检测原型链篡改；改用包装 toString 的方式
+(function () {
+  const _getter = function () { return undefined; };
+  // 令 _getter.toString() 返回与原生代码格式一致的字符串，规避「toString 检测」
+  const _fakeToString = function () { return "function get webdriver() { [native code] }"; };
+  Object.defineProperty(_getter, "toString", { value: _fakeToString, writable: false, configurable: false });
+  Object.defineProperty(navigator, "webdriver", {
+    get: _getter,
+    configurable: true,
+  });
+})();
 
 // ========== 伪造插件列表 ==========
 Object.defineProperty(navigator, "plugins", {
@@ -189,41 +197,71 @@ if (__PATCH_AUDIO_CONTEXT__ && typeof AudioContext !== "undefined") {
 // ========== Canvas 指纹噪声 (基于账号种子) ==========
 const canvasNoiseSeed = __CANVAS_NOISE_SEED__;
 const canvasNoiseStrength = __CANVAS_NOISE_STRENGTH__;
+
+// ---------- 内部噪声施加函数 ----------
+// 使用伪随机间隔（而非固定 i+=4），使噪声分布更自然，难以被逆向分析
+function _applyCanvasNoise(imageData) {
+  const data = imageData.data;
+  const len = data.length;
+  const seed = canvasNoiseSeed;
+  const strength = canvasNoiseStrength || 1;
+  // 伪随机步进：基于种子的 LCG，每次步进 4~16 字节
+  let lcg = (seed * 1664525 + 1013904223) & 0xffffffff;
+  let i = 0;
+  while (i < len - 3) {
+    const noise = (lcg ^ (seed >> 3)) & 0x3; // 0-3 范围的噪声
+    data[i] ^= noise * strength;
+    // 步进：4 + (lcg & 0xf) 即 4~19，增加随机性
+    const step = 4 + (lcg & 0xf);
+    lcg = (lcg * 1664525 + 1013904223) & 0xffffffff;
+    i += step;
+  }
+}
+
 const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
 HTMLCanvasElement.prototype.toDataURL = function (type) {
-  if (type === "image/png" || type === "image/webp") {
-    const canvas = this;
-    const context = canvas.getContext("2d");
-    if (context) {
-      const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-      for (let i = 0; i < imageData.data.length; i += 4) {
-        // 基于种子的确定性噪声
-        const noise = (canvasNoiseSeed % 3) * (canvasNoiseStrength || 1);
-        imageData.data[i] ^= noise;
-      }
-      context.putImageData(imageData, 0, 0);
+  if (type === "image/png" || type === "image/webp" || !type) {
+    const context = this.getContext("2d");
+    if (context && this.width > 0 && this.height > 0) {
+      try {
+        const imageData = context.getImageData(0, 0, this.width, this.height);
+        _applyCanvasNoise(imageData);
+        context.putImageData(imageData, 0, 0);
+      } catch (e) {}
     }
   }
   return originalToDataURL.apply(this, arguments);
 };
 
-// 补充 toBlob 路径：指纹库也会通过 toBlob 导出 Canvas 内容
+// 补充 toBlob 路径：部分指纹库通过 toBlob 导出
 const originalToBlob = HTMLCanvasElement.prototype.toBlob;
 HTMLCanvasElement.prototype.toBlob = function (callback, type, quality) {
   const mimeType = type || "image/png";
   if (mimeType === "image/png" || mimeType === "image/webp") {
-    const canvas = this;
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      for (let i = 0; i < imageData.data.length; i += 4) {
-        const noise = (canvasNoiseSeed % 3) * (canvasNoiseStrength || 1);
-        imageData.data[i] ^= noise;
-      }
-      ctx.putImageData(imageData, 0, 0);
+    const ctx = this.getContext("2d");
+    if (ctx && this.width > 0 && this.height > 0) {
+      try {
+        const imageData = ctx.getImageData(0, 0, this.width, this.height);
+        _applyCanvasNoise(imageData);
+        ctx.putImageData(imageData, 0, 0);
+      } catch (e) {}
     }
   }
   return originalToBlob.call(this, callback, type, quality);
+};
+
+// ★ 补全 getImageData 路径：部分高级指纹库直接读取 getImageData 绕过 toDataURL
+// 需要在 getImageData 返回之前同样施加噪声，保持三条路径一致
+const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+CanvasRenderingContext2D.prototype.getImageData = function (sx, sy, sw, sh) {
+  const imageData = originalGetImageData.call(this, sx, sy, sw, sh);
+  // 仅对全尺寸导出施加噪声（w>=8 && h>=8），避免干扰正常小图形操作
+  if (sw >= 8 && sh >= 8) {
+    try {
+      _applyCanvasNoise(imageData);
+    } catch (e) {}
+  }
+  return imageData;
 };
 
 // ========== Font 字体指纹防护 ==========
@@ -461,3 +499,81 @@ if (typeof navigator.doNotTrack === "undefined") {
     get: () => null,
   });
 }
+
+// ========== 页面焦点与可见性伪造 ==========
+// 自动化下浏览器窗口通常不在前台，document.hasFocus() 返回 false、
+// visibilityState 为 hidden，是重要的自动化特征，需要统一伪造为「前台激活状态」
+try {
+  Object.defineProperty(document, "hidden", { get: () => false, configurable: true });
+  Object.defineProperty(document, "visibilityState", { get: () => "visible", configurable: true });
+  // document.hasFocus()
+  const _origHasFocus = document.hasFocus.bind(document);
+  document.hasFocus = function () { return true; };
+  // Page Visibility API 事件：确保 visibilitychange 不会触发 hidden 逻辑
+  document.addEventListener("visibilitychange", function (e) {
+    e.stopImmediatePropagation();
+  }, true);
+} catch (e) {}
+
+// ========== performance.now() 时序微抖动 ==========
+// 机器操作时序过于精准，缺乏真实用户的「认知延迟」抖动。
+// 添加 ±0.08ms 范围内的随机抖动，使时序更接近真实浏览器。
+try {
+  const _origPerfNow = performance.now.bind(performance);
+  let _perfNowOffset = 0;
+  performance.now = function () {
+    // 每次调用随机漂移 ±0.08ms，累计偏移不超过 ±2ms（防止累计误差过大）
+    _perfNowOffset += (Math.random() - 0.5) * 0.16;
+    if (_perfNowOffset > 2) _perfNowOffset = 2;
+    if (_perfNowOffset < -2) _perfNowOffset = -2;
+    return _origPerfNow() + _perfNowOffset;
+  };
+} catch (e) {}
+
+// ========== navigator.connection 兜底 ==========
+// 若 navigator.connection 不存在（某些环境），避免脚本报错且补充合理值
+if (!navigator.connection) {
+  try {
+    Object.defineProperty(navigator, "connection", {
+      get: () => ({
+        effectiveType: "4g",
+        downlink: 10,
+        rtt: 50,
+        saveData: false,
+        addEventListener: function () {},
+        removeEventListener: function () {},
+      }),
+      configurable: true,
+    });
+  } catch (e) {}
+}
+
+// ========== Headless 额外特征清理 ==========
+// 某些检测脚本探测 CSS/DOM 属性差异来判断 Headless
+try {
+  // 确保 window.screen.orientation 存在
+  if (!window.screen.orientation) {
+    Object.defineProperty(window.screen, "orientation", {
+      get: () => ({ type: "landscape-primary", angle: 0 }),
+      configurable: true,
+    });
+  }
+  // 确保 speechSynthesis 存在（Headless 通常没有）
+  if (typeof window.speechSynthesis === "undefined") {
+    Object.defineProperty(window, "speechSynthesis", {
+      get: () => ({
+        getVoices: () => [],
+        speak: function () {},
+        cancel: function () {},
+        pause: function () {},
+        resume: function () {},
+        pending: false,
+        speaking: false,
+        paused: false,
+        addEventListener: function () {},
+        removeEventListener: function () {},
+      }),
+      configurable: true,
+    });
+  }
+} catch (e) {}

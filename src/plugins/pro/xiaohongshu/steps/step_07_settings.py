@@ -160,7 +160,8 @@ class PublishSettingsStep(BasePublishStep):
                 continue
 
         try:
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            from src.infrastructure.browser.human_behavior import HumanBehavior
+            await HumanBehavior.scroll_to_bottom(page)
             await page.wait_for_timeout(wait_ms(300))
         except Exception as e:
             logger.debug("滚动到底部异常: %s", e)
@@ -513,47 +514,46 @@ class PublishSettingsStep(BasePublishStep):
         wait_ms: Callable[[int], int],
         speed_rate: float,
     ) -> bool:
-        """优先用输入框写入（减少在日历上的误点导致开关被关）。"""
-        try:
-            handle = await inp.element_handle()
-            if handle is not None:
-                await page.evaluate(
-                    """([el, v]) => {
-                        if (!el) return;
-                        el.focus();
-                        el.value = v;
-                        el.dispatchEvent(new Event('input', { bubbles: true }));
-                        el.dispatchEvent(new Event('change', { bubbles: true }));
-                    }""",
-                    [handle, st_str],
-                )
-                await page.wait_for_timeout(wait_ms(250))
-                if self._schedule_input_value_matches(
-                    await self._read_schedule_input_value(inp), st_str
-                ):
-                    return True
-        except Exception as e:
-            logger.debug("JS 写入定时输入失败: %s", e)
+        """优先用输入框写入（模拟真实键盘行为，避免被平台识别）。"""
+        import random
 
         try:
             await self._mouse_click_locator_center(page, inp)
-            await page.wait_for_timeout(wait_ms(100))
-            await inp.fill(st_str)
-            await page.wait_for_timeout(wait_ms(150))
+            await page.wait_for_timeout(wait_ms(random.randint(100, 200)))
+            
+            await page.keyboard.press("Control+A")
+            await page.wait_for_timeout(wait_ms(random.randint(80, 150)))
+            await page.keyboard.press("Backspace")
+            await page.wait_for_timeout(wait_ms(random.randint(100, 200)))
+
+            for i, char in enumerate(st_str):
+                if i > 0 and i % random.randint(3, 5) == 0:
+                    await page.wait_for_timeout(wait_ms(random.randint(300, 600)))
+                    
+                if random.random() < 0.03 and char.isdigit():
+                    wrong_char = str((int(char) + 1) % 10)
+                    await page.keyboard.type(wrong_char)
+                    await page.wait_for_timeout(wait_ms(random.randint(150, 300)))
+                    await page.keyboard.press("Backspace")
+                    await page.wait_for_timeout(wait_ms(random.randint(100, 200)))
+                
+                await page.keyboard.type(char)
+                await page.wait_for_timeout(wait_ms(random.randint(80, 200)))
+
+            await page.wait_for_timeout(wait_ms(random.randint(150, 300)))
+            await page.keyboard.press("Enter")
+            await page.wait_for_timeout(wait_ms(250))
+            
             if self._schedule_input_value_matches(
                 await self._read_schedule_input_value(inp), st_str
             ):
+                logger.info("成功通过键盘模拟写入定时时间: %s", st_str)
                 return True
-            await inp.press("Control+A")
-            await inp.press("Backspace")
-            await inp.type(st_str, delay=max(10, int(30 * speed_rate)))
-            await page.wait_for_timeout(wait_ms(200))
-            return self._schedule_input_value_matches(
-                await self._read_schedule_input_value(inp), st_str
-            )
+                
         except Exception as e:
-            logger.debug("键盘写入定时输入失败: %s", e)
-            return False
+            logger.debug("键盘模拟写入定时输入失败: %s", e)
+            
+        return False
 
     async def _mouse_click_locator_center(self, page: Page, locator: Locator) -> bool:
         try:

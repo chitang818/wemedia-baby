@@ -66,4 +66,13 @@ class StepRunner(GenericStepRunner):
     ) -> bool:
         if not next_step:
             return False
-        return (completed_step, next_step) in _SKIP_STEP_INTERVAL_EDGES
+        if (completed_step, next_step) in _SKIP_STEP_INTERVAL_EDGES:
+            import random
+            import logging
+            
+            # 行为随机性增强：即使是表单内连续步骤，也有 15% 概率放弃加速，进行普通的长间隔停顿
+            if random.random() < 0.15:
+                logging.getLogger(__name__).info("随机行为触发：放弃连续快速操作，执行正常步骤间隔等待")
+                return False
+            return True
+        return False

@@ -106,7 +106,8 @@ class AuthorStatementStep(BasePublishStep):
                 return True, text
 
         try:
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            from src.infrastructure.browser.human_behavior import HumanBehavior
+            await HumanBehavior.scroll_to_bottom(page)
             await random_delay(page, wait_ms(400), metadata, config)
         except Exception:
             pass

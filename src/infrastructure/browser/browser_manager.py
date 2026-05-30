@@ -18,6 +18,11 @@ import random
 
 from playwright.async_api import async_playwright, Playwright, Browser, BrowserContext, Page
 
+try:
+    from patchright.async_api import async_playwright as compat_async_playwright
+except ImportError:
+    compat_async_playwright = async_playwright
+
 from .profile_manager import ProfileManager
 from .hardware_profiles import DEFAULT_WEBGL_RENDERER, default_webgl_vendor
 from src.infrastructure.common.async_task_registry import get_async_task_registry
@@ -116,7 +121,10 @@ class UndetectedBrowserManager:
 
             # 仅导入并访问 async_playwright 对象，触发 Playwright 库与驱动解压，
             # 不实际 start()，避免启动后立即关闭导致 Node.js 端 EPIPE 崩溃。
-            from playwright.async_api import async_playwright as _ap
+            try:
+                from patchright.async_api import async_playwright as _ap
+            except ImportError:
+                from playwright.async_api import async_playwright as _ap
             _ = _ap  # 触发模块加载
             # 短暂让出事件循环，确保任何待处理的异步任务完成
             await asyncio.sleep(0)
@@ -352,7 +360,7 @@ class UndetectedBrowserManager:
                     self.platform,
                 )
                 headless = False
-            self.playwright = await async_playwright().start()
+            self.playwright = await compat_async_playwright().start()
             
             # 如果已有 context，先关闭避免冲突
             if self.context:

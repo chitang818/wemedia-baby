@@ -36,15 +36,9 @@ _SCROLL_SETTLE_MS = 180
 
 async def _scroll_locator_to_center(page: Page, locator: Locator, *, wait_ms: int = _SCROLL_SETTLE_MS) -> None:
     try:
-        handle = await locator.element_handle()
-        if handle:
-            await page.evaluate(
-                """(el) => {
-                    el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
-                }""",
-                handle,
-            )
-            await page.wait_for_timeout(wait_ms)
+        from src.infrastructure.browser.human_behavior import HumanBehavior
+        await HumanBehavior.scroll_to_locator(page, locator, target_ratio=0.5)
+        await page.wait_for_timeout(wait_ms)
     except Exception as e:
         logger.debug("滚入视口中部失败: %s", e)
 

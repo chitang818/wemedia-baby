@@ -191,6 +191,48 @@ class UploadMediaStep(BasePublishStep):
             logger.debug("读取发布页加载状态失败: %s", e)
         return {}
 
+    async def _hover_before_upload(
+        self,
+        page: Page,
+        upload_btn_selector: str,
+        metadata: Dict[str, Any],
+    ) -> None:
+        """上传文件前，将鼠标移至上传区域附近并短暂停顿，模拟用户找到上传区域的自然行为。
+
+        降低 set_input_files 直接注入时「鼠标从未到达上传区域」的自动化特征。
+        若定位失败则静默跳过，不影响上传主流程。
+        """
+        import random
+        try:
+            upload_area = page.locator(upload_btn_selector).first
+            if await upload_area.count() == 0:
+                return
+            box = await upload_area.bounding_box()
+            if not box:
+                return
+            # 在上传区域内随机选点，加 ±25px 抖动模拟人手不精准
+            target_x = box["x"] + box["width"] / 2 + random.uniform(-25, 25)
+            target_y = box["y"] + box["height"] / 2 + random.uniform(-12, 12)
+            try:
+                from src.infrastructure.browser.human_behavior import HumanBehavior
+                vp = await page.evaluate("() => ({ w: window.innerWidth, h: window.innerHeight })")
+                from_x = random.uniform(0, max(1, float(vp.get("w") or 800)) * 0.4)
+                from_y = random.uniform(0, max(1, float(vp.get("h") or 600)) * 0.4)
+                await HumanBehavior.mouse_move(
+                    page, from_x, from_y, target_x, target_y,
+                    steps=random.randint(12, 25),
+                )
+            except Exception:
+                await page.mouse.move(target_x, target_y)
+            # 在上传区域停顿 0.8-2.2 秒（模拟用户确认区域后才拖动/选择文件）
+            pause_ms = random.randint(800, 2200)
+            await page.wait_for_timeout(pause_ms)
+            logger.debug("上传前悬停完成：(%.0f, %.0f)，停顿 %dms", target_x, target_y, pause_ms)
+        except Exception as e:
+            logger.debug("上传前悬停异常（已忽略）: %s", e)
+
+
+
     # ══════════════════════════════════════════════════════════════════════════
     # 【视频上传流程】
     # ══════════════════════════════════════════════════════════════════════════
@@ -226,11 +268,15 @@ class UploadMediaStep(BasePublishStep):
             file_input_selector = ", ".join(Selectors.PUBLISH["FILE_INPUT"])
             input_file = page.locator(file_input_selector).first
             if await input_file.count() > 0:
+                # 上传前：先将鼠标移动到上传区域附近，模拟用户找到并确认上传区的自然行为
+                upload_btn_selector_for_hover = ", ".join(Selectors.PUBLISH["UPLOAD_BTN"])
+                await self._hover_before_upload(page, upload_btn_selector_for_hover, metadata)
                 await input_file.set_input_files(file_path)
                 logger.info("使用 set_input_files 触发视频上传")
                 return await self._wait_for_video_complete(page, metadata)
         except Exception as e:
             logger.info(f"直接 set_input_files 失败，尝试备用方案: {e}")
+
 
         # 策略2：expect_file_chooser + 点击上传区
         try:
@@ -482,6 +528,14 @@ class UploadMediaStep(BasePublishStep):
         # 策略1：直接 set_input_files（优先用 accept=image/* 的 input）
         try:
             image_input_selectors = Selectors.PUBLISH.get("IMAGE_FILE_INPUT", [])
+            # 上传前：先将鼠标移动到图文上传区域，模拟用户找到上传区的自然行为
+            _image_upload_btn_sels = Selectors.PUBLISH.get(
+                "IMAGE_UPLOAD_BTN", Selectors.PUBLISH.get("UPLOAD_BTN", [])
+            )
+            if _image_upload_btn_sels:
+                await self._hover_before_upload(
+                    page, ", ".join(_image_upload_btn_sels), metadata
+                )
             for sel in image_input_selectors:
                 try:
                     input_file = page.locator(sel).first
@@ -493,6 +547,7 @@ class UploadMediaStep(BasePublishStep):
                     logger.debug(f"图文 set_input_files（{sel}）失败: {e}")
         except Exception as e:
             logger.info(f"图文 set_input_files 整体失败，尝试 file chooser: {e}")
+
 
         # 策略2：expect_file_chooser + 点击上传区域按钮
         try:

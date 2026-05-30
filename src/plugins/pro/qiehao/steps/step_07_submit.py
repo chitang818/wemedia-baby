@@ -38,7 +38,8 @@ class SubmitStep(BasePublishStep):
         config = metadata.get("anti_risk_config") or {}
 
         try:
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            from src.infrastructure.browser.human_behavior import HumanBehavior
+            await HumanBehavior.scroll_to_bottom(page)
             await page.wait_for_timeout(300)
         except Exception:
             pass

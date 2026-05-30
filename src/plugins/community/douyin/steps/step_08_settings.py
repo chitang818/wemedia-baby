@@ -50,7 +50,8 @@ class PublishSettingsStep(BasePublishStep):
         logger.info("===== 发布设置 =====")
         # 发布设置与发布按钮在页面最下部，先滚动到底部确保在可视范围内
         try:
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            from src.infrastructure.browser.human_behavior import HumanBehavior
+            await HumanBehavior.scroll_to_bottom(page)
             await page.wait_for_timeout(300)
         except Exception as e:
             logger.debug(f"步骤8 滚动到底部异常: {e}")

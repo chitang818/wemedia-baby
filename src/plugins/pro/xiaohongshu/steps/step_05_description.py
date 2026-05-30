@@ -78,6 +78,39 @@ def _topic_pause_ms(base_ms: int, speed_rate: float) -> int:
     return max(10, int(base_ms * 0.5 * max(0.5, speed_rate)))
 
 
+async def _type_chinese_with_ime(
+    page: Page, text: str, speed_rate: float, default_delay: int
+) -> None:
+    """模拟中文 IME 输入过程（拼音 → 选字），有效绕过直接赋值特征。"""
+    import random
+    
+    pypinyin_mod = None
+    try:
+        import pypinyin
+        pypinyin_mod = pypinyin
+    except ImportError:
+        pass
+
+    for char in text:
+        if pypinyin_mod and '\u4e00' <= char <= '\u9fff':
+            try:
+                pinyin = pypinyin_mod.pinyin(char, style=pypinyin_mod.NORMAL)[0][0]
+                await page.evaluate(
+                    "() => document.activeElement && document.activeElement.dispatchEvent(new CompositionEvent('compositionstart', {bubbles:true}))"
+                )
+                await page.keyboard.type(pinyin, delay=random.randint(40, 90))
+                await page.evaluate(
+                    f"() => document.activeElement && document.activeElement.dispatchEvent(new CompositionEvent('compositionend', {{bubbles:true, data:'{char}'}}))"
+                )
+                await page.keyboard.insert_text(char)
+            except Exception:
+                await page.keyboard.type(char, delay=default_delay)
+        else:
+            await page.keyboard.type(char, delay=default_delay)
+            
+        await page.wait_for_timeout(random.randint(int(20 * speed_rate), int(80 * speed_rate)))
+
+
 def _normalize_meta_tag_entries(tags: List[str]) -> List[str]:
     """与 parse_topic_list 输出可比：去空白、去前导井号（含全角）。"""
     out: List[str] = []
@@ -482,36 +515,11 @@ async def _scroll_locator_into_comfortable_view(
     """将输入区滚入可视范围：顶边约在视口 25% 处，避免 block:start 把描述框顶死到最上方。"""
     ratio = max(0.12, min(0.45, float(viewport_top_ratio)))
     try:
-        await locator.scroll_into_view_if_needed(timeout=5000)
+        from src.infrastructure.browser.human_behavior import HumanBehavior
+        await HumanBehavior.scroll_to_locator(page, locator, target_ratio=ratio)
     except Exception as e:
-        logger.debug("scroll_into_view_if_needed 异常（已忽略）: %s", e)
-    try:
-        handle = await locator.element_handle()
-        if handle:
-            await page.evaluate(
-                """(el, topRatio) => {
-                    const rect = el.getBoundingClientRect();
-                    const targetTop = window.innerHeight * topRatio;
-                    const delta = rect.top - targetTop;
-                    if (Math.abs(delta) > 6) {
-                        window.scrollBy({ top: delta, left: 0, behavior: 'smooth' });
-                    }
-                }""",
-                handle,
-                ratio,
-            )
-            logger.debug("已温和滚入视口（顶边目标比例=%.2f）", ratio)
-    except Exception as e:
-        logger.debug("温和滚动异常，降级 center: %s", e)
-        try:
-            handle = await locator.element_handle()
-            if handle:
-                await page.evaluate(
-                    "el => el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' })",
-                    handle,
-                )
-        except Exception:
-            pass
+        logger.debug("物理滚动到视口异常: %s", e)
+
     try:
         from src.infrastructure.anti_risk.delays import random_delay
 
@@ -562,7 +570,7 @@ async def _input_single_topic(
         await page.wait_for_timeout(micro(35))
         mode = "hash_prefix"
 
-    await page.keyboard.type(label, delay=type_delay)
+    await _type_chinese_with_ime(page, label, speed_rate, type_delay)
     await page.wait_for_timeout(micro(50))
     await _fix_double_hash_before_caret(page, edit_box)
     suggestion = await _confirm_topic_when_dropdown_ready(
@@ -686,6 +694,23 @@ class MetadataFillStep(BasePublishStep):
         wait_ms = lambda ms: int(ms * speed_rate)
         config = metadata.get("anti_risk_config") or {}
 
+        # ── 0. 随机视线扫视 ──
+        try:
+            import random
+            from src.infrastructure.browser.human_behavior import HumanBehavior
+            vp = await page.evaluate("() => ({ w: window.innerWidth, h: window.innerHeight })")
+            vw, vh = float(vp.get("w") or 800), float(vp.get("h") or 600)
+            
+            for _ in range(random.randint(1, 2)):
+                from_x = random.uniform(vw * 0.2, vw * 0.8)
+                from_y = random.uniform(vh * 0.6, vh * 0.9)
+                to_x = random.uniform(vw * 0.2, vw * 0.8)
+                to_y = random.uniform(vh * 0.2, vh * 0.5)
+                await HumanBehavior.mouse_move(page, from_x, from_y, to_x, to_y, steps=random.randint(20, 40))
+                await page.wait_for_timeout(random.randint(400, 1200))
+        except Exception as e:
+            logger.debug("随机视线扫视异常: %s", e)
+
         # ── 1. 标题 ──
         if title:
             title_text = title.strip()[:20]
@@ -697,6 +722,14 @@ class MetadataFillStep(BasePublishStep):
                             page, title_input, metadata, config, wait_ms=wait_ms(400)
                         )
                         logger.info("已温和滚动标题输入区入视口（顶部留白）: %s", selector)
+                        
+                        try:
+                            import random
+                            from src.infrastructure.browser.human_behavior import HumanBehavior
+                            await HumanBehavior.hover_and_jitter(page, title_input, duration=random.uniform(2.0, 4.0))
+                        except Exception:
+                            pass
+
                         try:
                             from src.infrastructure.anti_risk.human_like import human_type_text
 
@@ -734,6 +767,13 @@ class MetadataFillStep(BasePublishStep):
                         page, edit_box, metadata, config, wait_ms=wait_ms(450)
                     )
                     logger.info("已温和滚动描述编辑器入视口（顶部留白，约 %.0f%%）", _SCROLL_VIEWPORT_TOP_RATIO * 100)
+                    
+                    try:
+                        import random
+                        from src.infrastructure.browser.human_behavior import HumanBehavior
+                        await HumanBehavior.hover_and_jitter(page, edit_box, duration=random.uniform(2.0, 5.0))
+                    except Exception:
+                        pass
 
                     try:
                         from src.infrastructure.anti_risk.human_like import human_click
@@ -777,7 +817,7 @@ class MetadataFillStep(BasePublishStep):
                         except Exception as te:
                             logger.debug("human_type_text 正文失败，降级 keyboard.type: %s", te)
                         if not typed_ok:
-                            await page.keyboard.type(body_text, delay=desc_delay)
+                            await _type_chinese_with_ime(page, body_text, speed_rate, desc_delay)
                         logger.info("纯正文已输入，长度=%d", len(body_text))
 
                     # 阶段 B：逐话题 Space 收词

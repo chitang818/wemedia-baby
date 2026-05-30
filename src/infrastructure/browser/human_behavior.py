@@ -28,7 +28,7 @@ class HumanBehavior:
         to_y: float,
         steps: Optional[int] = None
     ) -> None:
-        """模拟人类鼠标移动轨迹(贝塞尔曲线)
+        """模拟人类鼠标移动轨迹(贝塞尔曲线)，包含动态控制点与过冲(Overshoot)回弹。
         
         Args:
             page: Playwright Page对象
@@ -40,22 +40,38 @@ class HumanBehavior:
         """
         if steps is None:
             steps = random.randint(20, 40)
+            
+        # 是否发生过冲
+        overshoot = random.random() < 0.20
+        actual_to_x, actual_to_y = to_x, to_y
         
-        # 生成贝塞尔曲线控制点
-        control_x1 = from_x + (to_x - from_x) * 0.25 + random.uniform(-50, 50)
-        control_y1 = from_y + (to_y - from_y) * 0.25 + random.uniform(-50, 50)
-        control_x2 = from_x + (to_x - from_x) * 0.75 + random.uniform(-50, 50)
-        control_y2 = from_y + (to_y - from_y) * 0.75 + random.uniform(-50, 50)
+        if overshoot:
+            import math
+            dx = to_x - from_x
+            dy = to_y - from_y
+            dist = math.hypot(dx, dy)
+            if dist > 20: # 距离够长才过冲
+                extend = random.uniform(10, 30)
+                actual_to_x = to_x + (dx / dist) * extend
+                actual_to_y = to_y + (dy / dist) * extend
         
-        logger.debug(f"鼠标移动: ({from_x},{from_y}) -> ({to_x},{to_y}), {steps}步")
+        # 生成动态贝塞尔曲线控制点比例
+        t1 = random.uniform(0.1, 0.4)
+        t2 = random.uniform(0.6, 0.9)
+        control_x1 = from_x + (actual_to_x - from_x) * t1 + random.uniform(-50, 50)
+        control_y1 = from_y + (actual_to_y - from_y) * t1 + random.uniform(-50, 50)
+        control_x2 = from_x + (actual_to_x - from_x) * t2 + random.uniform(-50, 50)
+        control_y2 = from_y + (actual_to_y - from_y) * t2 + random.uniform(-50, 50)
+        
+        logger.debug(f"鼠标移动: ({from_x},{from_y}) -> ({actual_to_x},{actual_to_y}), {steps}步, 过冲: {overshoot}")
         
         for i in range(steps):
             t = i / steps
             # 三次贝塞尔曲线公式
             x = (1-t)**3 * from_x + 3*(1-t)**2*t * control_x1 + \
-                3*(1-t)*t**2 * control_x2 + t**3 * to_x
+                3*(1-t)*t**2 * control_x2 + t**3 * actual_to_x
             y = (1-t)**3 * from_y + 3*(1-t)**2*t * control_y1 + \
-                3*(1-t)*t**2 * control_y2 + t**3 * to_y
+                3*(1-t)*t**2 * control_y2 + t**3 * actual_to_y
             
             # 添加微小抖动
             x += random.uniform(-1, 1)
@@ -63,6 +79,18 @@ class HumanBehavior:
             
             await page.mouse.move(x, y)
             await asyncio.sleep(random.uniform(0.005, 0.02))
+            
+        if overshoot:
+            # 在过冲点停留微抖
+            await asyncio.sleep(random.uniform(0.1, 0.3))
+            # 回退到真实目标
+            back_steps = random.randint(5, 10)
+            for i in range(back_steps):
+                t = i / back_steps
+                x = actual_to_x + (to_x - actual_to_x) * t + random.uniform(-1, 1)
+                y = actual_to_y + (to_y - actual_to_y) * t + random.uniform(-1, 1)
+                await page.mouse.move(x, y)
+                await asyncio.sleep(random.uniform(0.01, 0.03))
     
     @staticmethod
     async def type_text(
@@ -128,22 +156,37 @@ class HumanBehavior:
         # 分段滚动
         if smooth:
             steps = random.randint(5, 10)
-            step_distance = distance / steps
+            logger.debug(f"平滑滚动{direction}: {distance:.0f}px, {steps}步")
             
-            logger.debug(f"平滑滚动{direction}: {distance}px, {steps}步")
+            # 计算非线性(加减速)的步幅权重，中间大两头小
+            weights = []
+            for i in range(steps):
+                p = i / max(1, (steps - 1))
+                w = 0.2 + 0.8 * (1 - 4 * (p - 0.5) ** 2)
+                weights.append(max(0.1, w))
+            total_w = sum(weights)
             
-            for _ in range(steps):
+            for w in weights:
                 # 滚动一段
+                step_distance = distance * (w / total_w)
                 delta_y = step_distance if direction == 'down' else -step_distance
                 await page.mouse.wheel(0, delta_y)
                 
+                # 随机偶发回滚(15%概率)
+                if random.random() < 0.15:
+                    await asyncio.sleep(random.uniform(0.1, 0.3))
+                    rollback_dist = step_distance * random.uniform(0.5, 1.2)
+                    r_delta = -rollback_dist if direction == 'down' else rollback_dist
+                    logger.debug(f"触发回滚: {rollback_dist:.0f}px")
+                    await page.mouse.wheel(0, r_delta)
+                    
                 # 随机停留(模拟阅读)
                 await asyncio.sleep(random.uniform(0.3, 1.5))
         else:
             # 一次性滚动
             delta_y = distance if direction == 'down' else -distance
             await page.mouse.wheel(0, delta_y)
-            logger.debug(f"快速滚动{direction}: {distance}px")
+            logger.debug(f"快速滚动{direction}: {distance:.0f}px")
     
     @staticmethod
     async def random_delay(min_ms: int = 100, max_ms: int = 500) -> None:
@@ -273,3 +316,97 @@ class HumanBehavior:
         await page.hover(selector)
         logger.debug(f"悬停在元素: {selector}, {duration:.1f}秒")
         await asyncio.sleep(duration)
+
+    @staticmethod
+    async def hover_and_jitter(
+        page: Page,
+        selector_or_locator: Union[str, Locator],
+        duration: float = 3.0,
+    ) -> None:
+        """模拟鼠标在元素及其附近进行徘徊、轻微抖动和游走，模拟用户思考文案或寻找点击位置。
+        
+        Args:
+            page: Playwright Page对象
+            selector_or_locator: 选择器字符串或 Locator
+            duration: 徘徊总时长(秒)
+        """
+        locator = page.locator(selector_or_locator) if isinstance(selector_or_locator, str) else selector_or_locator
+        box = await locator.bounding_box()
+        if not box:
+            await locator.hover()
+            await asyncio.sleep(duration)
+            return
+
+        x, y, w, h = box["x"], box["y"], box["width"], box["height"]
+        
+        logger.debug(f"鼠标徘徊 (hover_and_jitter): 目标区域 {w}x{h}, 持续 {duration:.1f} 秒")
+        
+        # 将鼠标移动到元素范围内随机点
+        cx = x + random.uniform(0, w)
+        cy = y + random.uniform(0, h)
+        await page.mouse.move(cx, cy, steps=random.randint(10, 20))
+        
+        elapsed = 0.0
+        while elapsed < duration:
+            # 微小游走
+            dx = random.uniform(-w * 0.2, w * 0.2)
+            dy = random.uniform(-h * 0.2, h * 0.2)
+            
+            # 保证不出大边界太远，可以稍微移出元素边缘
+            nx = max(x - w * 0.1, min(x + w * 1.1, cx + dx))
+            ny = max(y - h * 0.1, min(y + h * 1.1, cy + dy))
+            
+            await HumanBehavior.mouse_move(page, cx, cy, nx, ny, steps=random.randint(5, 15))
+            cx, cy = nx, ny
+            
+            sleep_time = random.uniform(0.1, 0.5)
+            await asyncio.sleep(sleep_time)
+            elapsed += sleep_time
+
+    @staticmethod
+    async def scroll_to_bottom(page: Page) -> None:
+        """模拟人手物理滚动到底部"""
+        viewport_height = await page.evaluate('window.innerHeight')
+        for _ in range(random.randint(3, 6)):
+            await page.mouse.wheel(0, viewport_height * random.uniform(0.6, 0.9))
+            await asyncio.sleep(random.uniform(0.1, 0.4))
+            
+    @staticmethod
+    async def scroll_to_locator(
+        page: Page, 
+        locator: Locator, 
+        max_scrolls: int = 15,
+        target_ratio: float = 0.5
+    ) -> bool:
+        """物理滚动直到元素出现在视口特定位置 (默认居中)"""
+        viewport_height = await page.evaluate('window.innerHeight')
+        for _ in range(max_scrolls):
+            box = await locator.bounding_box()
+            if box:
+                y = box['y']
+                h = box['height']
+                center_y = y + h / 2
+                
+                # 如果已经接近目标比例位置 (容差 15%)
+                if abs(center_y - viewport_height * target_ratio) < viewport_height * 0.15:
+                    return True
+                    
+                # 计算需要滚动的距离
+                diff = center_y - viewport_height * target_ratio
+                
+                # 不要一次滚完，每次滚 60-90% 的距离，且最大单次滚动不超过 80% 视口
+                scroll_amount = diff * random.uniform(0.6, 0.9)
+                if scroll_amount > 0:
+                    scroll_amount = min(scroll_amount, viewport_height * 0.8)
+                else:
+                    scroll_amount = max(scroll_amount, -viewport_height * 0.8)
+                    
+                await page.mouse.wheel(0, scroll_amount)
+                await asyncio.sleep(random.uniform(0.1, 0.3))
+            else:
+                # 元素完全不在视口，尝试向下盲滚一半视口寻找
+                await page.mouse.wheel(0, viewport_height * 0.5)
+                await asyncio.sleep(random.uniform(0.2, 0.4))
+        
+        box = await locator.bounding_box()
+        return box is not None and 0 <= box['y'] <= viewport_height

@@ -46,15 +46,9 @@ _SCROLL_SETTLE_MS = 180
 async def _scroll_locator_to_center(page: Page, locator: Locator, *, wait_ms: int = _SCROLL_SETTLE_MS) -> None:
     """将元素滚到视口中部（比 scroll_into_view_if_needed 更适合长页表单）。"""
     try:
-        handle = await locator.element_handle()
-        if handle:
-            await page.evaluate(
-                """(el) => {
-                    el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
-                }""",
-                handle,
-            )
-            await page.wait_for_timeout(wait_ms)
+        from src.infrastructure.browser.human_behavior import HumanBehavior
+        await HumanBehavior.scroll_to_locator(page, locator, target_ratio=0.5)
+        await page.wait_for_timeout(wait_ms)
     except Exception as e:
         logger.debug("滚入视口中部失败: %s", e)
 
@@ -457,49 +451,10 @@ class OriginalDeclarationStep(BasePublishStep):
         from src.infrastructure.anti_risk.human_like import human_click
 
         try:
-            clicked = await page.evaluate(
-                """() => {
-                    const texts = ['我已阅读并同意'];
-                    const roots = document.querySelectorAll(
-                        'div[role="dialog"], div.d-modal, div.d-modal-wrapper'
-                    );
-                    const tryClick = (root) => {
-                        const all = root.querySelectorAll(
-                            'input[type="checkbox"], label, span, div'
-                        );
-                        for (const el of all) {
-                            const tx = (el.innerText || el.textContent || '').trim();
-                            if (!texts.some((t) => tx.includes(t))) continue;
-                            const box = el.matches('input[type="checkbox"]')
-                                ? el
-                                : el.querySelector('input[type="checkbox"]');
-                            if (box && !box.checked) {
-                                box.click();
-                                return true;
-                            }
-                            if (!box && tx.includes('我已阅读并同意')) {
-                                el.click();
-                                return true;
-                            }
-                        }
-                        return false;
-                    };
-                    for (const r of roots) {
-                        if (tryClick(r)) return true;
-                    }
-                    return tryClick(document.body);
-                }"""
-            )
-            if clicked:
-                await page.wait_for_timeout(120)
-                return True
-        except Exception as e:
-            logger.debug("evaluate 勾选协议失败: %s", e)
-
-        try:
             await _scroll_locator_to_center(page, agreement, wait_ms=100)
             if await self._mouse_click_locator_center(page, agreement):
                 await page.wait_for_timeout(120)
+                logger.info("已通过中心坐标点击勾选协议")
                 return True
             await human_click(
                 page,

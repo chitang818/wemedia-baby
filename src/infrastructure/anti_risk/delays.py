@@ -114,3 +114,47 @@ async def cooldown_before_retry(
     except Exception:
         pass
     await asyncio.sleep(sec)
+
+
+async def cognitive_pause(
+    page: Page,
+    metadata: Optional[Dict[str, Any]] = None,
+    probability: float = 0.15,
+) -> None:
+    """高层认知暂停机制（模拟用户由于某些原因分心、发呆或离开一小会）。
+    
+    Args:
+        page: Playwright Page 对象
+        metadata: 任务元数据
+        probability: 触发的长暂停概率，默认 15%
+    """
+    if random.random() >= probability:
+        return
+        
+    # 分布：70% 概率在 20-50 秒，30% 概率在 50-120 秒
+    if random.random() < 0.7:
+        pause_s = random.uniform(20, 50)
+    else:
+        pause_s = random.uniform(50, 120)
+        
+    logger.info("触发认知暂停 (CognitivePause)，等待 %.0f 秒以模拟用户分心行为", pause_s)
+    try:
+        USER_LOG.info(f"▶ 触发认知暂停（模拟用户分心），将等待 {pause_s:.0f} 秒")
+    except Exception:
+        pass
+        
+    elapsed = 0.0
+    while elapsed < pause_s:
+        # 在长暂停中维持极少的互动，防止判定挂机
+        if random.random() < 0.2:
+            try:
+                from src.infrastructure.browser.human_behavior import HumanBehavior
+                await HumanBehavior.scroll(page, direction='down', smooth=True)
+                await asyncio.sleep(random.uniform(1.0, 3.0))
+                await HumanBehavior.scroll(page, direction='up', smooth=True)
+            except Exception:
+                pass
+                
+        chunk = random.uniform(2.0, 5.0)
+        await asyncio.sleep(chunk)
+        elapsed += chunk
