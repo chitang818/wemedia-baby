@@ -20,7 +20,7 @@
 ; 快捷方式及安装完成"运行"按钮显示的中文名称
 #define MyAppShortcutName "媒小宝"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.3.9"
+  #define MyAppVersion "1.4.0"
 #endif
 #define MyAppPublisher "MediaBaby Team"
 #define MyAppURL "https://github.com/your-repo/wemedia-baby"
