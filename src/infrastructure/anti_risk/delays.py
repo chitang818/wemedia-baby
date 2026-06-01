@@ -105,7 +105,7 @@ async def cooldown_before_retry(
         seconds: 冷却秒数（建议由平台配置传入，如 180）
         reason: 日志原因描述
     """
-    sec = max(0, float(seconds))
+    sec = max(0.0, seconds)
     if sec <= 0:
         return
     logger.info("防风控冷却: %s，等待 %.0f 秒后重试", reason, sec)

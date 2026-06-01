@@ -86,7 +86,7 @@ async def _type_chinese_with_ime(
     
     pypinyin_mod = None
     try:
-        import pypinyin
+        import pypinyin  # type: ignore
         pypinyin_mod = pypinyin
     except ImportError:
         pass
@@ -117,7 +117,7 @@ def _normalize_meta_tag_entries(tags: List[str]) -> List[str]:
     for t in tags:
         if t is None:
             continue
-        s = str(t).strip().replace("\uff03", "").lstrip("#").strip()
+        s = t.strip().replace("\uff03", "").lstrip("#").strip()
         if s:
             out.append(s)
     return out
@@ -255,7 +255,7 @@ def _topic_count_in_text(text: str) -> int:
 def _merge_editor_topic_names(dom_topics: List[str], inner_text: str) -> List[str]:
     """合并 DOM 采集与 innerText 解析（供单测与后验）。"""
     raw_all = list(dom_topics or []) + parse_topic_list(inner_text or "")
-    return _distinct_normalized_topics([str(x) for x in raw_all])
+    return _distinct_normalized_topics(raw_all)
 
 
 async def _get_editor_inner_text(page: Page, edit_box: Locator) -> str:
@@ -513,7 +513,7 @@ async def _scroll_locator_into_comfortable_view(
     viewport_top_ratio: float = _SCROLL_VIEWPORT_TOP_RATIO,
 ) -> None:
     """将输入区滚入可视范围：顶边约在视口 25% 处，避免 block:start 把描述框顶死到最上方。"""
-    ratio = max(0.12, min(0.45, float(viewport_top_ratio)))
+    ratio = max(0.12, min(0.45, viewport_top_ratio))
     try:
         from src.infrastructure.browser.human_behavior import HumanBehavior
         await HumanBehavior.scroll_to_locator(page, locator, target_ratio=ratio)
@@ -666,7 +666,7 @@ class MetadataFillStep(BasePublishStep):
         try:
             from ..publish_plugin import _load_limits
 
-            max_topics_cfg = int(_load_limits().get("max_topics", 10) or 10)
+            max_topics_cfg = _load_limits().get("max_topics", 10) or 10
         except Exception:
             pass
         topics_to_type, truncated = _truncate_topics_to_limit(topics_to_type, max_topics_cfg)

@@ -231,7 +231,7 @@ async def _get_xhs_publish_host(page: Page) -> Locator:
 async def _xhs_publish_btn_disabled(loc: Locator) -> bool:
     try:
         submit_dis = await loc.get_attribute("submit-disabled")
-        if submit_dis is not None and str(submit_dis).lower() == "true":
+        if submit_dis is not None and submit_dis.lower() == "true":
             return True
     except Exception:
         pass

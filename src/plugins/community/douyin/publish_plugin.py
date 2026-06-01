@@ -190,6 +190,8 @@ class DouyinPublishPlugin(PublishPluginInterface):
             result = await runner.run(steps)
             if result.success:
                 USER_LOG.info("发布流程 - 完成")
+                # 适当延迟几秒关闭浏览器，避免关闭过快
+                await asyncio.sleep(5.0)
             else:
                 USER_LOG.warning(f"发布流程 - 失败: {(result.error_message or '')[:50]}")
             return result

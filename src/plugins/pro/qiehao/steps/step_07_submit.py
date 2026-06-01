@@ -36,6 +36,7 @@ class SubmitStep(BasePublishStep):
         speed_rate = max(0.5, float(metadata.get("speed_rate", 1.0)))
         wait_ms = lambda ms: int(ms * speed_rate)
         config = metadata.get("anti_risk_config") or {}
+        target_selector = Selectors.PUBLISH.get("SUBMIT_BTN", [""])[0]
 
         try:
             from src.infrastructure.browser.human_behavior import HumanBehavior

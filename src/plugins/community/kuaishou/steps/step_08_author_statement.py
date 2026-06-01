@@ -136,8 +136,9 @@ class AuthorStatementStep(BasePublishStep):
         from src.infrastructure.anti_risk.delays import random_delay
 
         label = Selectors.WORK_DECLARATION.get("LABEL_TEXT", "作者声明")
+        label_text = label[0] if isinstance(label, list) else str(label)
         try:
-            loc = page.get_by_text(label, exact=True).first
+            loc = page.get_by_text(label_text, exact=True).first
             if await loc.count() > 0:
                 await loc.scroll_into_view_if_needed()
                 await random_delay(page, wait_ms(150), metadata, config)
@@ -151,7 +152,8 @@ class AuthorStatementStep(BasePublishStep):
             Selectors.WORK_DECLARATION.get("PLACEHOLDER")
             or KUAISHOU_DECLARATION_PLACEHOLDER
         )
-        combo = page.get_by_placeholder(placeholder)
+        ph_text = placeholder[0] if isinstance(placeholder, list) else str(placeholder)
+        combo = page.get_by_placeholder(ph_text)
         try:
             if await combo.count() > 0:
                 return combo.first
@@ -167,7 +169,7 @@ class AuthorStatementStep(BasePublishStep):
         except Exception:
             pass
 
-        return page.get_by_placeholder(placeholder).first
+        return page.get_by_placeholder(ph_text).first
 
     async def _open_declaration_dropdown(
         self,

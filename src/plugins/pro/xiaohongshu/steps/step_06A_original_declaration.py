@@ -380,7 +380,7 @@ class OriginalDeclarationStep(BasePublishStep):
 
     async def _find_agreement_target(self, page: Page) -> Optional[Locator]:
         dialog = await self._find_dialog_locator(page)
-        scopes: list[Locator] = []
+        scopes: list[Locator | Page] = []
         if dialog is not None:
             scopes.append(dialog)
         scopes.append(page)
@@ -403,7 +403,7 @@ class OriginalDeclarationStep(BasePublishStep):
 
     async def _find_confirm_button(self, page: Page) -> Optional[Locator]:
         dialog = await self._find_dialog_locator(page)
-        scopes: list[Locator] = []
+        scopes: list[Locator | Page] = []
         if dialog is not None:
             scopes.append(dialog)
         scopes.append(page)
@@ -511,21 +511,23 @@ class OriginalDeclarationStep(BasePublishStep):
             self._step_prefix(metadata, "原创声明"),
         )
 
-        confirm = await self._find_confirm_button(page)
-        if confirm is None:
+        new_confirm = await self._find_confirm_button(page)
+        if new_confirm is None:
             logger.warning("小红书原创声明：弹窗内未找到「声明原创」按钮")
             return False
+        confirm_btn = new_confirm
 
-        if not await self._wait_confirm_button_enabled(page, confirm, metadata, config):
+        if not await self._wait_confirm_button_enabled(page, confirm_btn, metadata, config):
             logger.warning("小红书原创声明：「声明原创」按钮仍不可用")
             return False
 
         try:
-            await _scroll_locator_to_center(page, confirm, wait_ms=100)
-            if not await self._mouse_click_locator_center(page, confirm):
+            await _scroll_locator_to_center(page, confirm_btn, wait_ms=100)
+            if not await self._mouse_click_locator_center(page, confirm_btn):
+                from src.infrastructure.anti_risk.human_like import human_click
                 await human_click(
                     page,
-                    confirm,
+                    confirm_btn,
                     metadata,
                     config,
                     use_operation_delay=False,
