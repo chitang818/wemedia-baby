@@ -72,8 +72,6 @@ from src.utils.video_metadata import (
     format_duration,
     get_video_metadata,
 )
-from src.services.material.media_library_stats_cache import get_media_library_stats_cache
-from src.services.material.media_library_stats_service import get_media_library_stats_service
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +148,7 @@ class _VideoMetadataCache:
             logger.debug("保存视频元数据缓存失败: %s", exc)
 
 
-class _ImportModeDialog(AppMessageBoxBase):
+class _ImportModeDialog(AppMessageBoxBase):  # type: ignore
     """符合 Fluent 规范的导入方式选择弹窗（复制 / 剪切）。"""
 
     MODE_COPY = "copy"
@@ -239,12 +237,6 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
         self._assign_strategy: AssignStrategy = load_assign_strategy("library")
         self._meta_cache = _VideoMetadataCache()
         self._usage_refresh_gen: int = 0
-        self._stats_cache = get_media_library_stats_cache()
-        self._stats_label = None
-        try:
-            self._stats_cache.statsUpdated.connect(self._on_stats_updated)
-        except Exception:
-            pass
 
     def _setup_content(self):
         """构建页面内容（首次显示时调用）。"""
@@ -310,9 +302,6 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
         toolbar_layout.addWidget(BodyLabel("账号筛选", toolbar_card))
         toolbar_layout.addWidget(self.owner_filter)
         toolbar_layout.addWidget(self.btn_delete)
-        self._stats_label = BodyLabel("", toolbar_card)
-        self._stats_label.setToolTip("统计口径：被待发布任务引用即视为“已占用”（pending/failed/running）")
-        toolbar_layout.addWidget(self._stats_label)
         toolbar_layout.addStretch()
 
         # 表格卡片（Fluent TableWidget 替换原 QTableView）
@@ -338,40 +327,6 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
         self.content_layout.addLayout(root_layout)
 
         self._refresh_async()
-        self._refresh_stats_async()
-
-    def _refresh_stats_async(self) -> None:
-        """触发全局媒体库统计刷新（异步，避免阻塞 UI）。"""
-        try:
-            self._create_tracked_task(
-                get_media_library_stats_service().refresh(),
-                name="video_library.refresh_stats",
-            )
-        except Exception:
-            return
-
-    def _format_stats_text(self, stats) -> str:
-        try:
-            all_counts = getattr(stats, "all_media", None)
-            if all_counts is None:
-                return "素材统计：—"
-            total = int(getattr(all_counts, "total", 0) or 0)
-            used = int(getattr(all_counts, "used", 0) or 0)
-            unused = int(getattr(all_counts, "unused", 0) or 0)
-            return f"素材统计：总 {total}｜已占用 {used}｜未占用 {unused}"
-        except Exception:
-            return "素材统计：—"
-
-    def _on_stats_updated(self, stats) -> None:
-        if not getattr(self, "_stats_label", None):
-            return
-        try:
-            self._stats_label.setText(self._format_stats_text(stats))
-            err = str(getattr(stats, "error", "") or "").strip()
-            if err:
-                self._stats_label.setToolTip(f"{self._stats_label.toolTip()}\n\n注意：{err}")
-        except Exception:
-            return
 
     # ---------- 表格填充 ----------
 
@@ -405,7 +360,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
                 return
             for it in self._all_items:
                 try:
-                    it.in_use = bool(is_video_used(usage, it.path))
+                    it.in_use = is_video_used(usage, it.path)
                 except Exception:
                     it.in_use = False
             # 仅原地更新“使用统计”列，避免重建表格导致“进入后自动刷新/闪一下”
@@ -503,7 +458,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.warning(
                 title="提示",
                 content="未检测到有效的媒体库路径，请先在设置中配置媒体库存储位置。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,
@@ -570,7 +525,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.success(
                     title="添加完成",
                     content=content,
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=5000,
                     position=InfoBarPosition.TOP,
@@ -581,7 +536,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.warning(
                     title="添加失败",
                     content="未能添加任何视频，请检查文件是否存在或磁盘权限。",
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=5000,
                     position=InfoBarPosition.TOP,
@@ -593,7 +548,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.error(
                 title="错误",
                 content="添加视频时发生异常，请稍后重试。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,
@@ -611,7 +566,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.warning(
                 title="提示",
                 content="未检测到有效的媒体库路径，请先在设置中配置媒体库存储位置。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,
@@ -624,7 +579,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.warning(
                 title="提示",
                 content="未找到视频库目录，请先在设置中确认媒体库路径。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,
@@ -636,7 +591,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.error(
                 title="错误",
                 content="打开本地视频库目录失败，请检查系统默认文件管理器设置。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,
@@ -688,7 +643,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.warning(
                 title="提示",
                 content="该视频文件已不存在，可能已被移动或删除。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,
@@ -699,7 +654,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.error(
                 title="打开失败",
                 content="系统未能用默认程序打开该文件，请检查是否已安装播放器并在系统中关联该视频格式。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,
@@ -719,7 +674,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.warning(
                 title="提示",
                 content="该视频所在文件夹已不存在，可能已被移动或删除。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,
@@ -730,7 +685,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.error(
                 title="错误",
                 content="打开文件夹失败，请检查系统默认文件管理器设置。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,
@@ -765,6 +720,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
         self._table_ctx_target_video = video_item
         global_pos = self._table.viewport().mapToGlobal(pos)
         if self._ensure_video_table_round_menu():
+            assert self._video_table_ctx_menu is not None
             self._video_table_ctx_menu.exec(global_pos)
             return
         menu = QMenu(self._table)
@@ -793,7 +749,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.info(
                 title="提示",
                 content="请先在列表中选择要删除的视频。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=3000,
                 position=InfoBarPosition.TOP,
@@ -806,7 +762,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.warning(
                 title="提示",
                 content="未检测到有效的媒体库路径，请先在设置中配置媒体库存储位置。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,
@@ -877,7 +833,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.error(
                     title="错误",
                     content=import_err,
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=6000,
                     position=InfoBarPosition.TOP,
@@ -894,7 +850,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.success(
                     title="已移入回收站",
                     content=content,
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=5000,
                     position=InfoBarPosition.TOP,
@@ -905,7 +861,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.warning(
                     title="未能删除",
                     content="未能将任何视频移入回收站，请检查文件是否存在或路径权限。",
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=5000,
                     position=InfoBarPosition.TOP,
@@ -917,7 +873,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.error(
                 title="错误",
                 content="删除操作时发生异常，请稍后重试。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,
@@ -948,7 +904,6 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
         if self._table and self._all_items:
             self._apply_filters()
         self._refresh_async()
-        self._refresh_stats_async()
 
     def _apply_video_metadata_to_item(self, item: _VideoItem, file_path: str) -> None:
         """对单个条目写入时长/分辨率（ffprobe）；失败时保持占位符。"""
@@ -1051,7 +1006,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.warning(
                     title="提示",
                     content=error,
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=5000,
                     position=InfoBarPosition.TOP,
@@ -1066,7 +1021,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             self._schedule_base_page_timer(
                 "video_library.ensure_table_round_menu",
                 200,
-                self._ensure_video_table_round_menu,
+                lambda: (self._ensure_video_table_round_menu(), None)[1],  # type: ignore
             )
 
             if not items:
@@ -1095,7 +1050,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.error(
                 title="错误",
                 content="刷新视频库列表时发生异常，请稍后重试。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,
@@ -1142,7 +1097,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.info(
                 title="提示",
                 content="请先在列表中选择要分配的视频。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=3000,
                 position=InfoBarPosition.TOP,
@@ -1159,7 +1114,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.error(
                 title="错误",
                 content="未检测到有效的媒体库路径，请先在设置中配置媒体库存储位置。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,
@@ -1192,7 +1147,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.error(
                     title="错误",
                     content=f"无法创建{at.label}的素材目录，请检查磁盘权限。",
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=5000,
                     position=InfoBarPosition.TOP,
@@ -1221,7 +1176,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.success(
                     title="已分配",
                     content=f"按{strategy.display_name()}策略成功分配 {moved} 个视频到{target_desc}的未发布目录。",
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=4000,
                     position=InfoBarPosition.TOP,
@@ -1232,7 +1187,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.info(
                     title="提示",
                     content="未能分配任何视频，请检查文件是否仍存在。",
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=4000,
                     position=InfoBarPosition.TOP,
@@ -1244,7 +1199,7 @@ class VideoLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.error(
                 title="错误",
                 content="分配视频素材时发生错误，请稍后重试。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,

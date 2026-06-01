@@ -16,6 +16,19 @@ def _make_media_root(tmp: Path) -> Path:
     return root
 
 
+class _DummyStatsService:
+    def __init__(self) -> None:
+        self.invalidated: list[tuple[list[Path], tuple[str, ...]]] = []
+        self.refresh_calls = 0
+
+    def invalidate_bucket_paths(self, paths, *, kinds, clear_memory=True) -> None:
+        self.invalidated.append((list(paths), tuple(kinds)))
+
+    async def refresh(self, *, min_interval_seconds: float = 3.0):
+        self.refresh_calls += 1
+        return None
+
+
 def test_move_sources_collision_and_skip_same(tmp_path: Path) -> None:
     target = tmp_path / "dest"
     target.mkdir()
@@ -112,3 +125,57 @@ def test_resolve_assign_target_account_video_prefers_fuzzy_existing_dir(tmp_path
         root, media_kind="video", target_type="account", target_data=account
     )
     assert at.directory == unpublished
+
+
+def test_move_folder_to_assign_target_refreshes_stats_by_default(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "图片库" / "set-a"
+    target = tmp_path / "账号库" / "douyin" / "图文" / "未发布"
+    source.mkdir(parents=True)
+    target.mkdir(parents=True)
+    (source / "1.jpg").write_bytes(b"fake")
+
+    svc = _DummyStatsService()
+    scheduled = []
+    monkeypatch.setattr(
+        "src.services.material.media_library_stats_service.get_media_library_stats_service",
+        lambda: svc,
+    )
+    monkeypatch.setattr(
+        "src.ui.utils.async_helper.run_async_from_ui",
+        lambda fn: scheduled.append(fn),
+    )
+
+    assert mla.move_folder_to_assign_target(source, target)
+
+    assert (target / "set-a").is_dir()
+    assert len(svc.invalidated) == 1
+    invalidated_paths, kinds = svc.invalidated[0]
+    assert source.parent in invalidated_paths
+    assert target in invalidated_paths
+    assert kinds == ("image",)
+    assert len(scheduled) == 1
+
+
+def test_move_folder_to_assign_target_can_skip_stats_refresh_for_batches(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "图片库" / "set-b"
+    target = tmp_path / "账号库" / "douyin" / "图文" / "未发布"
+    source.mkdir(parents=True)
+    target.mkdir(parents=True)
+    (source / "1.jpg").write_bytes(b"fake")
+
+    svc = _DummyStatsService()
+    scheduled = []
+    monkeypatch.setattr(
+        "src.services.material.media_library_stats_service.get_media_library_stats_service",
+        lambda: svc,
+    )
+    monkeypatch.setattr(
+        "src.ui.utils.async_helper.run_async_from_ui",
+        lambda fn: scheduled.append(fn),
+    )
+
+    assert mla.move_folder_to_assign_target(source, target, refresh_stats=False)
+
+    assert (target / "set-b").is_dir()
+    assert svc.invalidated == []
+    assert scheduled == []

@@ -1040,13 +1040,31 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
             """将每个文件夹整体移入对应账号的「图文/未发布」目录。"""
             moved_count = 0
             failed_names: List[str] = []
+            touched_bucket_dirs: set[Path] = set()
             for at, folders in distribution.items():
                 for folder in folders:
-                    ok = move_folder_to_assign_target(folder, at.directory)
+                    source_parent = folder.parent
+                    ok = move_folder_to_assign_target(
+                        folder,
+                        at.directory,
+                        refresh_stats=False,
+                    )
                     if ok:
                         moved_count += 1
+                        touched_bucket_dirs.add(source_parent)
+                        touched_bucket_dirs.add(at.directory)
                     else:
                         failed_names.append(folder.name)
+            if moved_count > 0:
+                try:
+                    from src.services.material.media_library_stats_service import (
+                        get_media_library_stats_service,
+                    )
+
+                    svc = get_media_library_stats_service()
+                    svc.invalidate_bucket_paths(touched_bucket_dirs, kinds=("image",))
+                except Exception:
+                    logger.debug("批量分配图片文件夹后失效媒体库统计缓存失败", exc_info=True)
             return moved_count, failed_names
 
         worker = AsyncWorker(move_sync)
@@ -1070,6 +1088,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
                     orient=Qt.Horizontal, isClosable=True, duration=5000,
                     position=InfoBarPosition.TOP, parent=self,
                 )
+                self._refresh_stats_async()
                 self._refresh_async()
             else:
                 InfoBar.info(

@@ -128,20 +128,17 @@ async def cognitive_pause(
         metadata: 任务元数据
         probability: 触发的长暂停概率，默认 15%
     """
+    from src.ui.pages.publish.list_settings_dialog import get_cognitive_pause_enabled, get_cognitive_pause_seconds
+    if not get_cognitive_pause_enabled():
+        return
+
     if random.random() >= probability:
         return
         
-    # 三段式分布：
-    # 60% 概率：短暂停 5-15秒 (看眼手机)
-    # 30% 概率：中暂停 15-35秒 (回复消息)
-    # 10% 概率：长暂停 35-75秒 (短暂离开)
-    rand_val = random.random()
-    if rand_val < 0.6:
-        base_s = random.uniform(5, 15)
-    elif rand_val < 0.9:
-        base_s = random.uniform(15, 35)
-    else:
-        base_s = random.uniform(35, 75)
+    user_sec = get_cognitive_pause_seconds()
+    # 在用户设定的时间上增加一些随机波动，范围设为 [max(5, user_sec*0.7), user_sec*1.3]
+    base_s = random.uniform(max(5.0, float(user_sec) * 0.7), float(user_sec) * 1.3)
+
         
     # 应用全局任务速率
     rate = _speed_rate(metadata)

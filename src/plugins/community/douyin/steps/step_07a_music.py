@@ -69,15 +69,16 @@ class SelectMusicStep(BasePublishStep):
             USER_LOG.info("选择音乐 ✓ 跳过（任务设置跳过）")
             return None
 
-        is_random = bool(metadata.get("music_random"))
+        is_random_val = metadata.get("music_random")
+        is_random = True if is_random_val is None else bool(is_random_val)
         has_config = is_random or bool(
             metadata.get("music_keyword")
             or metadata.get("music_name")
             or metadata.get("music_category")
         )
         if not has_config:
-            logger.info("选择音乐：未配置任何音乐字段，跳过")
-            USER_LOG.info("选择音乐 ✓ 跳过（任务未配置音乐）")
+            logger.info("选择音乐：明确配置为不随机且未提供搜索条件，跳过")
+            USER_LOG.info("选择音乐 ✓ 跳过（无需选择音乐）")
             return None
 
         # 已选过？

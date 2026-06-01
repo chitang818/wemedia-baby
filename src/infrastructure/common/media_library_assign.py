@@ -144,6 +144,8 @@ def move_sources_to_assign_target(
 def move_folder_to_assign_target(
     source_folder: Path,
     target_dir: Path,
+    *,
+    refresh_stats: bool = True,
 ) -> bool:
     """将整个图片文件夹移动到目标目录下（保持文件夹名称，重名自动追加序号）。
 
@@ -153,6 +155,8 @@ def move_folder_to_assign_target(
     Args:
         source_folder: 源图片文件夹路径（如 ``图片库/旅行素材``）。
         target_dir:    目标账号「图文/未发布」目录（文件夹将作为其子目录落入）。
+        refresh_stats: 是否在移动成功后立即刷新媒体库统计。批量移动时应关闭，
+                       由调用方在批量结束后统一刷新，避免大量刷新任务堆积。
 
     Returns:
         True 表示移动成功，False 表示失败（已记录日志）。
@@ -174,18 +178,19 @@ def move_folder_to_assign_target(
 
     try:
         shutil.move(str(source_folder), str(dst))
-        try:
-            from src.services.material.media_library_stats_service import get_media_library_stats_service
-            from src.ui.utils.async_helper import run_async_from_ui
+        if refresh_stats:
+            try:
+                from src.services.material.media_library_stats_service import get_media_library_stats_service
+                from src.ui.utils.async_helper import run_async_from_ui
 
-            svc = get_media_library_stats_service()
-            svc.invalidate_bucket_paths(
-                [source_folder.parent, target_dir],
-                kinds=("image",),
-            )
-            run_async_from_ui(lambda: svc.refresh(min_interval_seconds=0))
-        except Exception:
-            logger.debug("移动图文文件夹后刷新媒体库统计失败", exc_info=True)
+                svc = get_media_library_stats_service()
+                svc.invalidate_bucket_paths(
+                    [source_folder.parent, target_dir],
+                    kinds=("image",),
+                )
+                run_async_from_ui(lambda: svc.refresh(min_interval_seconds=0))
+            except Exception:
+                logger.debug("移动图文文件夹后刷新媒体库统计失败", exc_info=True)
         return True
     except Exception as e:
         logger.warning("移动图片文件夹失败: %s -> %s (%s)", source_folder, dst, e, exc_info=True)

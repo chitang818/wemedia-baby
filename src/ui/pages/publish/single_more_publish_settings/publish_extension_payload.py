@@ -199,7 +199,7 @@ def build_publish_extension_payload(
     privacy_code = _privacy_text_to_code(card._privacy_combo.currentText())
     full_ps: Dict[str, Any] = {
         "privacy": privacy_code,
-        "allow_download": bool(card._allow_download_check.isChecked()),
+        "allow_download": card._allow_download_check.isChecked(),
         **decl,
     }
     privacy_settings = strip_privacy_declaration_keys_for_platform(
@@ -260,7 +260,7 @@ def apply_from_publish_record(
             InfoBar.warning(
                 title="位置需重新选择",
                 content="该任务的位置为旧版手填数据，请先在「位置推广」中配置位置后重新选择。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=6000,
                 position=InfoBarPosition.TOP,
@@ -338,7 +338,7 @@ def apply_from_publish_record(
                 pass
         else:
             card._music_type_combo.blockSignals(True)
-            card._music_type_combo.setCurrentText("不选音乐")
+            card._music_type_combo.setCurrentText("随机音乐")
             card._music_type_combo.blockSignals(False)
             card._music_name_edit.hide()
 

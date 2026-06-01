@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
+import typing
 from pathlib import Path
 from typing import Any, List, Optional
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QPersistentModelIndex
 
 
 class MediaLibraryTableModel(QAbstractTableModel):
@@ -111,15 +112,17 @@ class MediaLibraryTableModel(QAbstractTableModel):
             )
         return True
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self._items)
 
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def columnCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:
         if parent.isValid():
             return 0
         return len(self.VIDEO_HEADERS if self._kind == self.KIND_VIDEO else self.IMAGE_HEADERS)
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole):
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         if role != Qt.ItemDataRole.DisplayRole:
             return None
         if orientation == Qt.Orientation.Vertical:
@@ -127,7 +130,7 @@ class MediaLibraryTableModel(QAbstractTableModel):
         headers = self.VIDEO_HEADERS if self._kind == self.KIND_VIDEO else self.IMAGE_HEADERS
         return headers[section] if 0 <= section < len(headers) else None
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+    def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> typing.Any:
         if not index.isValid():
             return None
         item = self.item_at(index.row())
@@ -146,19 +149,19 @@ class MediaLibraryTableModel(QAbstractTableModel):
         return self._display_value(item, index.row(), index.column())
 
     def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
+        if column == self.COL_NO:
+            return
         if not self._items:
             return
         reverse = order == Qt.SortOrder.DescendingOrder
 
         def key(pair: tuple[int, Any]):
             original_row, item = pair
-            if column == self.COL_NO:
-                return (0, original_row)
             value = self._display_value(item, original_row, column)
             try:
-                return (0, float(str(value).split()[0]))
+                return (0, float(value.split()[0]) if isinstance(value, str) else float(str(value).split()[0]))
             except Exception:
-                return (1, str(value))
+                return (1, value) if isinstance(value, str) else (1, str(value))
 
         self.layoutAboutToBeChanged.emit()
         decorated = list(enumerate(self._items))

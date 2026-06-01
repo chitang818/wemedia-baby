@@ -207,7 +207,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         self._batch_wechat_empty_location_open_picker: bool = _loc_wx
         self.goods_text = ""
         self.anchor_text = ""
-        self.music_info = ""
+        self.music_info = '{"music_type": "random"}' if self._media_type == "image" else ""
         self.declare_original_checked = load_persisted_declare_original()
         _wdecl = load_persisted_work_declaration()
         self.douyin_work_declaration = normalize_douyin_value(_wdecl.get(KEY_DOUYIN))
@@ -569,10 +569,10 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
 
             # 重开弹窗时，按内存中存储的账号/组占位回填初始勾选状态
             initial_account_ids = [
-                acc.get("id") for acc in self.selected_accounts if acc.get("_type") != "group"
+                aid for acc in self.selected_accounts if acc.get("_type") != "group" and (aid := acc.get("id")) is not None
             ]
             initial_group_ids = [
-                acc.get("group_id") for acc in self.selected_accounts if acc.get("_type") == "group"
+                gid for acc in self.selected_accounts if acc.get("_type") == "group" and (gid := acc.get("group_id")) is not None
             ]
 
             from src.pro_features.batch.dialogs.publish_target_selection_dialog import select_publish_targets
@@ -616,7 +616,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                 new_accounts = data  # type: ignore
                 source = "多选"
             else:
-                new_accounts = [data]
+                new_accounts = [data]  # type: ignore
                 source = "单选"
         elif result["type"] == "group":
             data = result.get("data")
@@ -961,7 +961,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         # 用页面状态对齐下拉索引（不用 currentIndex()），避免控件与 use_library_* 短暂不一致时弹窗勾选被错误覆盖
         desc_idx: Optional[int] = None
         if hasattr(self, "_combo_batch_desc"):
-            desc_idx = self._desc_config_combo_index()
+            desc_idx = self._desc_config_combo_index() if hasattr(self, '_desc_config_combo_index') else 0
             self._combo_batch_desc.blockSignals(True)
             try:
                 self._combo_batch_desc.setCurrentIndex(desc_idx)
@@ -1011,11 +1011,11 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
     def _description_settings_state_key(self) -> tuple:
         """用于判定「配置描述」确认后是否发生了实际改动。"""
         return (
-            str(self.same_title_text or ""),
-            str(self.same_desc_text or ""),
-            bool(self.apply_description_to_all_tasks),
-            bool(self.use_library_title),
-            bool(self.use_library_desc),
+            self.same_title_text or "",
+            self.same_desc_text or "",
+            self.apply_description_to_all_tasks,
+            self.use_library_title,
+            self.use_library_desc,
             bool(getattr(self, "auto_match_enabled", False)),
             str(getattr(self, "match_mode", "standard") or "standard"),
             getattr(self, "random_category_id", None),
@@ -1075,7 +1075,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             if self._media_type == "image":
                 image_files = [
                     os.path.abspath(p) for p in files
-                    if os.path.splitext(str(p))[1].lower() in SUPPORTED_IMAGE_EXTENSIONS
+                    if os.path.splitext(p)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS
                 ]
                 if image_files:
                     self._schedule_add_video_files([",".join(image_files)], apply_assign_strategy=True)
@@ -1123,13 +1123,13 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             one = plain_accounts[0] if plain_accounts else None
             return [(p, one) for p in file_paths]
         pairs = distribute_items_to_targets(file_paths, plain_accounts, self._library_assign_strategy)
-        return [(str(item), account) for item, account in pairs]
+        return [(item, account) for item, account in pairs]
 
     def _normalize_media_input_path(self, file_path: str) -> str:
         if self._media_type != "image":
             return os.path.abspath(file_path)
         parts: List[str] = []
-        for raw in str(file_path or "").split(","):
+        for raw in file_path or "".split(","):
             part = raw.strip()
             if not part:
                 continue
@@ -1142,7 +1142,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
 
     def _media_real_paths(self, file_path: str) -> List[str]:
         paths: List[str] = []
-        for raw in str(file_path or "").split(","):
+        for raw in file_path or "".split(","):
             part = raw.strip()
             if not part or part.startswith(FOLDER_MARKER_PREFIX):
                 continue
@@ -1150,7 +1150,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         return paths
 
     def _media_folder_marker(self, file_path: str) -> Optional[str]:
-        for raw in str(file_path or "").split(","):
+        for raw in file_path or "".split(","):
             part = raw.strip()
             if part.startswith(FOLDER_MARKER_PREFIX):
                 return part[len(FOLDER_MARKER_PREFIX):].strip() or None
@@ -1429,14 +1429,14 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         v = QVBoxLayout(block)
         v.setContentsMargins(4, 6, 4, 6)
         v.setSpacing(2)
-        v.setAlignment(Qt.AlignCenter)
+        v.setAlignment(Qt.AlignmentFlag.AlignCenter)
         val = QLabel("—", block)
-        val.setAlignment(Qt.AlignCenter)
+        val.setAlignment(Qt.AlignmentFlag.AlignCenter)
         val.setStyleSheet(
             f"font-size:{val_font_px}px; font-weight:700; color:{color}; border:none; background:transparent;"
         )
         lbl = QLabel(label, block)
-        lbl.setAlignment(Qt.AlignCenter)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl.setWordWrap(True)
         lbl.setStyleSheet(
             f"font-size:{lbl_font_px}px; color:{color}; border:none; background:transparent;"
@@ -1469,18 +1469,18 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         h.setContentsMargins(5, 0, 6, 0)
         h.setSpacing(3)
         val = QLabel("—", block)
-        val.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        val.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         val.setStyleSheet(
             f"font-size:12px; font-weight:700; color:{color}; border:none; background:transparent;"
         )
         lbl = QLabel(short_label, block)
-        lbl.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         lbl.setWordWrap(False)
         lbl.setStyleSheet(
             f"font-size:9px; color:{color}; border:none; background:transparent;"
         )
-        h.addWidget(val, 0, Qt.AlignVCenter)
-        h.addWidget(lbl, 0, Qt.AlignVCenter)
+        h.addWidget(val, 0, Qt.AlignmentFlag.AlignVCenter)
+        h.addWidget(lbl, 0, Qt.AlignmentFlag.AlignVCenter)
         apply_instructional_tooltip(tooltip, block, position=ToolTipPosition.BOTTOM)
         return block, val
 
@@ -1580,7 +1580,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         layout = QVBoxLayout(card)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(0)
-        layout.setAlignment(Qt.AlignTop)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         header = QWidget(card)
         h_lay = QHBoxLayout(header)
@@ -1593,16 +1593,16 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         layout.addWidget(header)
 
         sep = QFrame(card)
-        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShape(QFrame.Shape.HLine)
         sep.setObjectName("SettingsCardSep")
         layout.addWidget(sep)
         layout.addSpacing(4)
 
         scroll = SmoothScrollArea(card)
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setFrameShape(SmoothScrollArea.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setFrameShape(SmoothScrollArea.Shape.NoFrame)
         scroll.setMinimumHeight(52)
         scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         scroll.setStyleSheet("SmoothScrollArea{background:transparent;border:none;}")
@@ -1734,12 +1734,10 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                 "use_library_desc": self.use_library_desc,
                 "manual_title_backup": str(base.get("manual_title_backup", "") or ""),
                 "manual_desc_backup": str(base.get("manual_desc_backup", "") or ""),
-                "auto_match_enabled": bool(self.auto_match_enabled),
-                "match_mode": str(self.match_mode or "standard"),
+                "auto_match_enabled": self.auto_match_enabled,
+                "match_mode": self.match_mode or "standard",
                 "random_category_id": self.random_category_id,
-                "copywriting_assign_strategy": str(
-                    self.copywriting_assign_strategy or AssignStrategy.ROUND_ROBIN.value
-                ),
+                "copywriting_assign_strategy": self.copywriting_assign_strategy or AssignStrategy.ROUND_ROBIN.value,
             }
         )
 
@@ -1754,12 +1752,10 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                 "use_library_desc": self.use_library_desc,
                 "manual_title_backup": str(base.get("manual_title_backup", "") or ""),
                 "manual_desc_backup": str(base.get("manual_desc_backup", "") or ""),
-                "auto_match_enabled": bool(self.auto_match_enabled),
-                "match_mode": str(self.match_mode or "standard"),
+                "auto_match_enabled": self.auto_match_enabled,
+                "match_mode": self.match_mode or "standard",
                 "random_category_id": self.random_category_id,
-                "copywriting_assign_strategy": str(
-                    self.copywriting_assign_strategy or AssignStrategy.ROUND_ROBIN.value
-                ),
+                "copywriting_assign_strategy": self.copywriting_assign_strategy or AssignStrategy.ROUND_ROBIN.value,
             }
         )
 
@@ -1795,7 +1791,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         try:
             # 1. 视频配置
             use_auto_vid = (
-                bool(video_auto_match)
+                video_auto_match
                 if video_auto_match is not None
                 else load_auto_match_pref(self._media_type)
             )
@@ -1827,8 +1823,8 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                     self._combo_batch_desc_category.setCurrentIndex(target_cat_idx)
             
             # 4. 描述配置 - 内容勾选
-            self._check_batch_use_lib_title.setChecked(bool(self.use_library_title))
-            self._check_batch_use_lib_desc.setChecked(bool(self.use_library_desc))
+            self._check_batch_use_lib_title.setChecked(self.use_library_title)
+            self._check_batch_use_lib_desc.setChecked(self.use_library_desc)
             # 非手动模式才允许勾选标题/描述来源（手动模式下由于是直接输入，这两个勾选无意义，但在弹窗逻辑中它们控制回填）
             # 根据用户需求，这里保持启用即可，与弹窗同步
             self._check_batch_use_lib_title.setEnabled(mode != CopywritingMatchMode.NONE)
@@ -1873,7 +1869,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         
         self.auto_match_enabled = (mode != CopywritingMatchMode.NONE)
         if self.auto_match_enabled:
-            self.match_mode = mode
+            self.match_mode = mode.value if hasattr(mode, 'value') else str(mode)
             
         # 显隐分类
         is_cat = (mode == CopywritingMatchMode.RANDOM_CATEGORY)
@@ -2058,7 +2054,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         poi, wx = dlg.outcome()
         self.location_text = poi or ""
         self._batch_wechat_empty_location_open_picker = (
-            bool(wx) if wx is not None else False
+            wx if wx is not None else False
         )
         save_batch_location_prefs(
             self.location_text,
@@ -2244,7 +2240,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         # 与素材提醒卡片保持完全一致的内边距与顶端对齐，以防分割线错位
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(0)
-        layout.setAlignment(Qt.AlignTop)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         label_w = 72
 
         # 统一的标题头部区域（与素材提醒卡片结构一致）
@@ -2259,7 +2255,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         layout.addWidget(header)
 
         sep = QFrame(card)
-        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShape(QFrame.Shape.HLine)
         sep.setObjectName("SettingsCardSep")
         layout.addWidget(sep)
         layout.addSpacing(10)  # 分隔线与内容之间的间距
@@ -2383,7 +2379,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         # 与素材提醒卡片保持一致的内边距并保持顶对齐以对齐标题和分割线
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(0)
-        layout.setAlignment(Qt.AlignTop)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         # 统一的标题头部区域
         header = QWidget(card)
@@ -2397,7 +2393,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         layout.addWidget(header)
 
         sep = QFrame(card)
-        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShape(QFrame.Shape.HLine)
         sep.setObjectName("SettingsCardSep")
         layout.addWidget(sep)
         layout.addSpacing(8)
@@ -2407,7 +2403,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(6)
-        content_layout.setAlignment(Qt.AlignTop)
+        content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         # 按钮1：清空视频
         self.btn_clear_videos = PushButton(FluentIcon.DELETE, f"清空{self._task_label}", content)
@@ -2495,15 +2491,15 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             + "\nQTableView::item { padding: 0px 2px; }\n"
         )
         header = self.preview_table.horizontalHeader()
-        header.setDefaultAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         header.setFixedHeight(30)
         # 各列均可拖拽表头边界调整宽度
         for col in range(self.preview_table.columnCount()):
-            header.setSectionResizeMode(col, QHeaderView.Interactive)
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
         header.setMinimumSectionSize(55)
         _vh = self.preview_table.verticalHeader()
         _vh.setDefaultSectionSize(BATCH_PREVIEW_TABLE_ROW_HEIGHT)
-        _vh.setDefaultAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+        _vh.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
 
         self.preview_table.setColumnWidth(0, 90)   # 平台
         self.preview_table.setColumnWidth(1, 110)  # 平台昵称
@@ -2516,10 +2512,10 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         self.preview_table.setColumnWidth(8, 120)  # 购物车    短标题/✅/—
         self.preview_table.setColumnWidth(9, 60)   # 团购      ✅/—
         self.preview_table.setColumnWidth(10, 80)  # 位置
-        self.preview_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.preview_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.preview_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.preview_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.preview_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.preview_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.preview_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.preview_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.preview_table.customContextMenuRequested.connect(self._on_preview_context_menu)
         # 选中行后按 Delete 删除（与「删除选中任务」按钮一致）
         del_shortcut = QShortcut(QKeySequence(QKeySequence.StandardKey.Delete), self.preview_table)
@@ -2753,7 +2749,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         path = str((self.video_list[row].get("file_path") or "")) if row < n_vid else ""
         if row < n_time:
             slot = self.time_slots[row]
-            st = "立即发布" if slot is None else str(slot)
+            st = "立即发布" if slot is None else slot
         else:
             st = "待配置"
         return (path, st)
@@ -3047,7 +3043,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                 and skip_material_stats_reminder
             )
 
-        self._preview_refresh_timer.start(max(0, int(delay_ms)))
+        self._preview_refresh_timer.start(max(0, delay_ms))
 
     def _run_scheduled_preview_refresh(self) -> None:
         skip_material_stats_reminder = self._preview_refresh_skip_material_stats_reminder
@@ -3371,7 +3367,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                 from src.ui.utils.async_helper import await_qdialog_finished
                 dialog = LoginDialog(self)
                 dialog.login_success.connect(self._refresh_user_id)
-                code = await await_qdialog_finished(dialog)
+                code = await await_qdialog_finished(dialog)  # type: ignore
                 if code != int(QDialog.DialogCode.Accepted):
                     InfoBar.warning("请先登录", "发布前需要登录",
                                     parent=self, position=InfoBarPosition.TOP)

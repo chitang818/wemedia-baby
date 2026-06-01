@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QHeaderView
 
 from src.ui.pages.material.media_library_table_model import MediaLibraryTableModel
 from src.ui.pages.material.media_library_table_view import MediaLibraryTableView
@@ -85,5 +85,87 @@ def test_media_library_table_view_item_adapter_and_selection() -> None:
 
     table.removeRow(0)
     assert table.rowCount() == 0
+    table.deleteLater()
+    assert app is not None
+
+
+def test_image_library_table_view_uses_readable_interactive_default_widths() -> None:
+    app = QApplication.instance() or QApplication([])
+    table = MediaLibraryTableView(kind=MediaLibraryTableModel.KIND_IMAGE_FOLDER)
+    header = table.horizontalHeader()
+
+    for col in range(table.source_model().columnCount()):
+        assert header.sectionResizeMode(col) == QHeaderView.ResizeMode.Interactive
+
+    assert table.columnWidth(MediaLibraryTableModel.COL_NO) >= 56
+    assert table.columnWidth(MediaLibraryTableModel.COL_NAME) >= 360
+    assert table.columnWidth(MediaLibraryTableModel.COL_IMAGE_COUNT) >= 90
+    assert table.columnWidth(MediaLibraryTableModel.COL_IMAGE_SIZE) >= 110
+    assert table.columnWidth(MediaLibraryTableModel.COL_IMAGE_OWNER) >= 240
+    assert table.columnWidth(MediaLibraryTableModel.COL_IMAGE_USAGE) >= 96
+
+    table.deleteLater()
+    assert app is not None
+
+
+def test_image_library_table_view_expands_columns_to_loaded_content() -> None:
+    app = QApplication.instance() or QApplication([])
+    table = MediaLibraryTableView(kind=MediaLibraryTableModel.KIND_IMAGE_FOLDER)
+    item = SimpleNamespace(
+        path=r"D:\media\images\09-20260601_1818",
+        name="09-20260601_1818-适合图文发布的长文件夹名称",
+        image_count=128,
+        size_mb=1234.56,
+        owner="抖音_逗马农业科技超长账号名称",
+        in_use=True,
+    )
+    table.set_items([item])
+    model = table.source_model()
+
+    for col in range(model.columnCount()):
+        text = str(model.data(model.index(0, col), Qt.ItemDataRole.DisplayRole) or "")
+        needed = table.fontMetrics().horizontalAdvance(text) + table._CELL_PADDING
+        assert table.columnWidth(col) >= needed
+
+    table.deleteLater()
+    assert app is not None
+
+
+def test_video_library_table_view_uses_interactive_default_widths() -> None:
+    app = QApplication.instance() or QApplication([])
+    table = MediaLibraryTableView(kind=MediaLibraryTableModel.KIND_VIDEO)
+    header = table.horizontalHeader()
+
+    for col in range(table.source_model().columnCount()):
+        assert header.sectionResizeMode(col) == QHeaderView.ResizeMode.Interactive
+
+    assert table.columnWidth(MediaLibraryTableModel.COL_NO) >= 56
+    assert table.columnWidth(MediaLibraryTableModel.COL_NAME) >= 360
+
+    table.deleteLater()
+    assert app is not None
+
+
+def test_video_library_table_view_expands_columns_to_loaded_content() -> None:
+    app = QApplication.instance() or QApplication([])
+    table = MediaLibraryTableView(kind=MediaLibraryTableModel.KIND_VIDEO)
+    item = SimpleNamespace(
+        path=r"D:\media\video\long.mp4",
+        name="20260601-适合视频发布的超长素材文件名称-long-video-name.mp4",
+        size_mb=1234.56,
+        duration="01:23:45",
+        resolution="3840x2160",
+        orientation="横屏",
+        owner="视频号_逗马农业科技超长账号名称",
+        in_use=True,
+    )
+    table.set_items([item])
+    model = table.source_model()
+
+    for col in range(model.columnCount()):
+        text = str(model.data(model.index(0, col), Qt.ItemDataRole.DisplayRole) or "")
+        needed = table.fontMetrics().horizontalAdvance(text) + table._CELL_PADDING
+        assert table.columnWidth(col) >= needed
+
     table.deleteLater()
     assert app is not None

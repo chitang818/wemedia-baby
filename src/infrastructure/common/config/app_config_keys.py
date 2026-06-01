@@ -63,6 +63,8 @@ PUBLISH_LIST_FIRST_PLATFORM = "first_platform"
 PUBLISH_LIST_INTERVAL_SECONDS = "interval_seconds"
 PUBLISH_LIST_POST_PUBLISH_FILE_ACTION = "post_publish_file_action"
 PUBLISH_LIST_SHOW_BROWSER = "show_browser"
+PUBLISH_LIST_COGNITIVE_PAUSE_ENABLED = "cognitive_pause_enabled"
+PUBLISH_LIST_COGNITIVE_PAUSE_SECONDS = "cognitive_pause_seconds"
 # 已废弃：发布后关机改为仅内存一次有效，不再读写此键；旧配置中若存在可忽略。
 PUBLISH_LIST_AUTO_SHUTDOWN_AFTER_COMPLETE = "auto_shutdown_after_complete"
 

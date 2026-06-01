@@ -47,6 +47,8 @@ class MediaLibraryTableView(TableView):
     cellClicked = Signal(int, int)
     cellDoubleClicked = Signal(int, int)
     itemSelectionChanged = Signal()
+    _HEADER_PADDING = 46  # 留出排序箭头的空间
+    _CELL_PADDING = 28
 
     def __init__(self, parent=None, *, kind: str = MediaLibraryTableModel.KIND_VIDEO) -> None:
         super().__init__(parent)
@@ -72,36 +74,65 @@ class MediaLibraryTableView(TableView):
         header = self.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setStretchLastSection(False)
         header.setMinimumSectionSize(48)
-        for col, width in self._column_widths().items():
-            self.setColumnWidth(col, width)
+        self._fit_columns_to_contents()
 
     def _column_widths(self) -> Dict[int, int]:
         if self._kind == MediaLibraryTableModel.KIND_IMAGE_FOLDER:
             return {
-                MediaLibraryTableModel.COL_NO: 50,
-                MediaLibraryTableModel.COL_IMAGE_COUNT: 78,
-                MediaLibraryTableModel.COL_IMAGE_SIZE: 90,
-                MediaLibraryTableModel.COL_IMAGE_OWNER: 132,
-                MediaLibraryTableModel.COL_IMAGE_USAGE: 76,
+                MediaLibraryTableModel.COL_NO: 80,
+                MediaLibraryTableModel.COL_NAME: 360,
+                MediaLibraryTableModel.COL_IMAGE_COUNT: 90,
+                MediaLibraryTableModel.COL_IMAGE_SIZE: 110,
+                MediaLibraryTableModel.COL_IMAGE_OWNER: 260,
+                MediaLibraryTableModel.COL_IMAGE_USAGE: 96,
             }
         return {
-            MediaLibraryTableModel.COL_NO: 50,
-            MediaLibraryTableModel.COL_VIDEO_SIZE: 88,
-            MediaLibraryTableModel.COL_VIDEO_DURATION: 76,
-            MediaLibraryTableModel.COL_VIDEO_RESOLUTION: 96,
-            MediaLibraryTableModel.COL_VIDEO_ORIENTATION: 60,
-            MediaLibraryTableModel.COL_VIDEO_OWNER: 118,
-            MediaLibraryTableModel.COL_VIDEO_USAGE: 76,
+            MediaLibraryTableModel.COL_NO: 80,
+            MediaLibraryTableModel.COL_NAME: 360,
+            MediaLibraryTableModel.COL_VIDEO_SIZE: 100,
+            MediaLibraryTableModel.COL_VIDEO_DURATION: 90,
+            MediaLibraryTableModel.COL_VIDEO_RESOLUTION: 110,
+            MediaLibraryTableModel.COL_VIDEO_ORIENTATION: 76,
+            MediaLibraryTableModel.COL_VIDEO_OWNER: 220,
+            MediaLibraryTableModel.COL_VIDEO_USAGE: 96,
         }
+
+    def _fit_columns_to_contents(self) -> None:
+        """Set readable default widths from headers and current display text.
+
+        Columns stay Interactive so users can drag them afterwards. Long file
+        names or owner labels expand the column and use the horizontal scrollbar
+        instead of being clipped by an undersized default width.
+        """
+        model = self._model
+        min_widths = self._column_widths()
+        header = self.horizontalHeader()
+        body_metrics = self.fontMetrics()
+        header_metrics = header.fontMetrics()
+
+        for col in range(model.columnCount()):
+            header_text = str(
+                model.headerData(col, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
+                or ""
+            )
+            width = header_metrics.horizontalAdvance(header_text) + self._HEADER_PADDING
+            for row in range(model.rowCount()):
+                text = str(
+                    model.data(model.index(row, col), Qt.ItemDataRole.DisplayRole)
+                    or ""
+                )
+                width = max(width, body_metrics.horizontalAdvance(text) + self._CELL_PADDING)
+            width = max(min_widths.get(col, header.minimumSectionSize()), width)
+            self.setColumnWidth(col, width)
 
     def source_model(self) -> MediaLibraryTableModel:
         return self._model
 
     def set_items(self, items: List[Any]) -> None:
         self._model.set_items(items or [])
+        self._fit_columns_to_contents()
 
     def notify_item_changed(self, item_or_path: Any, columns: Optional[List[int]] = None) -> bool:
         return self._model.notify_item_changed(item_or_path, columns)
