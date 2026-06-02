@@ -44,6 +44,7 @@ from .publish_page_guard import (
     ensure_publish_page_without_file_picker,
     url_has_auto_file_picker,
 )
+from ..browser_environment_diagnostics import attach_xhs_environment_snapshot
 
 logger = logging.getLogger(__name__)
 USER_LOG = logging.getLogger("publish.user_log")
@@ -55,6 +56,17 @@ _UPLOAD_DONE_POLL_BASE_MS = 300
 _UPLOAD_USER_LOG_INTERVAL_S = 5
 # JS 快路径连续未命中若干次后再走 Playwright 选择器慢路径（视频用）
 _UPLOAD_JS_MISS_BEFORE_SLOW_PATH = 3
+
+
+async def _safe_attach_environment_snapshot(
+    page: Page,
+    metadata: Dict[str, Any],
+    stage: str,
+) -> None:
+    try:
+        await attach_xhs_environment_snapshot(metadata, page, stage=stage)
+    except Exception as exc:
+        logger.debug("XHS environment snapshot failed at %s: %s", stage, exc)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -172,10 +184,15 @@ class UploadMediaStep(BasePublishStep):
     async def execute(self, page: Page, file_path: str, metadata: Dict[str, Any]) -> StepOutcome:
         await self._await_pause(metadata)
         file_type = (metadata.get("file_type") or "video").lower()
+        await _safe_attach_environment_snapshot(page, metadata, f"before_{file_type}_upload")
 
         if file_type == "image":
-            return await self._upload_images(page, file_path, metadata)
-        return await self._upload_video(page, file_path, metadata)
+            result = await self._upload_images(page, file_path, metadata)
+        else:
+            result = await self._upload_video(page, file_path, metadata)
+        if result is None:
+            await _safe_attach_environment_snapshot(page, metadata, f"after_{file_type}_upload")
+        return result
 
     # ──────────────────────────────────────────────────────────────────────────
     # 通用底层工具

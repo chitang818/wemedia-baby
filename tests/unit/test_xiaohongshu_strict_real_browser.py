@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from src.infrastructure.browser.browser_manager import UndetectedBrowserManager
+from src.plugins.pro.xiaohongshu.steps import step_02_entry
 from src.plugins.pro.xiaohongshu.steps import step_08_submit
 
 
@@ -14,6 +15,13 @@ class _FakeContext:
         self.add_init_script_called = True
 
 
+class _FakePage:
+    url = "https://creator.xiaohongshu.com/publish/publish?target=video"
+
+    async def wait_for_timeout(self, _timeout_ms: int) -> None:
+        return None
+
+
 @pytest.mark.asyncio
 async def test_xiaohongshu_strict_browser_skips_stealth_injection() -> None:
     manager = UndetectedBrowserManager.__new__(UndetectedBrowserManager)
@@ -23,6 +31,23 @@ async def test_xiaohongshu_strict_browser_skips_stealth_injection() -> None:
     await manager._inject_stealth_scripts()
 
     assert manager.context.add_init_script_called is False
+
+
+@pytest.mark.asyncio
+async def test_xiaohongshu_entry_publish_url_wait_uses_async_predicate(monkeypatch) -> None:
+    step = step_02_entry.EnterPublishEntryStep()
+
+    async def publish_page_loaded(_page, _file_type="video"):
+        return True
+
+    monkeypatch.setattr(step, "_check_publish_page_loaded", publish_page_loaded)
+
+    await step._wait_publish_navigation(
+        _FakePage(),
+        "video",
+        {},
+        1.0,
+    )
 
 
 def test_xiaohongshu_submit_defaults_to_manual_in_strict_mode() -> None:

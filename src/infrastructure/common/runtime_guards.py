@@ -144,6 +144,8 @@ def configure_qt_environment() -> None:
     os.environ.setdefault("QT_QPA_PLATFORM_PLUGIN_PATH", "")
     os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "0")
     os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-logging --log-level=3")
+    # 禁用 Qt Multimedia FFmpeg 后端的硬件解码，防止加载特殊视频（如 HDR、高帧率等）时引发 C++ 段错误
+    os.environ.setdefault("QT_FFMPEG_USE_HARDWARE_DECODING", "0")
 
 
 def install_null_stdio() -> None:

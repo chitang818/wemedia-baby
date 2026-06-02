@@ -3,7 +3,10 @@ from __future__ import annotations
 import pytest
 
 from src.infrastructure.browser import browser_launch_policy
-from src.infrastructure.browser.browser_manager import UndetectedBrowserManager
+from src.infrastructure.browser.browser_manager import (
+    UndetectedBrowserManager,
+    build_playwright_default_args_to_ignore,
+)
 from src.infrastructure.common.config.app_config_keys import (
     BROWSER_TRUST_MODE_COMPAT_STEALTH,
     BROWSER_TRUST_MODE_REAL,
@@ -62,6 +65,19 @@ def test_browser_launch_policy_accepts_compat_stealth(monkeypatch) -> None:
     policy = browser_launch_policy.get_browser_launch_policy()
 
     assert policy.use_compat_stealth is True
+
+
+def test_strict_real_browser_keeps_automation_controlled_launch_arg() -> None:
+    ignored = build_playwright_default_args_to_ignore(strict_real_browser=True)
+
+    assert "--enable-automation" in ignored
+    assert "--disable-blink-features=AutomationControlled" not in ignored
+
+
+def test_non_strict_browser_ignores_automation_controlled_launch_arg() -> None:
+    ignored = build_playwright_default_args_to_ignore(strict_real_browser=False)
+
+    assert "--disable-blink-features=AutomationControlled" in ignored
 
 
 @pytest.mark.asyncio

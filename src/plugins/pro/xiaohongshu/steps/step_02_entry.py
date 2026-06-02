@@ -21,7 +21,8 @@ from playwright.async_api import Page
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from src.plugins.core.wait_helper import PluginWaitHelper
 from ._base import BasePublishStep, StepOutcome
-from ..selectors import Selectors
+from ..selectors import Selectors
+from ..browser_environment_diagnostics import attach_xhs_environment_snapshot
 from .publish_page_guard import (
     PUBLISH_TARGET_URLS,
     clean_publish_url,
@@ -31,7 +32,18 @@ from .publish_page_guard import (
 logger = logging.getLogger(__name__)
 USER_LOG = logging.getLogger("publish.user_log")
 
-HOME_URL = "https://creator.xiaohongshu.com/new/home"
+HOME_URL = "https://creator.xiaohongshu.com/new/home"
+
+
+async def _safe_attach_environment_snapshot(
+    page: Page,
+    metadata: Dict[str, Any],
+    stage: str,
+) -> None:
+    try:
+        await attach_xhs_environment_snapshot(metadata, page, stage=stage)
+    except Exception as exc:
+        logger.debug("XHS environment snapshot failed at %s: %s", stage, exc)
 
 
 class EnterPublishEntryStep(BasePublishStep):
@@ -54,6 +66,7 @@ class EnterPublishEntryStep(BasePublishStep):
                 guard_err = await self._finalize_publish_entry(page, file_type, metadata)
                 if guard_err is not None:
                     return guard_err
+                await _safe_attach_environment_snapshot(page, metadata, "publish_page_loaded_home_card")
                 return None
             logger.warning("小红书首页入口未成功，降级使用发布页直达兜底")
             metadata["xhs_entry_strategy"] = "direct_url_fallback"
@@ -169,7 +182,11 @@ class EnterPublishEntryStep(BasePublishStep):
             )
         return None
 
-    async def _wait_publish_navigation(
+    async def _publish_url_ready(self, page: Page) -> bool:
+        return "publish" in (page.url or "")
+
+
+    async def _wait_publish_navigation(
         self,
         page: Page,
         file_type: str,
@@ -179,7 +196,7 @@ class EnterPublishEntryStep(BasePublishStep):
         """点击首页入口后等待跳转到发布页（短超时）。"""
         await PluginWaitHelper.wait_for_condition(
             page,
-            lambda: "publish" in (page.url or ""),
+            lambda: self._publish_url_ready(page),
             timeout_ms=int(8000 * speed_rate),
             poll_interval_ms=300,
             pause_callback=lambda: self._await_pause(metadata),

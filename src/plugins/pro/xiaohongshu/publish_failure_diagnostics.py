@@ -16,6 +16,7 @@ from ._xhs_submit_probe import (
     snapshot_xhs_publish_btn,
     summarize_snapshot_for_log,
 )
+from .browser_environment_diagnostics import collect_xhs_browser_environment
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,18 @@ def _attached_snapshot(metadata: Optional[Mapping[str, Any]]) -> Optional[Dict[s
     if isinstance(summary, dict):
         return {"summary_from_step": summary}
     return None
+
+
+def _attached_environment_snapshot(
+    metadata: Optional[Mapping[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(metadata, Mapping):
+        return None
+    ctx = metadata.get("_diagnostic_context")
+    if not isinstance(ctx, Mapping):
+        return None
+    raw = ctx.get("xhs_environment_snapshot")
+    return dict(raw) if isinstance(raw, dict) else None
 
 
 async def _resolve_publish_host(page: Page):
@@ -243,6 +256,49 @@ def format_analysis_txt(analysis: Dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _summarize_environment(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    page = snapshot.get("page") if isinstance(snapshot.get("page"), dict) else {}
+    nav = page.get("navigator") if isinstance(page.get("navigator"), dict) else {}
+    viewport = page.get("viewport") if isinstance(page.get("viewport"), dict) else {}
+    webgl = page.get("webgl") if isinstance(page.get("webgl"), dict) else {}
+    launch = snapshot.get("launch_context") if isinstance(snapshot.get("launch_context"), dict) else {}
+    risk_prompts = page.get("riskPrompts") if isinstance(page.get("riskPrompts"), list) else []
+    cookies = snapshot.get("cookies") if isinstance(snapshot.get("cookies"), list) else []
+    return {
+        "stage": snapshot.get("stage"),
+        "url": page.get("url") or "",
+        "webdriver": nav.get("webdriver"),
+        "user_agent": nav.get("userAgent"),
+        "languages": nav.get("languages"),
+        "viewport": {
+            "innerWidth": viewport.get("innerWidth"),
+            "innerHeight": viewport.get("innerHeight"),
+            "outerWidth": viewport.get("outerWidth"),
+            "outerHeight": viewport.get("outerHeight"),
+        },
+        "webgl_renderer": webgl.get("unmaskedRenderer") or webgl.get("renderer"),
+        "risk_prompt_keywords": [
+            str(item.get("keyword"))
+            for item in risk_prompts
+            if isinstance(item, dict) and item.get("keyword")
+        ][:10],
+        "cookie_names": sorted(
+            {
+                str(item.get("name"))
+                for item in cookies
+                if isinstance(item, dict) and item.get("name")
+            }
+        ),
+        "launch": {
+            "headless": launch.get("headless"),
+            "strict_real_browser": launch.get("strict_real_browser"),
+            "trust_mode": launch.get("trust_mode"),
+            "user_data_dir": launch.get("user_data_dir"),
+            "chrome_executable": launch.get("chrome_executable"),
+        },
+    }
+
+
 async def capture_xiaohongshu_extras(
     page: Page,
     bundle_dir: Path,
@@ -270,6 +326,16 @@ async def capture_xiaohongshu_extras(
     probe_out = {**host_probe, **sr_state}
     _write_json(bundle_dir / "xhs_publish_probe.json", probe_out)
 
+    env_snapshot = _attached_environment_snapshot(metadata)
+    if env_snapshot is None:
+        env_snapshot = await collect_xhs_browser_environment(
+            page,
+            metadata,
+            stage=f"{step_name or 'unknown'}:{reason or 'diagnostic'}",
+        )
+    _write_json(bundle_dir / "xhs_environment_snapshot.json", env_snapshot)
+    env_summary = _summarize_environment(env_snapshot)
+
     analysis = build_xhs_failure_analysis(
         step_name=step_name,
         reason=reason,
@@ -295,6 +361,10 @@ async def capture_xiaohongshu_extras(
         "xhs_host_count": summary.get("host_count", 0),
         "xhs_shadow_buttons": summary.get("shadow_buttons"),
         "xhs_analysis_hints": analysis.get("hints", [])[:5],
+        "xhs_environment_summary": env_summary,
+        "xhs_environment_stage": env_summary.get("stage"),
+        "xhs_environment_webdriver": env_summary.get("webdriver"),
+        "xhs_environment_risk_prompt_keywords": env_summary.get("risk_prompt_keywords", []),
     }
     logger.info(
         "小红书诊断扩展已写入: %s (hosts=%s, sr=%s)",

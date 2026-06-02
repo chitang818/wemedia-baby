@@ -34,6 +34,7 @@ STRICT_REAL_BROWSER_PLATFORMS = {"xiaohongshu"}
 
 # 环境信息标签页 HTML 内注入，用于在多标签/持久化恢复场景下可靠识别该页（不依赖标签顺序）
 _ENV_INFO_TAB_META_SELECTOR = 'meta[name="wemedia-baby-env"][content="1"]'
+_AUTOMATION_CONTROLLED_ARG = "--disable-blink-features=AutomationControlled"
 
 
 def _get_configured_chrome_path() -> Optional[str]:
@@ -58,6 +59,29 @@ UA_TEMPLATES = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{VERSION}.0.6099.109 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{VERSION}.0.6099.130 Safari/537.36",
 ]
+
+
+def build_playwright_default_args_to_ignore(
+    *,
+    strict_real_browser: bool = False,
+    wechat_video: bool = False,
+) -> List[str]:
+    """Return Playwright default args that should be suppressed for Chrome launch."""
+    ignored = [
+        "--enable-automation",
+        "--no-sandbox",
+        "--disable-popup-blocking",
+    ]
+    if not strict_real_browser:
+        ignored.append(_AUTOMATION_CONTROLLED_ARG)
+    if wechat_video:
+        ignored.extend(
+            [
+                "--disable-extensions",
+                "--disable-component-extensions-with-background-pages",
+            ]
+        )
+    return ignored
 
 
 class UndetectedBrowserManager:
@@ -375,6 +399,8 @@ class UndetectedBrowserManager:
             
             # 启动参数
             args = self._get_launch_args() if compat_stealth else []
+            if strict_real_browser:
+                args = list(args) + [_AUTOMATION_CONTROLLED_ARG]
             _wx_channels = (self.platform or "").strip().lower() == "wechat_video"
             
             # 仅使用本地 Chrome
@@ -497,27 +523,11 @@ class UndetectedBrowserManager:
                     )
                 tz_id = "Asia/Shanghai"
 
-            # 视频号扫码登录：微信侧常对「无沙箱 / 禁用扩展 / 测试型启动参数」做风控，易在已扫码后出现「登录失败，稍后重试」。
-            # "--disable-popup-blocking" 是 Playwright 的默认注入参数，会关闭 Chrome 的弹窗拦截器，
-            # 导致网站 JS（如抖音）通过 window.open() 弹出的认证/广告标签能直接显示。
-            # 将其加入 ignore_default_args，使 Chrome 保持和普通用户浏览器一致的默认弹窗拦截行为。
-            # "--disable-blink-features=AutomationControlled" 是 Playwright 对正式版 Chrome（channel=chrome）
-            # 自动注入的参数，但正式版 Chrome 不支持该参数，会在页面顶部显示黄色「不受支持的命令行标记」警告横幅。
-            # 将其加入 ignore_default_args 后，Playwright 不再自动注入，警告消失。
-            # navigator.webdriver 的隐藏已由 _inject_stealth_scripts() 中的 JS 注入替代。
-            _ignore_playwright_defaults = [
-                "--enable-automation",
-                "--no-sandbox",
-                "--disable-popup-blocking",
-                "--disable-blink-features=AutomationControlled",
-            ]
+            _ignore_playwright_defaults = build_playwright_default_args_to_ignore(
+                strict_real_browser=strict_real_browser,
+                wechat_video=_wx_channels,
+            )
             if _wx_channels:
-                _ignore_playwright_defaults.extend(
-                    [
-                        "--disable-extensions",
-                        "--disable-component-extensions-with-background-pages",
-                    ]
-                )
                 logger.info(
                     "[BrowserManager] 视频号：使用加强版浏览器启动参数（Chromium 沙箱、允许扩展、弱化自动化默认项）以降低扫码风控误杀"
                 )

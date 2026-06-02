@@ -35,6 +35,7 @@ from .._xhs_submit_probe import (
     summarize_snapshot_for_log,
     url_indicates_publish_success,
 )
+from ..browser_environment_diagnostics import attach_xhs_environment_snapshot
 from ..selectors import Selectors
 
 logger = logging.getLogger(__name__)
@@ -629,6 +630,8 @@ async def _click_submit_with_fallback(
 
 async def _wait_for_manual_submit(page: Page, metadata: Dict[str, Any]) -> PublishResult:
     timeout_ms = _xhs_manual_submit_timeout_ms(metadata)
+    await attach_xhs_environment_snapshot(metadata, page, stage="pre_manual_submit")
+    await _attach_submit_diagnostic_snapshot(metadata, page)
     try:
         await page.bring_to_front()
     except Exception:
@@ -648,6 +651,8 @@ async def _wait_for_manual_submit(page: Page, metadata: Dict[str, Any]) -> Publi
         current_url = page.url if not page.is_closed() else ""
         USER_LOG.info("[XHS submit] Publish success detected (%s)", current_url)
         return PublishResult(success=True, publish_url=current_url)
+    await attach_xhs_environment_snapshot(metadata, page, stage="manual_submit_timeout")
+    await _attach_submit_diagnostic_snapshot(metadata, page)
     return PublishResult(
         success=False,
         error_message=(

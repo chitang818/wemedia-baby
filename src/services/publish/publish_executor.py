@@ -310,6 +310,31 @@ class PublishExecutor:
                     "file_path": context.file_path,
                 },
             }
+            if str(platform).strip().lower() == "xiaohongshu":
+                try:
+                    from src.infrastructure.browser.browser_launch_policy import (
+                        get_browser_launch_policy,
+                    )
+
+                    launch_policy = get_browser_launch_policy()
+                    diag_ctx = metadata.get("_diagnostic_context")
+                    if not isinstance(diag_ctx, dict):
+                        diag_ctx = {}
+                        metadata["_diagnostic_context"] = diag_ctx
+                    bm = getattr(context, "browser_manager", None)
+                    diag_ctx["browser_launch"] = {
+                        "browser_manager_class": bm.__class__.__name__ if bm else "",
+                        "headless": bool(getattr(context, "headless", False)),
+                        "strict_real_browser": True,
+                        "trust_mode": launch_policy.trust_mode,
+                        "force_visible_publish": launch_policy.force_visible_publish,
+                        "user_data_dir": str(getattr(bm, "user_data_dir", "") or ""),
+                        "environment_info_tab_possible": bool(
+                            getattr(bm, "_environment_info_page", None)
+                        ),
+                    }
+                except Exception as _xhs_diag_err:
+                    logger.debug("小红书浏览器启动诊断上下文写入失败: %s", _xhs_diag_err)
             from src.domain.publish.location_settings import LocationPublishFields
 
             LocationPublishFields(
