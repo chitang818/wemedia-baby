@@ -31,7 +31,7 @@ _TABLE_BORDER_LIGHT = QColor("#E5E7EB")
 _TABLE_BORDER_DARK = QColor("#3A3A3A")
 _SETTINGS_ORG = "WeMediaBaby"
 _SETTINGS_APP = "媒小宝"
-_COLUMN_WIDTHS_KEY = "account_table/column_widths_v1"
+_COLUMN_WIDTHS_KEY = "account_table/column_widths_v2"
 
 
 class AccountFilterProxyModel(QSortFilterProxyModel):
@@ -557,6 +557,10 @@ class AccountTableViewWidget(QWidget):
         }
         if len(widths) != count or any(width <= 0 for width in widths.values()):
             return False
+        # 操作列不允许被保存值压缩到无法点击的宽度，强制最小 68px
+        widths[AccountTableModel.COL_ACTION] = max(
+            widths.get(AccountTableModel.COL_ACTION, 68), 68
+        )
 
         stretch_weights = {
             AccountTableModel.COL_USERNAME: 5,
@@ -659,8 +663,18 @@ class AccountTableViewWidget(QWidget):
                 AccountTableModel.COL_LATEST_PUBLISH: 184,
             }
 
+        # 操作列最小宽度（随 compact 状态而定）
+        min_action_width = 68 if compact else 92
+
         available = max(0, viewport_w - 4)
-        if self._apply_saved_column_widths(available, viewport_w >= 1500):
+        if self._apply_saved_column_widths(available, viewport_w >= 1120):
+            # 兜底：确保操作列在任何保存列宽下都不会被压缩到无法显示
+            if self.table.columnWidth(AccountTableModel.COL_ACTION) < min_action_width:
+                self._applying_column_layout = True
+                try:
+                    self.table.setColumnWidth(AccountTableModel.COL_ACTION, min_action_width)
+                finally:
+                    self._applying_column_layout = False
             return
 
         self._applying_column_layout = True

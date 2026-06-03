@@ -363,6 +363,9 @@ class PublishRecordsPage(BasePage):
         """表格末列操作按钮文案（待发布 / 已发布统一为「编辑」）。"""
         return "编辑"
 
+    def _use_pending_table_column_order(self) -> bool:
+        return False
+
     def _setup_content(self):
         """设置内容"""
         layout = QVBoxLayout()
@@ -516,6 +519,7 @@ class PublishRecordsPage(BasePage):
             table_container,
             success_page=self.target_statuses == ["success"],
             action_text=self._record_table_action_button_text(),
+            pending_column_order=self._use_pending_table_column_order(),
         )
         # 统一 ::item padding = 2px；完全绕过 Fluent setBorderVisible/setBorderRadius，
         # 避免触发 StyleSheetManager watcher 在懒加载 showEvent / 动画期间崩溃。

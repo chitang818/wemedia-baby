@@ -145,6 +145,39 @@ def test_publish_record_table_platform_column_fits_display_names() -> None:
         assert fm.horizontalAdvance(label) + 16 <= width
 
 
+def test_publish_record_table_view_default_visual_order_is_unchanged() -> None:
+    _qapp()
+    table = PublishRecordTableView()
+    header = table.horizontalHeader()
+
+    assert header.visualIndex(PublishRecordTableModel.COL_STATUS) == PublishRecordTableModel.COL_STATUS
+    assert header.visualIndex(PublishRecordTableModel.COL_ACTION) == PublishRecordTableModel.COL_ACTION
+    assert header.visualIndex(PublishRecordTableModel.COL_SCHEDULED_TIME) == PublishRecordTableModel.COL_SCHEDULED_TIME
+
+
+def test_publish_record_table_view_pending_order_moves_status_and_action_before_publish_time() -> None:
+    _qapp()
+    table = PublishRecordTableView(pending_column_order=True)
+    header = table.horizontalHeader()
+    m = PublishRecordTableModel
+
+    assert header.logicalIndex(10) == m.COL_STATUS
+    assert header.logicalIndex(11) == m.COL_ACTION
+    assert header.logicalIndex(12) == m.COL_SCHEDULED_TIME
+    assert header.visualIndex(m.COL_DESCRIPTION) < header.visualIndex(m.COL_STATUS)
+    assert header.visualIndex(m.COL_ACTION) < header.visualIndex(m.COL_SCHEDULED_TIME)
+
+
+def test_publish_record_table_view_pending_order_keeps_logical_column_mapping() -> None:
+    _qapp()
+    table = PublishRecordTableView(pending_column_order=True)
+    table.set_records([{"id": 10, "platform": "douyin", "status": "pending"}])
+
+    assert table.item(0, PublishRecordTableModel.COL_STATUS).text() == "⏳ 待发布"
+    assert table.item(0, PublishRecordTableModel.COL_ACTION).text() == "编辑"
+    assert table.item(0, PublishRecordTableModel.COL_ACTION).data(Qt.ItemDataRole.UserRole) == 10
+
+
 def test_publish_record_table_view_recycle_mode_is_idempotent(monkeypatch) -> None:
     _qapp()
     calls = {"apply": 0}

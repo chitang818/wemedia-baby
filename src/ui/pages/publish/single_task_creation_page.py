@@ -138,7 +138,7 @@ def save_persisted_single_auto_match_video_library(checked: bool) -> None:
     """保存单视频发布页「视频库自动匹配」开关（配置中心 + app_config.json）。"""
     from src.infrastructure.common.config.app_config_keys import SINGLE_AUTO_MATCH_VIDEO_LIBRARY
 
-    _schedule_persist_single_publish_keys({SINGLE_AUTO_MATCH_VIDEO_LIBRARY: bool(checked)})
+    _schedule_persist_single_publish_keys({SINGLE_AUTO_MATCH_VIDEO_LIBRARY: checked})
 
 
 def load_persisted_single_auto_match_copywriting() -> bool:
@@ -160,7 +160,7 @@ def save_persisted_single_auto_match_copywriting(checked: bool) -> None:
     """保存单视频页「文案库自动匹配」开关（配置中心 + app_config.json）。"""
     from src.infrastructure.common.config.app_config_keys import SINGLE_AUTO_MATCH_COPYWRITING
 
-    _schedule_persist_single_publish_keys({SINGLE_AUTO_MATCH_COPYWRITING: bool(checked)})
+    _schedule_persist_single_publish_keys({SINGLE_AUTO_MATCH_COPYWRITING: checked})
 
 
 def load_persisted_single_copywriting_match_mode() -> str:
@@ -175,7 +175,7 @@ def save_persisted_single_copywriting_match_mode(mode: str) -> None:
     """保存单任务页文案匹配模式。"""
     from src.infrastructure.common.config.app_config_keys import SINGLE_COPYWRITING_MATCH_MODE
 
-    _schedule_persist_single_publish_keys({SINGLE_COPYWRITING_MATCH_MODE: str(mode)})
+    _schedule_persist_single_publish_keys({SINGLE_COPYWRITING_MATCH_MODE: mode})
 
 
 def load_persisted_single_copywriting_random_category() -> Optional[int]:
@@ -223,14 +223,14 @@ def _split_comma_paths(file_path: str) -> List[str]:
     """
     return [
         p.strip()
-        for p in str(file_path).split(",")
+        for p in file_path.split(",")
         if p.strip() and not p.strip().startswith(_FOLDER_MARKER_PREFIX)
     ]
 
 
 def _extract_folder_marker(file_path: str) -> Optional[str]:
     """从 file_path 中提取文件夹来源路径；若非文件夹来源则返回 None。"""
-    for part in str(file_path).split(","):
+    for part in file_path.split(","):
         part = part.strip()
         if part.startswith(_FOLDER_MARKER_PREFIX):
             return part[len(_FOLDER_MARKER_PREFIX):]
@@ -363,7 +363,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         h = getattr(self, "_preview_first_frame_handler", None)
         if h is not None:
             try:
-                w.player.mediaStatusChanged.disconnect(h)
+                w.player.mediaStatusChanged.disconnect(h)  # type: ignore
             except TypeError:
                 pass
             self._preview_first_frame_handler = None
@@ -384,7 +384,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         """媒体就绪后触发一次静音短播，用于首帧预览（避免仅 setSource 时画面全黑）。"""
         from PySide6.QtMultimedia import QMediaPlayer
 
-        player = w.player
+        player = w.player  # type: ignore
         self._disconnect_preview_first_frame_arm(w)
         self._preview_first_frame_generation = getattr(self, "_preview_first_frame_generation", 0) + 1
         gen = self._preview_first_frame_generation
@@ -430,16 +430,16 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         if resolved and os.path.isfile(resolved) and not self._path_looks_like_image(resolved):
             try:
                 self._disconnect_preview_first_frame_arm(w)
-                w.stop()
-                w.setVideo(QUrl.fromLocalFile(os.path.normpath(os.path.abspath(resolved))))
+                w.stop()  # type: ignore
+                w.setVideo(QUrl.fromLocalFile(os.path.normpath(os.path.abspath(resolved))))  # type: ignore
                 self._arm_preview_video_first_frame(w)
             except Exception as e:
                 logger.warning("设置预览视频源失败: %s", e)
         else:
             try:
                 self._disconnect_preview_first_frame_arm(w)
-                w.pause()
-                w.player.setSource(QUrl())
+                w.pause()  # type: ignore
+                w.player.setSource(QUrl())  # type: ignore
             except Exception as e:
                 logger.debug("清空预览视频源: %s", e)
 
@@ -591,7 +591,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         self._schedule_base_page_timer(
             "preview_video_widget_idle_init",
             max(0, delay_ms),
-            self._ensure_preview_video_widget,
+            lambda: self._ensure_preview_video_widget(),  # type: ignore
         )
     
     def _apply_preview_placeholder_style(self):
@@ -599,7 +599,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         if getattr(self, "preview_label", None) is None:
             return
         tc = _theme_colors()
-        self.preview_label.setStyleSheet(
+        self.preview_label.setStyleSheet(  # type: ignore
             f"background-color: {tc['preview_bg']}; border: 2px dashed {tc['preview_border']}; "
             f"border-radius: 12px; color: {tc['preview_text']}; font-weight: bold;"
         )
@@ -633,15 +633,15 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         _fallback_visible = self.isVisible()
         _setup_t0 = time.perf_counter() if is_page_load_profiler_enabled() else 0.0
         # 创建滚动区域
-        self.scroll_area = SmoothScrollArea(self)
-        self.scroll_area.setScrollAnimation(Qt.Vertical, 400, QEasingCurve.OutQuint)
-        self.scroll_area.setScrollAnimation(Qt.Horizontal, 400, QEasingCurve.OutQuint)
+        self.scroll_area = SmoothScrollArea(self)  # type: ignore
+        self.scroll_area.setScrollAnimation(Qt.Vertical, 400, QEasingCurve.OutQuint)  # type: ignore
+        self.scroll_area.setScrollAnimation(Qt.Horizontal, 400, QEasingCurve.OutQuint)  # type: ignore
             
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setFrameShape(QScrollArea.NoFrame)
+        self.scroll_area.setFrameShape(QScrollArea.NoFrame)  # type: ignore
         # 防止宽度抖动：强制启用垂直滚动条，禁用水平滚动条
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # type: ignore
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)  # type: ignore
         self.scroll_area.setStyleSheet("background: transparent;")
         self.scroll_area.viewport().setStyleSheet("background: transparent;")
         
@@ -710,7 +710,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         card = CardWidget(self)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(0, 0, 0, 0) # 彻底移除内边距，让画面铺满
-        layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter) # 顶部居中对齐
+        layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter) # type: ignore
 
         self.preview_label = None
         self.preview_video_widget = None
@@ -719,14 +719,14 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
 
         if self._is_image_mode:
             self.preview_label = QLabel(card)
-            self.preview_label.setAlignment(Qt.AlignCenter)
+            self.preview_label.setAlignment(Qt.AlignCenter)  # type: ignore
             self.preview_label.setFixedSize(280, 280)
             self.preview_label.setText(self._preview_placeholder_text())
             self._apply_preview_placeholder_style()
             layout.addWidget(self.preview_label)
         else:
             self.preview_label = QLabel(card)
-            self.preview_label.setAlignment(Qt.AlignCenter)
+            self.preview_label.setAlignment(Qt.AlignCenter)  # type: ignore
             self.preview_label.setFixedSize(280, 384)
             self.preview_label.setText(self._preview_placeholder_text())
             self._apply_preview_placeholder_style()
@@ -994,8 +994,8 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         
         # (2) 分割线
         line = QFrame(entry_container)
-        line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Plain)
+        line.setFrameShape(QFrame.HLine)  # type: ignore
+        line.setFrameShadow(QFrame.Plain)  # type: ignore
         line.setStyleSheet(f"background-color: {tc['separator']}; max-height: 1px; margin: 1px 0;")
         container_layout.addWidget(line)
         
@@ -1020,8 +1020,8 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         btn_style = f"border: none; background: transparent; color: {tc['hint_text']}; font-size: 13px; font-weight: 500; padding: 4px 8px;"
         self.btn_topic.setStyleSheet(btn_style)
         self.btn_mention.setStyleSheet(btn_style + "margin-left: 4px;")
-        self.btn_topic.setCursor(Qt.PointingHandCursor)
-        self.btn_mention.setCursor(Qt.PointingHandCursor)
+        self.btn_topic.setCursor(Qt.PointingHandCursor)  # type: ignore
+        self.btn_mention.setCursor(Qt.PointingHandCursor)  # type: ignore
         
         self.btn_topic.clicked.connect(self._on_add_topic_clicked)
         self.btn_mention.clicked.connect(self._on_add_mention_clicked)
@@ -1193,8 +1193,8 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         self.radio_now = RadioButton("立即发布")
         self.radio_schedule = RadioButton("定时发布")
         self.radio_now.setChecked(True)
-        self.radio_now.setFocusPolicy(Qt.NoFocus)
-        self.radio_schedule.setFocusPolicy(Qt.NoFocus)
+        self.radio_now.setFocusPolicy(Qt.NoFocus)  # type: ignore
+        self.radio_schedule.setFocusPolicy(Qt.NoFocus)  # type: ignore
 
         self.publish_time_group = QButtonGroup(parent)
         self.publish_time_group.addButton(self.radio_now)
@@ -1250,13 +1250,10 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         if getattr(self, '_is_validating_time', False):
             return
             
-        current_date = self.date_picker.date
-        current_time = self.time_picker.time
-        
-        if not current_date.isValid() or not current_time.isValid():
+        if not self.date_picker.date.isValid() or not self.time_picker.time.isValid():  # type: ignore
             return
             
-        selected_dt = QDateTime(current_date, current_time)
+        selected_dt = QDateTime(self.date_picker.date, self.time_picker.time)  # type: ignore
         now = QDateTime.currentDateTime()
         min_dt = now.addSecs(SCHEDULE_MIN_LEAD_SECS)
         max_dt = now.addDays(15)        # +15 days
@@ -1383,7 +1380,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
     async def _load_accounts_async(self, platform='douyin'):
         """异步加载账号"""
         try:
-            accounts = await self.account_manager.get_accounts(platform=platform)
+            accounts = await self.account_manager.get_accounts(platform=platform)  # type: ignore
             
             if not accounts:
                 return
@@ -1552,7 +1549,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
 
     def _on_auto_match_video_switch_changed(self, checked: bool) -> None:
         """视频库自动匹配开关：与「添加视频」互斥，并触发一次匹配或清除自动路径。"""
-        save_persisted_single_auto_match_video_library(bool(checked))
+        save_persisted_single_auto_match_video_library(checked)
         if self._is_image_mode:
             return
         if checked:
@@ -1729,7 +1726,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
 
     def _on_copywriting_auto_switch_changed(self, checked: bool) -> None:
         """自动匹配总开关。"""
-        save_persisted_single_auto_match_copywriting(bool(checked))
+        save_persisted_single_auto_match_copywriting(checked)
         self._update_copywriting_ui_visibility()
         if checked:
             self._schedule_apply_copywriting_from_library()
@@ -1739,14 +1736,14 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         mode = self._copywriting_mode_combo.itemData(index) or CopywritingMatchMode.STANDARD
         save_persisted_single_copywriting_match_mode(mode)
         self._update_copywriting_ui_visibility()
-        if self._copywriting_auto_switch.isChecked():
+        if self._copywriting_auto_switch.isChecked():  # type: ignore
             self._schedule_apply_copywriting_from_library()
 
     def _on_copywriting_category_changed(self, index: int):
         """随机分类变更。"""
         cat_id = self._copywriting_category_combo.itemData(index)
         save_persisted_single_copywriting_random_category(cat_id)
-        if self._copywriting_auto_switch.isChecked():
+        if self._copywriting_auto_switch.isChecked():  # type: ignore
             self._schedule_apply_copywriting_from_library()
 
     def _get_current_copywriting_mode(self) -> str:
@@ -2189,7 +2186,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         ratio = self.devicePixelRatio()
         target_w = int(280 * ratio)
         target_h = int(280 * ratio)
-        scaled_pixmap = pixmap.scaled(target_w, target_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        scaled_pixmap = pixmap.scaled(target_w, target_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)  # type: ignore
         scaled_pixmap.setDevicePixelRatio(ratio)
         self.preview_label.setStyleSheet("background-color: transparent; border: none; border-radius: 12px;")
         self.preview_label.setPixmap(scaled_pixmap)
@@ -2246,8 +2243,8 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         """添加到发布列表（操作前需登录）"""
         if not self._current_user_svc.is_logged_in():
             try:
-                from ..dialogs.login_dialog import LoginDialog
-                from qfluentwidgets import InfoBar
+                from src.ui.dialogs.login_dialog import LoginDialog
+                from qfluentwidgets import InfoBar, InfoBarPosition
                 dialog = LoginDialog(self)
                 dialog.login_success.connect(self._refresh_user_id)
                 if not dialog.exec():
@@ -2255,7 +2252,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
                     return
                 self._refresh_user_id()
             except Exception as e:
-                from qfluentwidgets import InfoBar
+                from qfluentwidgets import InfoBar, InfoBarPosition
                 InfoBar.warning("请先登录", "发布前需要登录", parent=self, position=InfoBarPosition.TOP)
                 return
         if not self.selected_file_path:
@@ -2301,12 +2298,34 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             from src.ui.utils.fluent_dialogs import show_warning
             show_warning(self, "错误", "所选账号组为空")
             return
+
+        # 视频号图文发布必须填写作品标题
+        if self._is_image_mode:
+            _has_wechat = any(
+                (acc.get("platform") or "").strip() == "wechat_video"
+                for acc in target_accounts
+            )
+            if _has_wechat:
+                _title_edit = getattr(self, "title_edit", None)
+                _title_text = _title_edit.text().strip() if _title_edit else ""
+                if not _title_text:
+                    from qfluentwidgets import InfoBar, InfoBarPosition
+                    InfoBar.warning(
+                        "作品标题必填",
+                        "所选发布对象包含视频号账号，图文发布必须填写「作品标题」，"
+                        "请在「作品描述」区域填写标题后再生成任务。",
+                        parent=self,
+                        position=InfoBarPosition.TOP,
+                        duration=6000,
+                    )
+                    return
+
         # Pro 平台必须先登录才可使用
         from src.utils.pro_platforms import is_pro_platform
         has_pro_platform = any(is_pro_platform(acc.get("platform", "")) for acc in target_accounts)
         if has_pro_platform and not self._current_user_svc.is_logged_in():
             try:
-                from ..dialogs.login_dialog import LoginDialog
+                from src.ui.dialogs.login_dialog import LoginDialog
                 from qfluentwidgets import InfoBar
                 dialog = LoginDialog(self)
                 dialog.login_success.connect(self._refresh_user_id)
@@ -2325,7 +2344,7 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         
         # 获取发布信息：描述=全文（含 #话题）；话题仅从描述中解析（#关键词 后跟空格才确认，与抖音一致）；标题不再用文件名回填
         title = (self.title_edit.text() or "").strip()
-        description = self.desc_edit.toPlainText() if hasattr(self.desc_edit, 'toPlainText') else self.desc_edit.text()
+        description = self.desc_edit.toPlainText() if hasattr(self.desc_edit, 'toPlainText') else getattr(self.desc_edit, 'text', lambda: "")()
         tags = parse_topic_list(description)
 
         from src.ui.pages.publish.publish_validators import wechat_video_short_title_validation_error
@@ -2455,10 +2474,12 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
                 is_schedule = self.schedule_checkbox.isChecked()
                 
             if is_schedule:
-                date = self.date_picker.date
-                time = self.time_picker.time
-                dt = QDateTime(date, time)
-                scheduled_time = dt.toString("yyyy-MM-dd HH:mm")  # st_str 格式
+                if self.time_picker.time.isValid():  # type: ignore
+                    # 已修改时间
+                    dt = QDateTime(
+                        self.date_picker.date, self.time_picker.time  # type: ignore
+                    )
+                    scheduled_time = dt.toString("yyyy-MM-dd HH:mm")  # st_str 格式
 
             # 获取封面路径
             cover_path = None

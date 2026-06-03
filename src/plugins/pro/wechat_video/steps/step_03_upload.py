@@ -98,12 +98,22 @@ class UploadMediaStep(BasePublishStep):
 
     @staticmethod
     def _split_image_file_paths(file_path: str) -> List[str]:
-        """Image tasks pass comma-separated paths; Playwright needs list[str]."""
-        return [
-            item.strip().strip('"')
-            for item in str(file_path or "").split(",")
-            if item.strip()
-        ]
+        """Image tasks pass comma-separated paths; Playwright needs list[str].
+
+        格式说明：
+          - 第一项可能以 ``__FOLDER__:`` 为前缀，表示文件夹路径（非图片文件），需过滤。
+          - 其余各项为实际图片文件路径，直接传给 Playwright set_input_files。
+        """
+        result = []
+        for item in (file_path or "").split(","):
+            item = item.strip().strip('"')
+            if not item:
+                continue
+            # 过滤文件夹路径标记，该项不是实际图片文件路径
+            if item.startswith("__FOLDER__:"):
+                continue
+            result.append(item)
+        return result
 
     async def _ensure_on_create_page(self, page: Page, file_type: str) -> bool:
         """校验当前是否在发布创建页；若页面意外跳转则尝试重新导航。
@@ -136,17 +146,56 @@ class UploadMediaStep(BasePublishStep):
         return False
 
     async def _upload_image_files(self, page: Page, image_files: List[str]) -> bool:
-        """Use the confirmed image upload input inside the wujie shadow app."""
+        """Use the confirmed image upload input inside the wujie shadow app.
+
+        上传策略：
+          1. 优先通过 Playwright locator 链式穿透 Shadow DOM 找到 file input（快速路径）
+          2. 若 locator 超时/失败，退而通过 JavaScript evaluate_handle 在 Shadow DOM
+             内查找 file input，避免 Playwright CSS 选择器无法穿透 closed shadow 的问题
+        """
+        # --- 策略1：Playwright 链式 locator 穿透 open Shadow DOM ---
         try:
-            file_input = page.locator(
-                'wujie-app .post-edit-wrap.material-edit-wrap input[type="file"][accept*="image"]'
-            ).first
-            await file_input.wait_for(state="attached", timeout=15000)
+            # 使用链式 locator，Playwright 会自动穿透 open shadow DOM
+            file_input = (
+                page.locator("wujie-app")
+                .locator('input[type="file"][accept*="image"]')
+                .first
+            )
+            await file_input.wait_for(state="attached", timeout=8000)
             await file_input.set_input_files(image_files, timeout=30000)
-            logger.info("[视频号] 图文图片已写入上传控件: %s 张", len(image_files))
+            logger.info("[视频号] 图文图片已写入上传控件(locator路径): %s 张", len(image_files))
             return True
         except Exception as e:
-            logger.warning("[视频号] 图文图片上传控件 locator.set_input_files 失败: %s", e)
+            logger.warning("[视频号] locator 路径上传失败，尝试 JS Shadow DOM 路径: %s", e)
+
+        # --- 策略2：通过 JS 在 Shadow DOM 内找 file input，再用 ElementHandle 上传 ---
+        try:
+            handle = await page.evaluate_handle(
+                f"""() => {{
+                    const shadow = {WUJIE_SHADOW_ROOT_JS};
+                    if (!shadow) return null;
+                    // 优先在图文编辑区域内查找
+                    const scope = shadow.querySelector('.post-edit-wrap.material-edit-wrap') || shadow;
+                    const inputs = scope.querySelectorAll('input[type="file"]');
+                    for (const inp of inputs) {{
+                        const accept = (inp.getAttribute('accept') || '').toLowerCase();
+                        if (accept.includes('image') || accept.includes('.jpg') || accept.includes('.png') || accept.includes('*')) {{
+                            return inp;
+                        }}
+                    }}
+                    // 若 accept 条件未匹配，返回第一个 file input
+                    return inputs[0] || null;
+                }}"""
+            )
+            element = handle.as_element()
+            if element is None:
+                logger.warning("[视频号] JS Shadow DOM 路径：未找到 file input 元素")
+                return False
+            await element.set_input_files(image_files, timeout=30000)
+            logger.info("[视频号] 图文图片已写入上传控件(JS Shadow DOM路径): %s 张", len(image_files))
+            return True
+        except Exception as e:
+            logger.warning("[视频号] JS Shadow DOM 路径上传失败: %s", e)
             return False
 
     async def _wait_image_upload_success(self, page: Page, expected_count: int) -> bool:
@@ -259,7 +308,8 @@ class UploadMediaStep(BasePublishStep):
                             )
                         except Exception:
                             await upload_btn_l1.click()
-                    await fc_info.value.set_files(file_path)
+                    file_chooser = await fc_info.value
+                    await file_chooser.set_files(file_path)
                     uploaded = True
                     logger.info("[视频号] 通过 get_by_role(button, 上传…) + file chooser 上传成功")
                     break

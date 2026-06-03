@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "WeMediaBaby Browser Diagnostic Collector",
+  "version": "0.1.0",
+  "description": "Read-only browser environment diagnostics for publish environment comparison.",
+  "permissions": ["activeTab", "scripting", "cookies", "downloads"],
+  "host_permissions": [
+    "https://*.xiaohongshu.com/*",
+    "https://*.douyin.com/*",
+    "https://*.weixin.qq.com/*",
+    "https://channels.weixin.qq.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Browser Diagnostic"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
+

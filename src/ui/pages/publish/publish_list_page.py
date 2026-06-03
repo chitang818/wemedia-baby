@@ -152,6 +152,9 @@ class PublishListPage(PublishRecordsPage):
         # 发布失败提示（诊断弹窗 + InfoBar），页面不可见时挂起至 showEvent
         self._pending_publish_failure_notice: Optional[Dict[str, Any]] = None
 
+    def _use_pending_table_column_order(self) -> bool:
+        return True
+
     def _get_record_by_id(self, task_id: Any) -> Optional[Dict[str, Any]]:
         try:
             tid_int = int(task_id)

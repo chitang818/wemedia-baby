@@ -85,10 +85,12 @@ class PublishRecordTableView(TableView):
         success_page: bool = False,
         action_text: str = "编辑",
         recycle_page: bool = False,
+        pending_column_order: bool = False,
     ) -> None:
         super().__init__(parent)
         self._model = PublishRecordTableModel(self)
         self._recycle_page = bool(recycle_page)
+        self._pending_column_order = bool(pending_column_order)
         self._model.set_recycle_page(recycle_page)
         self._model.set_success_page(success_page)
         self._model.set_action_text(action_text)
@@ -121,7 +123,52 @@ class PublishRecordTableView(TableView):
         for col, width in widths.items():
             self.setColumnWidth(col, width)
         self._ensure_minimum_column_widths()
+        self._apply_column_visual_order()
         self.verticalHeader().setDefaultSectionSize(42)
+
+    def _apply_column_visual_order(self) -> None:
+        header = self.horizontalHeader()
+        order = (
+            self._pending_publish_visual_order()
+            if self._use_pending_visual_order()
+            else self._default_visual_order()
+        )
+        for visual_index, logical_index in enumerate(order):
+            current_visual = header.visualIndex(logical_index)
+            if current_visual != visual_index:
+                header.moveSection(current_visual, visual_index)
+
+    def _use_pending_visual_order(self) -> bool:
+        return bool(self._pending_column_order and not self._recycle_page)
+
+    @staticmethod
+    def _default_visual_order() -> list[int]:
+        return list(range(PublishRecordTableModel.COL_ACTION + 1))
+
+    @staticmethod
+    def _pending_publish_visual_order() -> list[int]:
+        m = PublishRecordTableModel
+        return [
+            m.COL_CREATE_TIME,
+            m.COL_TYPE,
+            m.COL_PLATFORM,
+            m.COL_ACCOUNT_GROUP,
+            m.COL_TASK_SOURCE,
+            m.COL_ACCOUNT_NAME,
+            m.COL_FILE,
+            m.COL_COVER,
+            m.COL_TITLE,
+            m.COL_DESCRIPTION,
+            m.COL_STATUS,
+            m.COL_ACTION,
+            m.COL_SCHEDULED_TIME,
+            m.COL_ORIGINAL,
+            m.COL_MUSIC,
+            m.COL_CART,
+            m.COL_GROUP_BUY,
+            m.COL_LOCATION,
+            m.COL_FILE_LOCATION,
+        ]
 
     @staticmethod
     def _table_font_metrics() -> QFontMetrics:

@@ -63,8 +63,6 @@ from src.infrastructure.common.media_assign_strategy import (
     save_assign_strategy,
 )
 from src.ui.utils.fluent_dialogs import show_warning, show_confirm
-from src.services.material.media_library_stats_cache import get_media_library_stats_cache
-from src.services.material.media_library_stats_service import get_media_library_stats_service
 
 logger = logging.getLogger(__name__)
 
@@ -164,13 +162,6 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
         self._table_ctx_target_image: Optional[_ImageFolderItem] = None
         self._assign_strategy: AssignStrategy = load_assign_strategy("library")
         self._usage_refresh_gen: int = 0
-        self._stats_cache = get_media_library_stats_cache()
-        self._stats_label = None
-        try:
-            self._stats_cache.statsUpdated.connect(self._on_stats_updated)
-        except Exception:
-            pass
-
     # ------------------------------------------------------------------ #
     #                           页面构建                                   #
     # ------------------------------------------------------------------ #
@@ -238,9 +229,6 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
         toolbar_layout.addWidget(BodyLabel("账号筛选", toolbar_card))
         toolbar_layout.addWidget(self.owner_filter)
         toolbar_layout.addWidget(self.btn_delete)
-        self._stats_label = BodyLabel("", toolbar_card)
-        self._stats_label.setToolTip("统计口径：被待发布任务引用即视为“已占用”（pending/failed/running）")
-        toolbar_layout.addWidget(self._stats_label)
         toolbar_layout.addStretch()
 
         # ---------- 表格 ----------
@@ -266,41 +254,6 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
         self.content_layout.addLayout(root_layout)
 
         self._refresh_async()
-        self._refresh_stats_async()
-
-    def _refresh_stats_async(self) -> None:
-        """触发全局媒体库统计刷新（异步，避免阻塞 UI）。"""
-        try:
-            self._create_tracked_task(
-                get_media_library_stats_service().refresh(),
-                name="image_library.refresh_stats",
-            )
-        except Exception:
-            return
-
-    def _format_stats_text(self, stats) -> str:
-        try:
-            all_counts = getattr(stats, "all_media", None)
-            if all_counts is None:
-                return "素材统计：—"
-            total = int(getattr(all_counts, "total", 0) or 0)
-            used = int(getattr(all_counts, "used", 0) or 0)
-            unused = int(getattr(all_counts, "unused", 0) or 0)
-            return f"素材统计：总 {total}｜已占用 {used}｜未占用 {unused}"
-        except Exception:
-            return "素材统计：—"
-
-    def _on_stats_updated(self, stats) -> None:
-        if not getattr(self, "_stats_label", None):
-            return
-        try:
-            self._stats_label.setText(self._format_stats_text(stats))
-            err = str(getattr(stats, "error", "") or "").strip()
-            if err:
-                self._stats_label.setToolTip(f"{self._stats_label.toolTip()}\n\n注意：{err}")
-        except Exception:
-            return
-
     # ------------------------------------------------------------------ #
     #                           表格填充                                   #
     # ------------------------------------------------------------------ #
@@ -848,8 +801,6 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
         if self._table and self._all_items:
             self._apply_filters()
         self._refresh_async()
-        self._refresh_stats_async()
-
     def _scan_image_items_fast(self) -> Tuple[List[_ImageFolderItem], Optional[str]]:
         """枚举图片库中的文件夹及其图片数量、总大小。"""
         root = MaterialLibraryManager.ensure_initialized()
@@ -1088,7 +1039,6 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
                     orient=Qt.Horizontal, isClosable=True, duration=5000,
                     position=InfoBarPosition.TOP, parent=self,
                 )
-                self._refresh_stats_async()
                 self._refresh_async()
             else:
                 InfoBar.info(

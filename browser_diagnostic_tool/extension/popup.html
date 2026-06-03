@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Browser Diagnostic</title>
+  <style>
+    body { width: 320px; font-family: system-ui, -apple-system, Segoe UI, sans-serif; margin: 12px; }
+    label { display: block; margin-top: 8px; font-size: 12px; color: #374151; }
+    input, select, button { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 7px; }
+    button { cursor: pointer; }
+    #status { margin-top: 10px; font-size: 12px; color: #4b5563; word-break: break-word; }
+  </style>
+</head>
+<body>
+  <label>Platform</label>
+  <select id="platform">
+    <option value="xiaohongshu">xiaohongshu</option>
+    <option value="douyin">douyin</option>
+    <option value="wechat_video">wechat_video</option>
+  </select>
+  <label>Mode</label>
+  <select id="mode">
+    <option value="local_manual">local_manual</option>
+    <option value="wmb_manual">wmb_manual</option>
+    <option value="wmb_auto">wmb_auto</option>
+  </select>
+  <label>Stage</label>
+  <select id="stage">
+    <option value="home_loaded">home_loaded</option>
+    <option value="login_observed">login_observed</option>
+    <option value="publish_page_loaded">publish_page_loaded</option>
+    <option value="before_upload">before_upload</option>
+    <option value="after_upload">after_upload</option>
+    <option value="pre_submit">pre_submit</option>
+    <option value="after_submit">after_submit</option>
+    <option value="success_observed">success_observed</option>
+    <option value="failure_observed">failure_observed</option>
+  </select>
+  <label>Test Run ID</label>
+  <input id="testRunId" placeholder="optional">
+  <button id="collect">Collect and download JSON</button>
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>
+

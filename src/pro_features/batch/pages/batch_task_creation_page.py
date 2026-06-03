@@ -3393,6 +3393,19 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             )
             return
 
+        # 视频号图文发布必须填写作品标题
+        if self._media_type == "image" and self._selected_targets_include_wechat_video():
+            if not (self.same_title_text or "").strip():
+                InfoBar.warning(
+                    "作品标题必填",
+                    "所选发布目标包含视频号账号，图文发布必须填写「作品标题」，"
+                    "请点击「作品描述」按钮填写标题后再添加到发布列表。",
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                    duration=6000,
+                )
+                return
+
         self.btn_publish.setEnabled(False)
         try:
             from src.domain.repositories.publish_record_repository_async import PublishRecordRepositoryAsync
