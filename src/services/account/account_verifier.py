@@ -120,6 +120,33 @@ class AccountVerifier:
                         except Exception as e:
                             self.logger.error(f"加载账号 {account_id} Cookie失败: {e}")
                             cookie_dict = None
+
+                        if account.get("platform") == "xiaohongshu":
+                            try:
+                                from src.services.account.xhs_profile_sync_service import XhsProfileSyncService
+
+                                sync_result = await XhsProfileSyncService(self.account_manager).sync_account(account_id)
+                                result["method"] = "xhs_profile_sync"
+                                result["error"] = sync_result.error
+                                result["username"] = sync_result.nickname
+                                if sync_result.profile_in_use:
+                                    result["error"] = sync_result.error or "该小红书账号浏览器仍在运行，请关闭后再刷新"
+                                    result["method"] = "xhs_profile_in_use"
+                                    result["is_valid"] = True
+                                    result["is_logged_in"] = account.get("login_status") == "online"
+                                else:
+                                    result["is_valid"] = sync_result.success
+                                    result["is_logged_in"] = sync_result.success
+                                account = None
+                                cookie_dict = None
+                            except Exception as e:
+                                result["error"] = f"小红书本地登录状态同步失败: {e}"
+                                result["is_valid"] = False
+                                result["is_logged_in"] = False
+                                result["method"] = "xhs_profile_sync"
+                                account = None
+                                cookie_dict = None
+                                self.logger.debug("小红书 Profile 同步失败: %s", e)
                     
                     if not cookie_dict and account:
                         result['error'] = 'Cookie文件不存在，请先双击打开该账号浏览器并登录后再刷新状态'

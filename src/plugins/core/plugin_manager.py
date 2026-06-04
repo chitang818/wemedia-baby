@@ -12,7 +12,7 @@
 import importlib
 import logging
 import os
-from typing import Dict, Optional, List, Tuple, Callable
+from typing import Dict, Optional, List, Tuple, Callable, Any
 
 from .interfaces.login_plugin import LoginPluginInterface
 from .interfaces.publish_plugin import PublishPluginInterface
@@ -25,7 +25,7 @@ PLUGIN_REGISTRY: List[Tuple[str, str, str, str, str]] = [
     ("douyin", "src.plugins.community.douyin.login_plugin", "DouyinLoginPlugin", "src.plugins.community.douyin.publish_plugin", "DouyinPublishPlugin"),
     ("kuaishou", "src.plugins.community.kuaishou.login_plugin", "KuaishouLoginPlugin", "src.plugins.community.kuaishou.publish_plugin", "KuaishouPublishPlugin"),
     ("wechat_video", "src.plugins.pro.wechat_video.login_plugin", "WechatVideoLoginPlugin", "src.plugins.pro.wechat_video.publish_plugin", "WechatVideoPublishPlugin"),
-    ("xiaohongshu", "src.plugins.pro.xiaohongshu.login_plugin", "XiaohongshuLoginPlugin", "src.plugins.pro.xiaohongshu.publish_plugin", "XiaohongshuPublishPlugin"),
+    # ("xiaohongshu", "src.plugins.pro.xiaohongshu.login_plugin", "XiaohongshuLoginPlugin", "src.plugins.pro.xiaohongshu.publish_plugin", "XiaohongshuPublishPlugin"),
     ("bilibili", "src.plugins.pro.bilibili.login_plugin", "BilibiliLoginPlugin", "src.plugins.pro.bilibili.publish_plugin", "BilibiliPublishPlugin"),
     ("weibo", "src.plugins.pro.weibo.login_plugin", "WeiboLoginPlugin", "src.plugins.pro.weibo.publish_plugin", "WeiboPublishPlugin"),
     ("toutiao", "src.plugins.pro.toutiao.login_plugin", "ToutiaoLoginPlugin", "src.plugins.pro.toutiao.publish_plugin", "ToutiaoPublishPlugin"),
@@ -35,9 +35,9 @@ PLUGIN_REGISTRY: List[Tuple[str, str, str, str, str]] = [
 ]
 
 
-def _make_factory(module_path: str, class_name: str) -> Callable[[], object]:
+def _make_factory(module_path: str, class_name: str) -> Callable[[], Any]:
     """返回一个无参可调用对象，调用时 import 指定模块并实例化指定类。"""
-    def factory() -> object:
+    def factory() -> Any:
         mod = importlib.import_module(module_path)
         return getattr(mod, class_name)()
     return factory
@@ -144,19 +144,19 @@ class PluginManager:
             logger.warning(f"加载视频号发布插件失败（可能未授权）: {e}")
 
         # --- 小红书 ---
-        try:
-            from src.plugins.pro.xiaohongshu.login_plugin import XiaohongshuLoginPlugin
-            cls._login_plugins["xiaohongshu"] = XiaohongshuLoginPlugin()
-            logger.debug("已加载插件: XiaohongshuLoginPlugin (xiaohongshu)")
-        except Exception as e:
-            logger.warning(f"加载小红书登录插件失败（可能未授权）: {e}")
+        # try:
+        #     from src.plugins.pro.xiaohongshu.login_plugin import XiaohongshuLoginPlugin
+        #     cls._login_plugins["xiaohongshu"] = XiaohongshuLoginPlugin()
+        #     logger.debug("已加载插件: XiaohongshuLoginPlugin (xiaohongshu)")
+        # except Exception as e:
+        #     logger.warning(f"加载小红书登录插件失败（可能未授权）: {e}")
 
-        try:
-            from src.plugins.pro.xiaohongshu.publish_plugin import XiaohongshuPublishPlugin
-            cls._publish_plugins["xiaohongshu"] = XiaohongshuPublishPlugin()
-            logger.debug("已加载插件: XiaohongshuPublishPlugin (xiaohongshu)")
-        except Exception as e:
-            logger.warning(f"加载小红书发布插件失败（可能未授权）: {e}")
+        # try:
+        #     from src.plugins.pro.xiaohongshu.publish_plugin import XiaohongshuPublishPlugin
+        #     cls._publish_plugins["xiaohongshu"] = XiaohongshuPublishPlugin()
+        #     logger.debug("已加载插件: XiaohongshuPublishPlugin (xiaohongshu)")
+        # except Exception as e:
+        #     logger.warning(f"加载小红书发布插件失败（可能未授权）: {e}")
 
         # --- 哔哩哔哩 ---
         try:

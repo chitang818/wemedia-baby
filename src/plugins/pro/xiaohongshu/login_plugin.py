@@ -31,6 +31,14 @@ _SESSION_COOKIES = {
 }
 
 
+def _has_creator_session_cookie(cookies: Dict[str, str]) -> bool:
+    return bool(set(cookies.keys()) & _SESSION_COOKIES)
+
+
+def _user_id_from_cookie(cookies: Dict[str, str]) -> Optional[str]:
+    return str(cookies.get("x-user-id-creator.xiaohongshu.com") or "").strip() or None
+
+
 class XiaohongshuLoginPlugin(LoginPluginInterface):
     """小红书登录插件 — 基于创作者服务平台 (creator.xiaohongshu.com) 实际 DOM。"""
 
@@ -260,6 +268,8 @@ class XiaohongshuLoginPlugin(LoginPluginInterface):
 
         使用 X-Ray 确认的 API: /api/galaxy/creator/home/personal_info
         """
+        has_session_cookie = _has_creator_session_cookie(cookies)
+        user_id = _user_id_from_cookie(cookies)
         cookie_str = "; ".join([f"{k}={v}" for k, v in cookies.items()])
         headers = {
             "User-Agent": user_agent
@@ -282,7 +292,18 @@ class XiaohongshuLoginPlugin(LoginPluginInterface):
                     if ok:
                         user_info = data.get("data", {})
                         nickname = user_info.get("nickname") or user_info.get("name")
-                        return LoginResult(success=True, nickname=nickname)
+                        return LoginResult(success=True, nickname=nickname, user_id=user_id)
+                    if has_session_cookie:
+                        logger.warning(
+                            "[%s] personal_info API 返回非成功状态，但检测到创作者会话 Cookie，按已登录处理: %s",
+                            self.platform_name,
+                            data.get("msg", "unknown"),
+                        )
+                        return LoginResult(
+                            success=True,
+                            user_id=user_id,
+                            error_message=f"HTTP 验证未取到昵称: {data.get('msg', 'unknown')}",
+                        )
                     return LoginResult(
                         success=False,
                         error_message=f"API 返回非成功状态: {data.get('msg', 'unknown')}",
@@ -292,12 +313,26 @@ class XiaohongshuLoginPlugin(LoginPluginInterface):
                         success=False,
                         error_message="Cookie 已失效（HTTP 401/403）",
                     )
-                return LoginResult(
-                    success=False,
-                    error_message=f"HTTP 验证失败: 状态码 {response.status}",
-                )
+                if has_session_cookie:
+                    logger.warning(
+                        "[%s] HTTP 验证返回 %s，但检测到创作者会话 Cookie，按已登录处理",
+                        self.platform_name,
+                        response.status,
+                    )
+                    return LoginResult(
+                        success=True,
+                        user_id=user_id,
+                        error_message=f"HTTP 验证未取到昵称: 状态码 {response.status}",
+                    )
+                return LoginResult(success=False, error_message=f"HTTP 验证失败: 状态码 {response.status}")
         except Exception as e:
             logger.debug(f"[{self.platform_name}] HTTP Cookie 验证异常: {e}")
+            if has_session_cookie:
+                return LoginResult(
+                    success=True,
+                    user_id=user_id,
+                    error_message=f"HTTP 验证异常，已根据会话 Cookie 判定在线: {str(e)}",
+                )
             return LoginResult(
                 success=False,
                 error_message=f"HTTP 验证异常: {str(e)}",

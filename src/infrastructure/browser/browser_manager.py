@@ -414,7 +414,10 @@ class UndetectedBrowserManager:
 
             # 启动前主动清理残留进程：防止上一次任务的 Chrome 进程还锁着 user_data_dir，
             # 导致新 Chrome 因"另一个程序正在使用此文件"而立即退出（TargetClosedError）
-            await self._force_kill_browser_process()
+            if publishing and self.platform == "xiaohongshu":
+                logger.info("[BrowserManager] 小红书发布模式跳过启动前强杀同 Profile Chrome 进程")
+            else:
+                await self._force_kill_browser_process()
 
             # 启动前修正 Local State 退出类型，防止 Chrome 检测到上次异常退出后弹出「要恢复页面吗？」InfoBar
             await asyncio.to_thread(self._reset_chrome_exit_type, self.user_data_dir)

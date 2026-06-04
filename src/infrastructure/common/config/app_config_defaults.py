@@ -57,6 +57,10 @@ from src.infrastructure.common.config.app_config_keys import (
     START_IN_TRAY_NEXT_LAUNCH,
     UI_PAGE_ANIMATION_REDUCED,
     UI_STARTUP_PRELOADS,
+    XIAOHONGSHU_AUTO_CLICK_SUBMIT_HIGH_RISK,
+    XIAOHONGSHU_LOGIN_BROWSER_MODE,
+    XIAOHONGSHU_LOGIN_BROWSER_MODE_DETACHED_CHROME,
+    XIAOHONGSHU_SYNC_AFTER_DETACHED_CLOSE,
 )
 
 # 须与 src.utils.plugin_settings.get_default_enabled_platform_ids 默认返回值保持一致
@@ -81,6 +85,9 @@ def default_app_config_skeleton() -> Dict[str, Any]:
         PUBLISH_FORCE_VISIBLE_BROWSER: True,
         PUBLISH_RESPECT_PLATFORM_INTERVAL: True,
         PUBLISH_STOP_ON_RISK_PROMPT: True,
+        XIAOHONGSHU_LOGIN_BROWSER_MODE: XIAOHONGSHU_LOGIN_BROWSER_MODE_DETACHED_CHROME,
+        XIAOHONGSHU_SYNC_AFTER_DETACHED_CLOSE: True,
+        XIAOHONGSHU_AUTO_CLICK_SUBMIT_HIGH_RISK: True,
         "minimize_to_tray": True,
         START_IN_TRAY_NEXT_LAUNCH: False,
         # 新版主窗口关闭行为默认：每次询问

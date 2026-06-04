@@ -27,6 +27,10 @@ from src.infrastructure.common.config.app_config_keys import (
     PUBLISH_FORCE_VISIBLE_BROWSER,
     PUBLISH_RESPECT_PLATFORM_INTERVAL,
     PUBLISH_STOP_ON_RISK_PROMPT,
+    XIAOHONGSHU_AUTO_CLICK_SUBMIT_HIGH_RISK,
+    XIAOHONGSHU_LOGIN_BROWSER_MODE,
+    XIAOHONGSHU_LOGIN_BROWSER_MODE_DETACHED_CHROME,
+    XIAOHONGSHU_SYNC_AFTER_DETACHED_CLOSE,
 )
 from src.infrastructure.common.config.config_center import ConfigCenter
 
@@ -43,6 +47,9 @@ def test_apply_defaults_fills_only_missing_keys():
     assert cfg[PUBLISH_FORCE_VISIBLE_BROWSER] is True
     assert cfg[PUBLISH_RESPECT_PLATFORM_INTERVAL] is True
     assert cfg[PUBLISH_STOP_ON_RISK_PROMPT] is True
+    assert cfg[XIAOHONGSHU_LOGIN_BROWSER_MODE] == XIAOHONGSHU_LOGIN_BROWSER_MODE_DETACHED_CHROME
+    assert cfg[XIAOHONGSHU_SYNC_AFTER_DETACHED_CLOSE] is True
+    assert cfg[XIAOHONGSHU_AUTO_CLICK_SUBMIT_HIGH_RISK] is True
     assert KEY_BATCH_PUBLISH in cfg
     assert cfg[KEY_BATCH_PUBLISH][BATCH_LOCATION] == {
         BATCH_LOCATION_POI_INFO: "",
@@ -70,6 +77,9 @@ def test_default_skeleton_has_expected_top_level_keys():
         PUBLISH_FORCE_VISIBLE_BROWSER,
         PUBLISH_RESPECT_PLATFORM_INTERVAL,
         PUBLISH_STOP_ON_RISK_PROMPT,
+        XIAOHONGSHU_LOGIN_BROWSER_MODE,
+        XIAOHONGSHU_SYNC_AFTER_DETACHED_CLOSE,
+        XIAOHONGSHU_AUTO_CLICK_SUBMIT_HIGH_RISK,
         "minimize_to_tray",
         START_IN_TRAY_NEXT_LAUNCH,
         MAIN_WINDOW_CLOSE_BEHAVIOR,

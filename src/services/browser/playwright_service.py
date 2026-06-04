@@ -301,6 +301,26 @@ class PlaywrightBrowserService(QObject):
             return None
         logger.info(f"模块化开浏览器: account_id={account_id}, 用户名={platform_username}, 平台={platform}, headless={headless}")
 
+        if publish_mode and (platform or "").strip().lower() == "xiaohongshu":
+            from src.infrastructure.browser.detached_chrome_launcher import DetachedChromeLauncher
+
+            user_data_dir = DetachedChromeLauncher.get_user_data_dir(
+                platform=platform,
+                platform_username=platform_username,
+                profile_folder_name=profile_folder_name,
+            )
+            blocking_pid = DetachedChromeLauncher.find_profile_process(user_data_dir)
+            if blocking_pid:
+                message = "该小红书账号的普通 Chrome 窗口仍在运行。请先关闭该账号浏览器，再启动自动发布。"
+                logger.warning(
+                    "阻止小红书发布浏览器启动：profile 正被普通 Chrome 占用 account_id=%s pid=%s profile=%s",
+                    account_id,
+                    blocking_pid,
+                    user_data_dir,
+                )
+                self.message_signal.emit("warning", "小红书浏览器未关闭", message)
+                raise RuntimeError(message)
+
         # 视频号：微信侧常见“单点登录/互踢”现象提醒
         # 现象：同时打开两个视频号账号窗口，后登录的账号可能导致先前窗口被要求重新登录（提示“当前账号在其他浏览器或设备登录”）。
         try:
@@ -637,6 +657,7 @@ class PlaywrightBrowserService(QObject):
             # 无头模式下没有环境标签需求，不调用 apply_browser_tab_layout
 
             new_wrapper = SimpleBrowserWrapper(browser_service, context, page)
+            new_wrapper.publish_mode = bool(publish_mode)
             self._active_browsers[account_id] = new_wrapper
             logger.info(f"✓ 浏览器实例已存储: account_id={account_id}, total_browsers={len(self._active_browsers)}")
             # pw_browser_instance 仅用于「新账号添加」流程的临时句柄；已有账号打开/发布等场景严禁覆盖它，
@@ -661,6 +682,14 @@ class PlaywrightBrowserService(QObject):
             
             # 5. 发送启动成功信号 -> UI层响应此信号来弹出 Dialog
             self.browser_launched.emit(account_id, platform_username, platform, is_new_account)
+
+            if publish_mode:
+                logger.info(
+                    "发布模式浏览器已启动，跳过账号页登录监听和早期 Cookie 同步: account_id=%s platform=%s",
+                    account_id,
+                    platform,
+                )
+                return
             
             # 6. 启动对应的监听任务
             if is_new_account:
@@ -1041,6 +1070,24 @@ class PlaywrightBrowserService(QObject):
                 return
             account = await self.account_manager.get_account_by_id(int(account_id))
             if not account:
+                return
+            browser = self._active_browsers.get(account_id)
+            if (
+                browser is not None
+                and getattr(browser, "publish_mode", False)
+                and (account.get("platform") or "").strip().lower() == "xiaohongshu"
+            ):
+                ctx = getattr(browser, "context", None)
+                if ctx is not None and _browser_context_usable(ctx):
+                    cookies_raw = await ctx.cookies()
+                    cookie_dict = {
+                        c["name"]: c["value"]
+                        for c in (cookies_raw or [])
+                        if c.get("name") and c.get("value") is not None
+                    }
+                    if cookie_dict:
+                        await self.account_manager.update_cookie(int(account_id), cookie_dict)
+                        logger.info("小红书发布浏览器关闭前已同步 Cookie: account_id=%s", account_id)
                 return
             await self.update_account_from_browser(
                 account_id,
@@ -1981,6 +2028,7 @@ class SimpleBrowserWrapper:
         self.browser_manager = service  # 兼容发布执行器等调用方
         self.context = context
         self.page = page
+        self.publish_mode = False
     async def close(self):
         if hasattr(self.service, 'close'): await self.service.close()
         elif hasattr(self.service, 'stop'): await self.service.stop()

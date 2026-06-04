@@ -298,7 +298,7 @@ class SettingsPage(BasePage):
         )
         
         self.browser_scheme_combo = ComboBox(self.browser_scheme_card)
-        self.browser_scheme_combo.addItems(["Playwright (本地 Chrome)"])
+        self.browser_scheme_combo.addItems(["Patchright (本地 Chrome)"])
         self.browser_scheme_combo.setMinimumWidth(250)
         self.browser_scheme_combo.setEnabled(False)
         self.browser_scheme_combo.setCurrentIndex(0)

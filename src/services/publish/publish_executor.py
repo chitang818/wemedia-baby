@@ -139,12 +139,15 @@ class PublishExecutor:
                     headless = False
                 
                 # Step 3: 复用模块化方法打开浏览器（headless 与发布页「显示浏览器」勾选一致）
-                browser_wrapper = await pw_service.open_browser_for_db_account(
-                    account_db_id,
-                    headless=headless,
-                    maximize_for_publish=True,
-                    publish_mode=True,
-                )
+                try:
+                    browser_wrapper = await pw_service.open_browser_for_db_account(
+                        account_db_id,
+                        headless=headless,
+                        maximize_for_publish=True,
+                        publish_mode=True,
+                    )
+                except RuntimeError as e:
+                    return PublishResult(success=False, error_message=str(e))
                 if not browser_wrapper or not browser_wrapper.context:
                     return PublishResult(success=False, error_message="未能正确拉起或获取浏览器组件实例")
                     

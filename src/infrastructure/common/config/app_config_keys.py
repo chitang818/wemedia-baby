@@ -19,6 +19,10 @@ BROWSER_TRUST_MODE_COMPAT_STEALTH = "compat_stealth"
 PUBLISH_FORCE_VISIBLE_BROWSER = "publish_force_visible_browser"
 PUBLISH_RESPECT_PLATFORM_INTERVAL = "publish_respect_platform_interval"
 PUBLISH_STOP_ON_RISK_PROMPT = "publish_stop_on_risk_prompt"
+XIAOHONGSHU_LOGIN_BROWSER_MODE = "xiaohongshu_login_browser_mode"
+XIAOHONGSHU_LOGIN_BROWSER_MODE_DETACHED_CHROME = "detached_chrome"
+XIAOHONGSHU_SYNC_AFTER_DETACHED_CLOSE = "xiaohongshu_sync_after_detached_close"
+XIAOHONGSHU_AUTO_CLICK_SUBMIT_HIGH_RISK = "xiaohongshu_auto_click_submit_high_risk"
 
 # publish_diagnostics
 PUBLISH_DIAGNOSTICS_ENABLED = "enabled"

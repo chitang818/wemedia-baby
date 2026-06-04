@@ -97,3 +97,32 @@ async def test_extract_nickname_falls_back_to_http_verification(monkeypatch):
     assert calls["platform"] == "xiaohongshu"
     assert calls["account_id"] == 21
     assert calls["timeout"] == 12
+
+
+@pytest.mark.asyncio
+async def test_xhs_publish_blocks_when_detached_chrome_profile_is_running(monkeypatch, tmp_path):
+    class FakeAccountManager:
+        async def get_account_by_id(self, account_id):
+            return {
+                "id": account_id,
+                "platform": "xiaohongshu",
+                "platform_username": "xhs_user",
+                "profile_folder_name": "profile_xhs",
+            }
+
+        async def ensure_account_has_profile_folder(self, account_id):
+            return True
+
+    service = PlaywrightBrowserService(FakeAccountManager())
+
+    monkeypatch.setattr(
+        "src.infrastructure.browser.detached_chrome_launcher.DetachedChromeLauncher.get_user_data_dir",
+        lambda **kwargs: tmp_path,
+    )
+    monkeypatch.setattr(
+        "src.infrastructure.browser.detached_chrome_launcher.DetachedChromeLauncher.find_profile_process",
+        lambda _path: 12345,
+    )
+
+    with pytest.raises(RuntimeError, match="普通 Chrome 窗口仍在运行"):
+        await service.open_browser_for_db_account(1, publish_mode=True)

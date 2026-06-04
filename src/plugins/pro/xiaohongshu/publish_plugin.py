@@ -24,6 +24,7 @@ from typing import List, Dict, Any
 from playwright.async_api import Page
 
 from src.infrastructure.common.bundled_config import load_platform_bundle
+from src.infrastructure.common.config.app_config_keys import XIAOHONGSHU_AUTO_CLICK_SUBMIT_HIGH_RISK
 from src.plugins.core.interfaces.publish_plugin import (
     PublishPluginInterface,
     PublishResult,
@@ -184,7 +185,7 @@ class XiaohongshuPublishPlugin(PublishPluginInterface):
             auto_click_submit = bool(
                 metadata.get(
                     "xhs_auto_click_submit",
-                    app_cfg.get("xiaohongshu_auto_click_submit_high_risk", False),
+                    app_cfg.get(XIAOHONGSHU_AUTO_CLICK_SUBMIT_HIGH_RISK, True),
                 )
             )
             metadata_for_runner = {

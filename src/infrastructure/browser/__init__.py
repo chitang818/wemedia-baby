@@ -7,6 +7,7 @@ from .browser_manager import UndetectedBrowserManager
 from .browser_factory import BrowserFactory
 from .profile_manager import ProfileManager
 from .process_supervisor import ProcessSupervisor
+from .detached_chrome_launcher import DetachedChromeLauncher, DetachedChromeLaunchResult
 
 # 保留旧类以兼容现有代码
 from .undetected_playwright_browser import UndetectedPlaywrightBrowser
@@ -16,5 +17,7 @@ __all__ = [
     "BrowserFactory",
     "ProfileManager",
     "ProcessSupervisor",
+    "DetachedChromeLauncher",
+    "DetachedChromeLaunchResult",
     "UndetectedPlaywrightBrowser",  # 兼容
 ]

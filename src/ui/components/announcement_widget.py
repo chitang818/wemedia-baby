@@ -43,7 +43,7 @@ DEFAULT_ANNOUNCEMENTS = [
     {
         "icon": FluentIcon.VIDEO,
         "title": "平台与插件说明",
-        "content": "软件内测期间支持插件有限，目前抖音、快手、视频号、小红书这四个平台的视频和图文发布已经可以使用，其他平台及功能逐步在完善中……",
+        "content": "软件内测期间支持插件有限，目前抖音、快手、视频号这三个平台的视频和图文发布已经可以使用，其他平台及功能逐步在完善中……",
         "content_color_light": "#FF4D4F",
         "content_color_dark": "#FF7875",
         "color": "#138496",
@@ -60,7 +60,7 @@ _52POJIE_ANNOUNCEMENTS = [
     {
         "icon": FluentIcon.VIDEO,
         "title": "平台与插件说明",
-        "content": "软件内测期间支持插件有限，目前抖音、快手、视频号、小红书这四个平台的视频和图文发布已经可以使用，其他平台及功能逐步在完善中……",
+        "content": "软件内测期间支持插件有限，目前抖音、快手、视频号这三个平台的视频和图文发布已经可以使用，其他平台及功能逐步在完善中……",
         "content_color_light": "#FF4D4F",
         "content_color_dark": "#FF7875",
         "color": "#138496",

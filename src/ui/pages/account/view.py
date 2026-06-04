@@ -895,6 +895,13 @@ class AccountPage(BasePage):
                 # 2. 刷新列表，用户立即看到「待登录」行
                 self._schedule_reload()
 
+                if self._should_use_detached_xhs_login(platform):
+                    await self._open_detached_xhs_browser_for_account(
+                        int(account_id),
+                        login_page=True,
+                    )
+                    return
+
                 # 3. 定义登录成功后的更新回调（列表刷新由 update_* 触发的 EventBus + account_*_updated 信号统一防抖处理，此处不再重复 _schedule_reload）
                 async def on_login_detected(acc_id, nickname, plat, cookies, profile_name):
                     await self.account_manager.update_account_after_login(acc_id, nickname, cookies)  # type: ignore
@@ -1346,13 +1353,12 @@ class AccountPage(BasePage):
         self._show_error(error_msg)
     
     def _open_playwright_browser_for_account(self, account_id: int, **kwargs):
-        """使用 Playwright 服务打开本地浏览器（唯一方案）；kwargs 兼容发布页调用，仅使用 account_id。"""
+        """打开账号浏览器；小红书账号页使用普通 Chrome，其它平台保持 Playwright。"""
         if not hasattr(self, 'playwright_service') or self.playwright_service is None:
             logger.error("Playwright service not initialized")
             InfoBar.error(title="错误", content="浏览器服务未初始化", parent=self)
             return
-        import asyncio
-        task = self._run_bg_task(self.playwright_service.open_browser_for_db_account(account_id))
+        task = self._run_bg_task(self._open_account_browser_dispatch(account_id))
 
         def _on_done(t):
             try:
@@ -1368,6 +1374,178 @@ class AccountPage(BasePage):
             except Exception:
                 pass
         task.add_done_callback(_on_done)  # type: ignore
+
+    def _should_use_detached_xhs_login(self, platform: str) -> bool:
+        if (platform or "").strip().lower() != "xiaohongshu":
+            return False
+        try:
+            from src.infrastructure.common.config.app_config_keys import (
+                XIAOHONGSHU_LOGIN_BROWSER_MODE,
+                XIAOHONGSHU_LOGIN_BROWSER_MODE_DETACHED_CHROME,
+            )
+            from src.infrastructure.common.config.app_config_merge import get_app_config_for_read
+
+            mode = str(
+                get_app_config_for_read().get(
+                    XIAOHONGSHU_LOGIN_BROWSER_MODE,
+                    XIAOHONGSHU_LOGIN_BROWSER_MODE_DETACHED_CHROME,
+                )
+            ).strip()
+            return mode == XIAOHONGSHU_LOGIN_BROWSER_MODE_DETACHED_CHROME
+        except Exception:
+            return True
+
+    async def _open_account_browser_dispatch(self, account_id: int) -> None:
+        if not self.account_manager:
+            raise RuntimeError("账号管理器未初始化")
+        account = await self.account_manager.get_account_by_id(account_id)
+        platform = (account or {}).get("platform") or ""
+        if account and self._should_use_detached_xhs_login(platform):
+            await self._open_detached_xhs_browser_for_account(account_id, account=account)
+            return
+        await self.playwright_service.open_browser_for_db_account(account_id)
+
+    async def _open_detached_xhs_browser_for_account(
+        self,
+        account_id: int,
+        *,
+        account: Optional[Dict[str, Any]] = None,
+        login_page: bool = False,
+    ) -> None:
+        if not self.account_manager:
+            raise RuntimeError("账号管理器未初始化")
+        from src.infrastructure.browser.detached_chrome_launcher import DetachedChromeLauncher
+        from src.plugins.core.plugin_manager import PluginManager
+
+        await self.account_manager.ensure_account_has_profile_folder(account_id)  # type: ignore
+        account = account or await self.account_manager.get_account_by_id(account_id)  # type: ignore
+        if not account:
+            raise RuntimeError(f"账号不存在: {account_id}")
+
+        platform = account.get("platform") or ""
+        username = account.get("platform_username") or f"账号 #{account_id}"
+        profile_folder_name = (account.get("profile_folder_name") or "").strip()
+        if not profile_folder_name:
+            raise RuntimeError("该账号缺少数据目录绑定，无法打开普通 Chrome")
+
+        url = "https://creator.xiaohongshu.com/new/home"
+        try:
+            plugin = PluginManager.get_login_plugin("xiaohongshu")
+            plugin_url = (
+                getattr(plugin, "login_url", None)
+                if login_page
+                else getattr(plugin, "creator_home_url", None)
+            )
+            if plugin_url:
+                url = plugin_url
+        except Exception as e:
+            logger.warning("获取小红书登录地址失败，使用默认创作者中心地址: %s", e)
+
+        result = await asyncio.to_thread(
+            DetachedChromeLauncher.launch,
+            account_id=account_id,
+            platform=platform,
+            platform_username=username,
+            profile_folder_name=profile_folder_name,
+            url=url,
+        )
+        if result.already_running:
+            InfoBar.info(
+                "小红书浏览器已打开",
+                "该账号的普通 Chrome 窗口已在运行，请查看任务栏。关闭后软件会同步登录状态。",
+                parent=self,
+                duration=4000,
+            )
+        else:
+            InfoBar.success(
+                "已打开普通 Chrome",
+                "请在 Chrome 中完成小红书登录或账号维护；关闭窗口后软件会同步登录状态。",
+                parent=self,
+                duration=5000,
+            )
+        self._watch_detached_xhs_close(result)
+
+    def _watch_detached_xhs_close(self, launch_result) -> None:
+        account_id = str(getattr(launch_result, "account_id", ""))
+        if not account_id:
+            return
+        watching = getattr(self, "_detached_xhs_watch_accounts", None)
+        if watching is None:
+            watching = set()
+            self._detached_xhs_watch_accounts = watching
+        if account_id in watching:
+            return
+        watching.add(account_id)
+
+        async def _watch_and_sync():
+            try:
+                pid = getattr(launch_result, "pid", None)
+                if pid:
+                    import psutil
+
+                    def _wait_pid_exit() -> None:
+                        try:
+                            psutil.Process(int(pid)).wait()
+                        except psutil.NoSuchProcess:
+                            return
+
+                    await asyncio.to_thread(_wait_pid_exit)
+
+                from src.infrastructure.browser.detached_chrome_launcher import DetachedChromeLauncher
+                from src.services.account.xhs_profile_sync_service import XhsProfileSyncService
+
+                user_data_dir = getattr(launch_result, "user_data_dir", "")
+                for _ in range(720):
+                    if not user_data_dir or not DetachedChromeLauncher.is_profile_in_use(user_data_dir):
+                        break
+                    await asyncio.sleep(1)
+
+                DetachedChromeLauncher.forget_account(account_id)
+                if not account_id.isdigit():
+                    return
+                try:
+                    from src.infrastructure.common.config.app_config_keys import XIAOHONGSHU_SYNC_AFTER_DETACHED_CLOSE
+                    from src.infrastructure.common.config.app_config_merge import get_app_config_for_read
+
+                    if not bool(get_app_config_for_read().get(XIAOHONGSHU_SYNC_AFTER_DETACHED_CLOSE, True)):
+                        return
+                except Exception:
+                    pass
+
+                result = await XhsProfileSyncService(self.account_manager).sync_account(int(account_id))
+                if result.success:
+                    if result.nickname:
+                        self.playwright_service.account_nickname_updated.emit(account_id, result.nickname)
+                    self.playwright_service.account_login_status_updated.emit(account_id)
+                    InfoBar.success(
+                        "小红书登录已同步",
+                        f"账号状态已更新为在线{f'：{result.nickname}' if result.nickname else ''}",
+                        parent=self,
+                        duration=4000,
+                    )
+                elif result.profile_in_use:
+                    InfoBar.warning("小红书同步等待", result.error or "请关闭 Chrome 后重试", parent=self, duration=5000)
+                else:
+                    self.playwright_service.account_login_status_updated.emit(account_id)
+                    InfoBar.warning(
+                        "小红书登录未同步",
+                        result.error or "未读取到有效登录状态",
+                        parent=self,
+                        duration=5000,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning("小红书普通 Chrome 关闭后同步失败: %s", e, exc_info=True)
+                InfoBar.warning("小红书同步失败", str(e), parent=self, duration=5000)
+            finally:
+                watching = getattr(self, "_detached_xhs_watch_accounts", set())
+                try:
+                    watching.discard(account_id)
+                except Exception:
+                    pass
+
+        self._run_bg_task(_watch_and_sync())
 
     def _get_cookie_domain(self, platform: str) -> str:
         """获取平台的Cookie域名

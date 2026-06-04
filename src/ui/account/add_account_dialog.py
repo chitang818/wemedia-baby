@@ -545,6 +545,27 @@ class AddAccountDialog:
     
     def __init__(self, parent=None):
         self.parent = parent
+
+    def _should_skip_fingerprint_config(self, platform_id: str) -> bool:
+        """小红书纯 Chrome 登录模式不配置 Playwright 浏览器指纹。"""
+        if (platform_id or "").strip().lower() != "xiaohongshu":
+            return False
+        try:
+            from src.infrastructure.common.config.app_config_keys import (
+                XIAOHONGSHU_LOGIN_BROWSER_MODE,
+                XIAOHONGSHU_LOGIN_BROWSER_MODE_DETACHED_CHROME,
+            )
+            from src.infrastructure.common.config.app_config_merge import get_app_config_for_read
+
+            mode = str(
+                get_app_config_for_read().get(
+                    XIAOHONGSHU_LOGIN_BROWSER_MODE,
+                    XIAOHONGSHU_LOGIN_BROWSER_MODE_DETACHED_CHROME,
+                )
+            ).strip()
+            return mode == XIAOHONGSHU_LOGIN_BROWSER_MODE_DETACHED_CHROME
+        except Exception:
+            return True
         
     def show(self) -> Optional[Dict[str, Any]]:
         """显示添加账号流程"""
@@ -563,14 +584,18 @@ class AddAccountDialog:
         if not config:
             return None
         
-        # 第二步：配置指纹
-        from .fingerprint_config_dialog import FingerprintConfigMessageBox
-        step2 = FingerprintConfigMessageBox(self.parent)
-        if not step2.exec():
-            # 用户点击"上一步",返回第一步
-            return self.show()  # 递归调用重新开始
-        
-        fingerprint_config = step2.get_fingerprint_config()
+        fingerprint_config = None
+        if self._should_skip_fingerprint_config(platform_id):
+            logger.info("小红书纯 Chrome 登录模式，跳过浏览器指纹配置")
+        else:
+            # 第二步：配置指纹
+            from .fingerprint_config_dialog import FingerprintConfigMessageBox
+            step2 = FingerprintConfigMessageBox(self.parent)
+            if not step2.exec():
+                # 用户点击"上一步",返回第一步
+                return self.show()  # 递归调用重新开始
+
+            fingerprint_config = step2.get_fingerprint_config()
         
         # 返回结果
         return {
@@ -580,4 +605,3 @@ class AddAccountDialog:
             "platform_url": config["url"],
             "fingerprint_config": fingerprint_config  # 新增字段
         }
-

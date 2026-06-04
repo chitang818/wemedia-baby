@@ -125,7 +125,7 @@ class FeatureFlags:
         'batch_publish',             # 批量发布
         'scheduled_publish',         # 定时发布
         'kuaishou_platform',         # 快手平台
-        'xiaohongshu_platform',      # 小红书平台
+        # 'xiaohongshu_platform',      # 小红书平台
         'wechat_video_platform',     # 视频号平台
         'user_auth',                 # 用户认证
         'subscription',              # 订阅管理
@@ -142,7 +142,7 @@ class FeatureFlags:
     OPEN_SOURCE_PLATFORMS: Set[str] = {'douyin'}
     
     # Pro 平台列表
-    PRO_PLATFORMS: Set[str] = {'kuaishou', 'xiaohongshu', 'wechat_video'}
+    PRO_PLATFORMS: Set[str] = {'kuaishou', 'wechat_video'} # 'xiaohongshu'
     
     # 运行时状态
     _pro_licensed: bool = False
@@ -247,7 +247,7 @@ class FeatureFlags:
 class FeatureNotAvailableError(Exception):
     """功能不可用异常"""
     
-    def __init__(self, feature: str, message: str = None):
+    def __init__(self, feature: str, message: str | None = None):
         self.feature = feature
         self.message = message or f"功能 '{feature}' 需要 Pro 版本"
         super().__init__(self.message)
