@@ -129,7 +129,7 @@ class PublishRecordTableView(TableView):
     def _apply_column_visual_order(self) -> None:
         header = self.horizontalHeader()
         order = (
-            self._pending_publish_visual_order()
+            self._primary_action_visual_order()
             if self._use_pending_visual_order()
             else self._default_visual_order()
         )
@@ -139,17 +139,26 @@ class PublishRecordTableView(TableView):
                 header.moveSection(current_visual, visual_index)
 
     def _use_pending_visual_order(self) -> bool:
-        return bool(self._pending_column_order and not self._recycle_page)
+        return bool(self._pending_column_order)
 
     @staticmethod
     def _default_visual_order() -> list[int]:
         return list(range(PublishRecordTableModel.COL_ACTION + 1))
 
+    def _primary_action_visual_order(self) -> list[int]:
+        return (
+            self._recycle_primary_action_visual_order()
+            if self._recycle_page
+            else self._publish_primary_action_visual_order()
+        )
+
     @staticmethod
-    def _pending_publish_visual_order() -> list[int]:
+    def _publish_primary_action_visual_order() -> list[int]:
         m = PublishRecordTableModel
         return [
             m.COL_CREATE_TIME,
+            m.COL_STATUS,
+            m.COL_ACTION,
             m.COL_TYPE,
             m.COL_PLATFORM,
             m.COL_ACCOUNT_GROUP,
@@ -159,14 +168,37 @@ class PublishRecordTableView(TableView):
             m.COL_COVER,
             m.COL_TITLE,
             m.COL_DESCRIPTION,
-            m.COL_STATUS,
-            m.COL_ACTION,
             m.COL_SCHEDULED_TIME,
             m.COL_ORIGINAL,
             m.COL_MUSIC,
             m.COL_CART,
             m.COL_GROUP_BUY,
             m.COL_LOCATION,
+            m.COL_FILE_LOCATION,
+        ]
+
+    @staticmethod
+    def _recycle_primary_action_visual_order() -> list[int]:
+        m = PublishRecordTableModel
+        return [
+            m.COL_CREATE_TIME,
+            m.COL_LOCATION,
+            m.COL_ACTION,
+            m.COL_TYPE,
+            m.COL_PLATFORM,
+            m.COL_ACCOUNT_GROUP,
+            m.COL_TASK_SOURCE,
+            m.COL_ACCOUNT_NAME,
+            m.COL_FILE,
+            m.COL_COVER,
+            m.COL_TITLE,
+            m.COL_DESCRIPTION,
+            m.COL_SCHEDULED_TIME,
+            m.COL_ORIGINAL,
+            m.COL_MUSIC,
+            m.COL_CART,
+            m.COL_GROUP_BUY,
+            m.COL_STATUS,
             m.COL_FILE_LOCATION,
         ]
 

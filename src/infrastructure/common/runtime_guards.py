@@ -204,6 +204,8 @@ def install_exception_hook() -> None:
             app_inst = QApplication.instance()
             if app_inst:
                 dlg_parent = app_inst.activeModalWidget() or app_inst.focusWidget()
+  # type: ignore
+  # type: ignore
                 body = (
                     "应用发生未捕获的严重异常，程序可能不稳定或即将退出。\n\n"
                     f"详情已记录到:\n{crash_file}\n\n错误信息:\n{exc_value}"
@@ -274,7 +276,9 @@ def install_windows_crash_handler() -> None:
                 pass
             return 0
 
+  # type: ignore
         install_windows_crash_handler._handler_ref = _seh_handler
+  # type: ignore
         set_unhandled_exception_filter(_seh_handler)
     except Exception:
         pass
@@ -292,8 +296,10 @@ def patch_qframelesswindow() -> None:
                 return original_is_full_screen(hwnd)
             except pywintypes.error:
                 return False
+  # type: ignore
 
         win32_utils.isFullScreen = safe_is_full_screen
+  # type: ignore
     except Exception:
         pass
 

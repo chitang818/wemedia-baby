@@ -161,11 +161,24 @@ def test_publish_record_table_view_pending_order_moves_status_and_action_before_
     header = table.horizontalHeader()
     m = PublishRecordTableModel
 
-    assert header.logicalIndex(10) == m.COL_STATUS
-    assert header.logicalIndex(11) == m.COL_ACTION
-    assert header.logicalIndex(12) == m.COL_SCHEDULED_TIME
-    assert header.visualIndex(m.COL_DESCRIPTION) < header.visualIndex(m.COL_STATUS)
-    assert header.visualIndex(m.COL_ACTION) < header.visualIndex(m.COL_SCHEDULED_TIME)
+    assert header.logicalIndex(1) == m.COL_STATUS
+    assert header.logicalIndex(2) == m.COL_ACTION
+    assert header.logicalIndex(3) == m.COL_TYPE
+    assert header.visualIndex(m.COL_CREATE_TIME) < header.visualIndex(m.COL_STATUS)
+    assert header.visualIndex(m.COL_ACTION) < header.visualIndex(m.COL_TYPE)
+
+
+def test_publish_record_table_view_recycle_order_moves_recycle_status_and_action_after_create_time() -> None:
+    _qapp()
+    table = PublishRecordTableView(recycle_page=True, pending_column_order=True)
+    header = table.horizontalHeader()
+    m = PublishRecordTableModel
+
+    assert header.logicalIndex(1) == m.COL_LOCATION
+    assert header.logicalIndex(2) == m.COL_ACTION
+    assert header.logicalIndex(3) == m.COL_TYPE
+    assert header.visualIndex(m.COL_CREATE_TIME) < header.visualIndex(m.COL_LOCATION)
+    assert header.visualIndex(m.COL_ACTION) < header.visualIndex(m.COL_TYPE)
 
 
 def test_publish_record_table_view_pending_order_keeps_logical_column_mapping() -> None:

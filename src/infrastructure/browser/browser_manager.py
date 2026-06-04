@@ -71,9 +71,10 @@ def build_playwright_default_args_to_ignore(
         "--enable-automation",
         "--no-sandbox",
         "--disable-popup-blocking",
+        # 所有平台统一忽略该参数——稳定版 Chrome 不支持它，
+        # 会显示黄色「不受支持的命令行标记」警告横幅，反而暴露自动化特征。
+        _AUTOMATION_CONTROLLED_ARG,
     ]
-    if not strict_real_browser:
-        ignored.append(_AUTOMATION_CONTROLLED_ARG)
     if wechat_video:
         ignored.extend(
             [
@@ -397,10 +398,10 @@ class UndetectedBrowserManager:
                 except Exception as e:
                     logger.warning(f"关闭旧浏览器实例时出错: {e}")
             
-            # 启动参数
-            args = self._get_launch_args() if compat_stealth else []
-            if strict_real_browser:
-                args = list(args) + [_AUTOMATION_CONTROLLED_ARG]
+            # 启动参数：真实浏览器模式只保留稳定性参数；legacy 兼容模式才使用指纹/隐身相关参数。
+            args = self._get_launch_args(compat_stealth=compat_stealth)
+            # 注意：不再为 strict_real_browser 主动添加 --disable-blink-features=AutomationControlled
+            # 稳定版 Chrome 不支持此参数，会显示黄色警告横幅，反而暴露自动化特征
             _wx_channels = (self.platform or "").strip().lower() == "wechat_video"
             
             # 仅使用本地 Chrome
@@ -545,9 +546,11 @@ class UndetectedBrowserManager:
                 "channel": channel,
                 "executable_path": executable_path,
                 "viewport": None, # 关键：禁用视口限制
-                "no_viewport": True, # 显式禁用视口模拟，防止 Playwright 施加默认 1280x720 限制
-                "ignore_https_errors": True,
-                # "device_scale_factor": 1.0, # 移除，跟随系统
+                # strict_real_browser 平台不传 no_viewport，避免 CDP Emulation 域调用留下痕迹
+                **({
+                    "ignore_https_errors": True,
+                    "no_viewport": True,
+                } if not strict_real_browser else {}),
                 "ignore_default_args": _ignore_playwright_defaults,
             }
             # 不论任何平台，统一强制开启沙箱（防止 Playwright 默认自动注入 --no-sandbox 引起不支持警告）
@@ -563,12 +566,16 @@ class UndetectedBrowserManager:
             if extra_headers:
                 launch_options["extra_http_headers"] = extra_headers
             
-            # 使用 launch_persistent_context（沙箱启动失败时回退 no-sandbox，避免少数环境完全打不开）
+            # 使用 launch_persistent_context；发布场景不允许回退 no-sandbox，非发布诊断场景才允许兜底。
             try:
                 self.context = await self.playwright.chromium.launch_persistent_context(**launch_options)
             except Exception as e:
                 # 若显式传入沙箱为 True 但因为权限等启动失败，降级退回无沙箱模式
-                if publishing:
+                fallback_args = self._get_no_sandbox_fallback_args(
+                    compat_stealth=compat_stealth,
+                    publishing=publishing,
+                )
+                if fallback_args is None:
                     logger.error(
                         "[BrowserManager] 发布浏览器必须以正常沙箱模式启动，已拒绝回退 no-sandbox: %s",
                         e,
@@ -581,9 +588,7 @@ class UndetectedBrowserManager:
                     e,
                 )
                 launch_options.pop("chromium_sandbox", None)
-                launch_options["args"] = ["--no-sandbox"] if real_browser_mode else [
-                    "--no-sandbox",
-                ] + self._stealth_chrome_args_common()
+                launch_options["args"] = fallback_args
                 self.context = await self.playwright.chromium.launch_persistent_context(**launch_options)
             
             # 兼容性设置：让 self.browser 指向 context 
@@ -608,7 +613,7 @@ class UndetectedBrowserManager:
                 if not strict_real_browser:
                     logger.warning("应用虚拟定位至浏览器失败（不阻止启动）: %s", e)
             
-            # 注入抗检测脚本
+            # 真实浏览器模式不做 JS 指纹改写；仅 legacy compat_stealth 保留旧脚本注入。
             await self._inject_stealth_scripts()
             self._headless_mode = bool(headless)
 
@@ -819,28 +824,36 @@ class UndetectedBrowserManager:
         except Exception as e:
             logger.warning("[BrowserManager] CDP 最大化窗口失败（忽略）: %s", e)
 
-    def _stealth_chrome_args_common(self) -> List[str]:
-        """各平台共用的抗检测 / 隐私相关启动参数（不含是否使用沙箱、test-type）。
-        
-        注意：不再传 --ignore-certificate-errors 命令行参数——稳定版 Chrome 会将其标记为「不受支持的命令行标记」
-        并在页面顶部显示安全警告横幅。HTTPS 错误忽略由 Playwright launch_options 中的 ignore_https_errors=True
-        在协议层处理，不经由命令行，不触发安全提示。
+    def _real_chrome_args_common(self) -> List[str]:
+        """真实浏览器稳定模式启动参数。
+
+        该模式尽量少传命令行参数，避免把普通 Windows 桌面 Chrome 不常见的
+        legacy 隐身参数带给抖音、小红书、视频号等发布后台。
+        """
+        return [
+            "--start-maximized",
+            "--no-first-run",
+            "--disable-session-crashed-bubble",
+        ]
+
+    def _legacy_stealth_chrome_args_common(self) -> List[str]:
+        """旧兼容 stealth 模式启动参数。
+
+        仅在 ``browser_trust_mode=compat_stealth`` 时使用；默认真实浏览器模式不会
+        携带这些 WebRTC/legacy 隐身参数。
         """
         return [
             "--disable-dev-shm-usage",
             "--webrtc-ip-handling-policy=default_public_interface_only",
             "--disable-webrtc-hw-encoding",
             "--disable-webrtc-hw-decoding",
-            "--start-maximized",
+            *self._real_chrome_args_common(),
             # 三重防护：禁止 Chrome 在上次非正常退出后弹出「要恢复页面吗？」InfoBar / 对话框，
             # 避免该弹窗遮挡发布页操作区域（如音乐选择列表）导致点击失效。
             # 配合启动前 _reset_chrome_exit_type() 修正 Local State 实现彻底屏蔽。
-            "--no-first-run",
-            "--disable-session-crashed-bubble",
-            "--disable-infobars",
             # --disable-blink-features=AutomationControlled 已移除：
             # 稳定版 Chrome 会将其标记为「不受支持的命令行标记」并显示黄色警告横幅。
-            # navigator.webdriver 的隐藏改由 _inject_stealth_scripts() 中的 JS 注入替代。
+            # navigator.webdriver 的隐藏仅在 legacy _inject_stealth_scripts() 中处理。
         ]
 
     @staticmethod
@@ -891,12 +904,25 @@ class UndetectedBrowserManager:
             except Exception as e:
                 logger.debug("[BrowserManager] 修正 %s 退出类型失败（不影响启动）: %s", file_path.name, e)
 
-    def _get_launch_args(self) -> List[str]:
-        """获取浏览器启动参数"""
-        return self._stealth_chrome_args_common()
+    def _get_launch_args(self, *, compat_stealth: bool = False) -> List[str]:
+        """获取浏览器启动参数。"""
+        if compat_stealth:
+            return self._legacy_stealth_chrome_args_common()
+        return self._real_chrome_args_common()
+
+    def _get_no_sandbox_fallback_args(
+        self,
+        *,
+        compat_stealth: bool,
+        publishing: bool,
+    ) -> Optional[List[str]]:
+        """沙箱启动失败时的非发布兜底参数；发布流程不允许 no-sandbox 回退。"""
+        if publishing:
+            return None
+        return ["--no-sandbox", *self._get_launch_args(compat_stealth=compat_stealth)]
     
     async def _inject_stealth_scripts(self):
-        """注入抗检测脚本"""
+        """仅在 compat_stealth 旧兼容模式下注入 legacy stealth 脚本。"""
         if not self.context:
             return
         
@@ -983,14 +1009,14 @@ class UndetectedBrowserManager:
         except Exception:
             canvas_noise_strength_level = 1
         
-        # 读取外部 JS 模板文件（须列入 scripts/build/data_dirs.json，否则打包后缺失）
+        # 读取 legacy JS 模板文件（须列入 scripts/build/data_dirs.json，否则打包后缺失）
         try:
             script_path = PathManager.get_resource_path(
                 "src/resources/scripts/stealth/stealth.js"
             )
             
             if not script_path.exists():
-                logger.error(f"抗检测脚本文件未找到: {script_path}")
+                logger.error(f"legacy stealth 脚本文件未找到: {script_path}")
                 return
 
             stealth_template = script_path.read_text(encoding="utf-8")
@@ -1041,12 +1067,12 @@ class UndetectedBrowserManager:
             )
 
         except Exception as e:
-            logger.error(f"加载抗检测脚本失败: {e}", exc_info=True)
+            logger.error(f"加载 legacy stealth 脚本失败: {e}", exc_info=True)
             return
         
         await self.context.add_init_script(stealth_script)
         logger.info(
-            "高级抗检测脚本已注入 (WebRTC/MediaDevices/Permissions/Intl/CDP/Headless)，"
+            "compat_stealth legacy stealth 脚本已注入 (WebRTC/MediaDevices/Permissions/Intl/CDP/Headless)，"
             "媒体补丁: audio=%s mediaDevices=%s permissions=%s",
             patch_audio_context,
             patch_media_devices,

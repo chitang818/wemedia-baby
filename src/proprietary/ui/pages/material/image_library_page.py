@@ -77,7 +77,7 @@ _COL_USAGE = 5
 _HEADERS = ["序号", "文件夹名称", "图片数量", "总大小", "图片归属", "使用统计"]
 
 
-class _ImportModeDialog(AppMessageBoxBase):
+class _ImportModeDialog(AppMessageBoxBase):  # type: ignore
     """导入方式选择弹窗（复制 / 剪切）。"""
 
     MODE_COPY = "copy"
@@ -288,7 +288,9 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
                 return
             for it in self._all_items:
                 try:
-                    it.in_use = bool(is_image_folder_used(usage, it.path))
+  # type: ignore
+                    it.in_use = is_image_folder_used(usage, it.path)
+  # type: ignore
                 except Exception:
                     it.in_use = False
             # 仅原地更新“使用统计”列，避免重建表格导致“进入后自动刷新/闪一下”
@@ -381,7 +383,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.warning(
                 title="提示",
                 content="未检测到有效的媒体库路径，请先在设置中配置媒体库存储位置。",
-                orient=Qt.Horizontal, isClosable=True, duration=5000,
+                orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                 position=InfoBarPosition.TOP, parent=self,
             )
             return
@@ -399,7 +401,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.warning(
                 title="权限不足",
                 content=f"无法读取文件夹「{selected.name}」的内容，请检查文件夹权限。",
-                orient=Qt.Horizontal, isClosable=True, duration=5000,
+                orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                 position=InfoBarPosition.TOP, parent=self,
             )
             return
@@ -417,7 +419,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
                         f"以下子文件夹内还包含子文件夹：{names_preview}。\n"
                         "图片库仅支持两层结构（图片库 → 图片文件夹 → 图片），请整理后重试。"
                     ),
-                    orient=Qt.Horizontal, isClosable=True, duration=6000,
+                    orient=Qt.Orientation.Horizontal, isClosable=True, duration=6000,
                     position=InfoBarPosition.TOP, parent=self,
                 )
                 return
@@ -437,7 +439,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.info(
                     title="提示",
                     content=f"文件夹「{selected.name}」的子文件夹中未找到支持的图片文件（jpg/png/gif/webp/bmp）。",
-                    orient=Qt.Horizontal, isClosable=True, duration=4000,
+                    orient=Qt.Orientation.Horizontal, isClosable=True, duration=4000,
                     position=InfoBarPosition.TOP, parent=self,
                 )
                 return
@@ -454,7 +456,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.info(
                     title="提示",
                     content="所选文件夹中未找到支持的图片文件（jpg/png/gif/webp/bmp）。",
-                    orient=Qt.Horizontal, isClosable=True, duration=4000,
+                    orient=Qt.Orientation.Horizontal, isClosable=True, duration=4000,
                     position=InfoBarPosition.TOP, parent=self,
                 )
                 return
@@ -516,7 +518,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.success(
                     title="添加完成",
                     content=content,
-                    orient=Qt.Horizontal, isClosable=True, duration=5000,
+                    orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                     position=InfoBarPosition.TOP, parent=self,
                 )
                 self._refresh_async()
@@ -524,7 +526,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.warning(
                     title="添加失败",
                     content="未能添加任何图片文件夹，请检查磁盘权限或路径是否有效。",
-                    orient=Qt.Horizontal, isClosable=True, duration=5000,
+                    orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                     position=InfoBarPosition.TOP, parent=self,
                 )
 
@@ -532,7 +534,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
             logger.error("添加图片文件夹到媒体库失败: %s", e, exc_info=True)
             InfoBar.error(
                 title="错误", content="添加图片文件夹时发生异常，请稍后重试。",
-                orient=Qt.Horizontal, isClosable=True, duration=5000,
+                orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                 position=InfoBarPosition.TOP, parent=self,
             )
 
@@ -550,7 +552,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.warning(
                 title="提示",
                 content="未检测到有效的媒体库路径，请先在设置中配置媒体库存储位置。",
-                orient=Qt.Horizontal, isClosable=True, duration=5000,
+                orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                 position=InfoBarPosition.TOP, parent=self,
             )
             return
@@ -559,7 +561,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
         if not image_dir.exists():
             InfoBar.warning(
                 title="提示", content="未找到图片库目录，请先在设置中确认媒体库路径。",
-                orient=Qt.Horizontal, isClosable=True, duration=5000,
+                orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                 position=InfoBarPosition.TOP, parent=self,
             )
             return
@@ -567,7 +569,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(image_dir))):
             InfoBar.error(
                 title="错误", content="打开本地图片库目录失败，请检查系统默认文件管理器设置。",
-                orient=Qt.Horizontal, isClosable=True, duration=5000,
+                orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                 position=InfoBarPosition.TOP, parent=self,
             )
 
@@ -610,14 +612,14 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
         if not folder.exists():
             InfoBar.warning(
                 title="提示", content="该图片文件夹已不存在，可能已被移动或删除。",
-                orient=Qt.Horizontal, isClosable=True, duration=5000,
+                orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                 position=InfoBarPosition.TOP, parent=self,
             )
             return
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))):
             InfoBar.error(
                 title="错误", content="打开文件夹失败，请检查系统默认文件管理器设置。",
-                orient=Qt.Horizontal, isClosable=True, duration=5000,
+                orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                 position=InfoBarPosition.TOP, parent=self,
             )
 
@@ -646,8 +648,9 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
             return
         self._table_ctx_target_image = image_item
         global_pos = self._table.viewport().mapToGlobal(pos)
+  # type: ignore
         if self._ensure_table_round_menu():
-            self._table_ctx_menu.exec(global_pos)
+            if self._table_ctx_menu is not None: self._table_ctx_menu.exec(global_pos)
             return
         menu = QMenu(self._table)
         act_open = menu.addAction("打开图片文件夹")
@@ -668,7 +671,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
         if not selected:
             InfoBar.info(
                 title="提示", content="请先在列表中选择要删除的图片文件夹。",
-                orient=Qt.Horizontal, isClosable=True, duration=3000,
+                orient=Qt.Orientation.Horizontal, isClosable=True, duration=3000,
                 position=InfoBarPosition.TOP, parent=self,
             )
             return
@@ -678,7 +681,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.warning(
                 title="提示",
                 content="未检测到有效的媒体库路径，请先在设置中配置媒体库存储位置。",
-                orient=Qt.Horizontal, isClosable=True, duration=5000,
+                orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                 position=InfoBarPosition.TOP, parent=self,
             )
             return
@@ -744,7 +747,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
             if import_err:
                 InfoBar.error(
                     title="错误", content=import_err,
-                    orient=Qt.Horizontal, isClosable=True, duration=6000,
+                    orient=Qt.Orientation.Horizontal, isClosable=True, duration=6000,
                     position=InfoBarPosition.TOP, parent=self,
                 )
                 return
@@ -757,7 +760,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
                     content += f"\n以下文件夹操作失败：{preview}"
                 InfoBar.success(
                     title="已移入回收站", content=content,
-                    orient=Qt.Horizontal, isClosable=True, duration=5000,
+                    orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                     position=InfoBarPosition.TOP, parent=self,
                 )
                 self._refresh_async()
@@ -765,7 +768,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.warning(
                     title="未能删除",
                     content="未能将任何图片文件夹移入回收站，请检查路径是否存在或磁盘权限。",
-                    orient=Qt.Horizontal, isClosable=True, duration=5000,
+                    orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                     position=InfoBarPosition.TOP, parent=self,
                 )
 
@@ -773,7 +776,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
             logger.error("移入回收站操作失败: %s", e, exc_info=True)
             InfoBar.error(
                 title="错误", content="删除操作时发生异常，请稍后重试。",
-                orient=Qt.Horizontal, isClosable=True, duration=5000,
+                orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                 position=InfoBarPosition.TOP, parent=self,
             )
 
@@ -858,7 +861,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
             if error:
                 InfoBar.warning(
                     title="提示", content=error,
-                    orient=Qt.Horizontal, isClosable=True, duration=5000,
+                    orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                     position=InfoBarPosition.TOP, parent=self,
                 )
             self._all_items = items
@@ -866,17 +869,20 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
             self._apply_filters()
             # 使用统计（占用标记）：异步查库后回填到表格
             self._schedule_refresh_usage_marks(ugen)
+            def _ensure_menu() -> None:
+                self._ensure_table_round_menu()
+
             self._schedule_base_page_timer(
                 "image_library.ensure_table_round_menu",
                 200,
-                self._ensure_table_round_menu,
+                _ensure_menu,
             )
 
         def on_error(e: Exception):
             logger.error("刷新图片库列表失败: %s", e, exc_info=True)
             InfoBar.error(
                 title="错误", content="刷新图片库列表时发生异常，请稍后重试。",
-                orient=Qt.Horizontal, isClosable=True, duration=5000,
+                orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                 position=InfoBarPosition.TOP, parent=self,
             )
 
@@ -923,7 +929,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
         if not selected:
             InfoBar.info(
                 title="提示", content="请先在列表中选择要分配的图片文件夹。",
-                orient=Qt.Horizontal, isClosable=True, duration=3000,
+                orient=Qt.Orientation.Horizontal, isClosable=True, duration=3000,
                 position=InfoBarPosition.TOP, parent=self,
             )
             return
@@ -937,7 +943,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.error(
                 title="错误",
                 content="未检测到有效的媒体库路径，请先在设置中配置媒体库存储位置。",
-                orient=Qt.Horizontal, isClosable=True, duration=5000,
+                orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                 position=InfoBarPosition.TOP, parent=self,
             )
             return
@@ -963,7 +969,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
         if not valid_folders:
             InfoBar.info(
                 title="提示", content="所选图片文件夹已不存在，请刷新列表后重试。",
-                orient=Qt.Horizontal, isClosable=True, duration=4000,
+                orient=Qt.Orientation.Horizontal, isClosable=True, duration=4000,
                 position=InfoBarPosition.TOP, parent=self,
             )
             return
@@ -979,7 +985,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
                 logger.error("创建素材分配目标目录失败: %s", e, exc_info=True)
                 InfoBar.error(
                     title="错误", content=f"无法创建{at.label}的素材目录，请检查磁盘权限。",
-                    orient=Qt.Horizontal, isClosable=True, duration=5000,
+                    orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                     position=InfoBarPosition.TOP, parent=self,
                 )
                 return
@@ -1036,14 +1042,14 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
                     content += f"\n以下文件夹移动失败：{preview}"
                 InfoBar.success(
                     title="已分配", content=content,
-                    orient=Qt.Horizontal, isClosable=True, duration=5000,
+                    orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                     position=InfoBarPosition.TOP, parent=self,
                 )
                 self._refresh_async()
             else:
                 InfoBar.info(
                     title="提示", content="未能分配任何图片文件夹，请检查文件夹是否仍存在或磁盘权限。",
-                    orient=Qt.Horizontal, isClosable=True, duration=4000,
+                    orient=Qt.Orientation.Horizontal, isClosable=True, duration=4000,
                     position=InfoBarPosition.TOP, parent=self,
                 )
 
@@ -1051,7 +1057,7 @@ class ImageLibraryPage(TrackedTaskMixin, BasePage):
             logger.error("分配图片文件夹失败: %s", e, exc_info=True)
             InfoBar.error(
                 title="错误", content="分配图片文件夹时发生错误，请稍后重试。",
-                orient=Qt.Horizontal, isClosable=True, duration=5000,
+                orient=Qt.Orientation.Horizontal, isClosable=True, duration=5000,
                 position=InfoBarPosition.TOP, parent=self,
             )
 

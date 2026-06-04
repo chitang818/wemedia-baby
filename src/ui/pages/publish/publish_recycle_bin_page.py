@@ -133,6 +133,7 @@ class PublishRecycleBinPage(BasePage):
             table_container,
             recycle_page=True,
             action_text="查看",
+            pending_column_order=True,
         )
         self.records_table.setObjectName("PublishRecycleBinTable")
 

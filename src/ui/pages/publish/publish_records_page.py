@@ -364,7 +364,7 @@ class PublishRecordsPage(BasePage):
         return "编辑"
 
     def _use_pending_table_column_order(self) -> bool:
-        return False
+        return True
 
     def _setup_content(self):
         """设置内容"""
