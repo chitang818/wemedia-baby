@@ -56,20 +56,36 @@ class _ModelItemAdapter:
 
 
 class PublishRecordTableDelegate(TableItemDelegate):
+    def __init__(self, parent: QTableView):
+        super().__init__(parent)
+        self.table = parent
+
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         if index.column() == PublishRecordTableModel.COL_ACTION:
             base = QStyleOptionViewItem(option)
-            base.text = ""
-            super().paint(painter, base, index)
+            base.text = ""  # type: ignore
+            
+            # 修复 QFluentWidgets 背景断层 bug: 
+            # FluentWidgets 根据逻辑列索引(index.column())判断是否为末列并绘制圆角，
+            # 当 COL_ACTION (逻辑末列) 在视觉上被移至中间时，会误画圆角导致与右侧列之间产生白边。
+            # 这里通过视觉索引重新计算它应具备的逻辑“位置”，欺骗它画出正确的连通背景。
+            header = self.table.horizontalHeader()
+            v_idx = header.visualIndex(index.column())
+            is_first = (v_idx == 0)
+            is_last = (v_idx == header.count() - 1)
+            fake_col = 0 if is_first else (header.count() - 1 if is_last else 1)
+            fake_index = index.sibling(index.row(), fake_col)
+            
+            super().paint(painter, base, fake_index)
             self._paint_action(painter, option, str(index.data(Qt.ItemDataRole.DisplayRole) or "编辑"))
             return
         super().paint(painter, option, index)
 
     def _paint_action(self, painter: QPainter, option: QStyleOptionViewItem, text: str) -> None:
         btn = QStyleOptionButton()
-        btn.rect = option.rect.adjusted(10, 6, -10, -6)
-        btn.text = text
-        btn.state = QStyle.StateFlag.State_Enabled
+        btn.rect = option.rect.adjusted(10, 6, -10, -6)  # type: ignore
+        btn.text = text  # type: ignore
+        btn.state = QStyle.StateFlag.State_Enabled  # type: ignore
         QApplication.style().drawControl(QStyle.ControlElement.CE_PushButton, btn, painter)
 
 
@@ -89,8 +105,8 @@ class PublishRecordTableView(TableView):
     ) -> None:
         super().__init__(parent)
         self._model = PublishRecordTableModel(self)
-        self._recycle_page = bool(recycle_page)
-        self._pending_column_order = bool(pending_column_order)
+        self._recycle_page = recycle_page
+        self._pending_column_order = pending_column_order
         self._model.set_recycle_page(recycle_page)
         self._model.set_success_page(success_page)
         self._model.set_action_text(action_text)
@@ -139,7 +155,7 @@ class PublishRecordTableView(TableView):
                 header.moveSection(current_visual, visual_index)
 
     def _use_pending_visual_order(self) -> bool:
-        return bool(self._pending_column_order)
+        return self._pending_column_order
 
     @staticmethod
     def _default_visual_order() -> list[int]:
@@ -321,7 +337,7 @@ class PublishRecordTableView(TableView):
     ) -> None:
         start = time.perf_counter()
         if recycle_page is not None:
-            self._recycle_page = bool(recycle_page)
+            self._recycle_page = recycle_page
         self._model.set_records(
             records or [],
             success_page=success_page,
@@ -353,10 +369,9 @@ class PublishRecordTableView(TableView):
         self._model.set_action_text(text)
 
     def set_recycle_page(self, enabled: bool) -> None:
-        enabled = bool(enabled)
         if self._recycle_page == enabled:
             return
-        self._recycle_page = bool(enabled)
+        self._recycle_page = enabled
         self._model.set_recycle_page(enabled)
         self._apply_legacy_table_visual_defaults()
 
@@ -387,7 +402,7 @@ class PublishRecordTableView(TableView):
     def setItem(self, row: int, column: int, item) -> None:
         text_getter = getattr(item, "text", None)
         text = text_getter() if callable(text_getter) else str(item)
-        self.set_cell_text(row, column, text)
+        self.set_cell_text(row, column, str(text))
 
     def set_cell_text(self, row: int, column: int, text: str) -> None:
         rec = self.record_at(row)

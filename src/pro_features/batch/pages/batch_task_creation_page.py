@@ -3395,11 +3395,23 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
 
         # 视频号图文发布必须填写作品标题
         if self._media_type == "image" and self._selected_targets_include_wechat_video():
-            if not (self.same_title_text or "").strip():
+            wechat_tasks_missing_title = False
+            if getattr(self, "_preview_tasks", None):
+                for idx, pt in enumerate(self._preview_tasks):
+                    if hasattr(self, "_preview_exclusion") and self._preview_exclusion.is_task_excluded(pt):
+                        continue
+                    if pt.get("platform") == "wechat_video" and not (pt.get("title") or "").strip():
+                        wechat_tasks_missing_title = True
+                        break
+            else:
+                if not (self.same_title_text or "").strip():
+                    wechat_tasks_missing_title = True
+
+            if wechat_tasks_missing_title:
                 InfoBar.warning(
                     "作品标题必填",
-                    "所选发布目标包含视频号账号，图文发布必须填写「作品标题」，"
-                    "请点击「作品描述」按钮填写标题后再添加到发布列表。",
+                    "所选发布目标包含视频号账号，图文发布必须包含「作品标题」。\n"
+                    "请在「批量发布设置」中检查描述来源，或在「作品描述」中填写标题后再添加到发布列表。",
                     parent=self,
                     position=InfoBarPosition.TOP,
                     duration=6000,
