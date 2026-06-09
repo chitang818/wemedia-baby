@@ -23,7 +23,7 @@ DOM 参考（快手_发布按钮 DOM 分析报告_20260405.md）：
 import logging
 from typing import Any, Dict, Optional, Tuple
 
-from playwright.async_api import Locator, Page
+from src.infrastructure.browser.automation_api import Locator, Page
 
 from src.plugins.core.wait_helper import PluginWaitHelper
 from src.plugins.core.interfaces.publish_plugin import PublishResult

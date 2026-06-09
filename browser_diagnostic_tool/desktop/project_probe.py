@@ -62,6 +62,5 @@ def build_desktop_launch_context(
         "user_data_dir": user_data_dir,
         "controlled_by_playwright": controlled_by_playwright,
         "publish_automation_enabled": publish_automation_enabled,
-        "browser_scheme": cfg.get("browser_scheme", "playwright") if isinstance(cfg, dict) else "playwright",
+        "browser_scheme": cfg.get("browser_scheme", "patchright") if isinstance(cfg, dict) else "patchright",
     }
-

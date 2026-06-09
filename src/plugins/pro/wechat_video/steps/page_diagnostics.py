@@ -8,7 +8,7 @@ import json
 import logging
 from typing import Any
 
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 
 async def log_page_diagnostics(

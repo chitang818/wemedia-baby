@@ -23,7 +23,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from playwright.async_api import async_playwright
+from src.infrastructure.browser.automation_api import async_playwright
 
 from src.plugins.pro.xiaohongshu._xhs_submit_probe import (
     probe_pierce_submit_selectors,

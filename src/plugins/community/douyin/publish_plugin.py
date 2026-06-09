@@ -9,7 +9,7 @@ from typing import List, Dict, Any, Optional
 import logging
 import json
 import asyncio
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 from src.infrastructure.common.bundled_config import load_platform_bundle
 from src.plugins.core.interfaces.publish_plugin import PublishPluginInterface, PublishResult, FormField

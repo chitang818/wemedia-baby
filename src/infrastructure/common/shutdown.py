@@ -30,7 +30,7 @@ async def cleanup_application_resources(
         logging.info("Starting application resource cleanup...")
         service_locator = _get_service_locator()
 
-        await _shutdown_playwright_service(service_locator)
+        await _shutdown_patchright_service(service_locator)
         _cleanup_browser_processes()
 
         if service_locator is None:
@@ -61,14 +61,16 @@ def _get_service_locator():
         return None
 
 
-async def _shutdown_playwright_service(service_locator) -> None:
+async def _shutdown_patchright_service(service_locator) -> None:
     try:
-        if service_locator and service_locator.is_registered("PlaywrightBrowserService"):
-            playwright_service = service_locator.get("PlaywrightBrowserService")
-            if hasattr(playwright_service, "shutdown"):
+        if not service_locator:
+            return
+        if service_locator.is_registered("PatchrightBrowserService"):
+            browser_service = service_locator.get("PatchrightBrowserService")
+            if hasattr(browser_service, "shutdown"):
                 logging.info("Closing browser instances...")
                 try:
-                    await playwright_service.shutdown()
+                    await browser_service.shutdown()
                     logging.info("Browser instances closed.")
                 except Exception as e:
                     text = str(e).lower()

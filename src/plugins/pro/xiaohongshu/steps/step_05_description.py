@@ -22,7 +22,7 @@ import logging
 import re
 from typing import Any, Dict, List, Tuple
 
-from playwright.async_api import Locator, Page
+from src.infrastructure.browser.automation_api import Locator, Page
 
 from src.domain.publish.work_description import parse_topic_list
 from ._base import BasePublishStep, StepOutcome

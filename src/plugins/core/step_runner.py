@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable, Dict, Any, Iterable, List, Optional, Sequence, Set, Tuple
 
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 from src.infrastructure.common.path_manager import PathManager
 from src.plugins.core.interfaces.publish_plugin import PublishResult

@@ -30,6 +30,14 @@ def test_account_table_model_indexes_records_by_account_id() -> None:
     assert model.data(model.index(0, AccountTableModel.COL_USERNAME), AccountTableModel.AccountIdRole) == 1
 
 
+def test_account_table_action_column_is_between_username_and_login_status() -> None:
+    model = AccountTableModel()
+
+    assert model.HEADERS[:4] == ["平台", "平台昵称", "操作", "登录状态"]
+    assert AccountTableModel.COL_ACTION == AccountTableModel.COL_USERNAME + 1
+    assert AccountTableModel.COL_LOGIN_STATUS == AccountTableModel.COL_ACTION + 1
+
+
 def test_publish_record_table_model_indexes_records_by_id() -> None:
     model = PublishRecordTableModel()
     model.set_records(

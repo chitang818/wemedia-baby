@@ -1,7 +1,7 @@
 import pytest
 
 from src.plugins.community.douyin.steps.step_07a_music import SelectMusicStep
-from tests.helpers.playwright_env import playwright_page_or_skip
+from tests.helpers.patchright_env import patchright_page_or_skip
 
 
 MUSIC_HTML = """
@@ -47,7 +47,7 @@ MUSIC_HTML = """
 
 @pytest.fixture
 async def page():
-    async with playwright_page_or_skip(viewport={"width": 1440, "height": 1000}) as page:
+    async with patchright_page_or_skip(viewport={"width": 1440, "height": 1000}) as page:
         yield page
 
 

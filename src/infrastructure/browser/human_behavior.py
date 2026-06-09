@@ -8,7 +8,7 @@ import random
 import asyncio
 import logging
 from typing import Optional, Union
-from playwright.async_api import Page, Locator
+from src.infrastructure.browser.automation_api import Page, Locator
 
 logger = logging.getLogger(__name__)
 

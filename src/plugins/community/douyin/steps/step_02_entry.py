@@ -18,7 +18,7 @@ import logging
 import time
 from typing import Any, Dict, Tuple
 
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from ._base import BasePublishStep, StepOutcome

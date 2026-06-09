@@ -5,7 +5,7 @@ import pytest
 from src.infrastructure.browser import browser_launch_policy
 from src.infrastructure.browser.browser_manager import (
     UndetectedBrowserManager,
-    build_playwright_default_args_to_ignore,
+    build_patchright_default_args_to_ignore,
 )
 from src.infrastructure.common.config.app_config_keys import (
     BROWSER_TRUST_MODE_COMPAT_STEALTH,
@@ -73,19 +73,19 @@ def _new_manager(platform: str = "douyin") -> UndetectedBrowserManager:
     return manager
 
 
-def test_strict_real_browser_filters_automation_controlled_default_arg() -> None:
-    ignored = build_playwright_default_args_to_ignore(strict_real_browser=True)
+def test_strict_real_browser_preserves_patchright_automation_controlled_arg() -> None:
+    ignored = build_patchright_default_args_to_ignore(strict_real_browser=True)
 
     assert "--enable-automation" in ignored
     assert "--no-sandbox" in ignored
     assert "--disable-popup-blocking" in ignored
-    assert "--disable-blink-features=AutomationControlled" in ignored
+    assert "--disable-blink-features=AutomationControlled" not in ignored
 
 
-def test_non_strict_browser_ignores_automation_controlled_launch_arg() -> None:
-    ignored = build_playwright_default_args_to_ignore(strict_real_browser=False)
+def test_non_strict_browser_preserves_patchright_automation_controlled_arg() -> None:
+    ignored = build_patchright_default_args_to_ignore(strict_real_browser=False)
 
-    assert "--disable-blink-features=AutomationControlled" in ignored
+    assert "--disable-blink-features=AutomationControlled" not in ignored
 
 
 def test_real_browser_launch_args_skip_legacy_stealth_flags() -> None:

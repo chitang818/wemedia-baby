@@ -13,7 +13,7 @@ WeMediaBaby（媒小宝）是一个面向自媒体运营的 Windows 桌面端自
 - 语言：Python 3.10+，项目建议 Python 3.12。
 - 桌面 UI：PySide6、PySide6-Fluent-Widgets。
 - 异步集成：qasync，将 asyncio 与 Qt 事件循环结合。
-- 浏览器自动化：Playwright、undetected-playwright。
+- 浏览器自动化：Patchright，统一通过 `src/infrastructure/browser/automation_api.py` 导入。
 - 数据库：SQLite，异步访问以 Tortoise ORM / aiosqlite 为主。
 - 配置与数据模型：Pydantic、JSON 配置文件。
 - 测试：pytest、pytest-asyncio、pytest-cov、pytest-html、pytest-mock、Hypothesis。

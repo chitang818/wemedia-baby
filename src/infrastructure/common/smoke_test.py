@@ -33,7 +33,9 @@ MODULES_TO_IMPORT = [
     "qfluentwidgets",
     "tortoise",
     "aiosqlite",
-    "playwright",
+    "patchright",
+    "src.infrastructure.browser.automation_api",
+    "src.infrastructure.browser.browser_manager",
     "cryptography",
     "pydantic",
     "aiohttp",
@@ -84,6 +86,19 @@ def run_smoke_test() -> int:
         except Exception as e:
             failed.append((module_name, str(e)))
             print(f"  [FAIL] {module_name}  ->  {e}")
+
+    try:
+        from src.infrastructure.browser.automation_api import ENGINE_NAME, async_playwright
+
+        engine_module = getattr(async_playwright, "__module__", "")
+        if ENGINE_NAME != "patchright" or not engine_module.startswith("patchright."):
+            raise RuntimeError(
+                f"unexpected browser engine: name={ENGINE_NAME}, module={engine_module}"
+            )
+        print(f"  [OK] browser engine: {ENGINE_NAME} ({engine_module})")
+    except Exception as e:
+        failed.append(("browser_engine", str(e)))
+        print(f"  [FAIL] browser engine -> {e}")
 
     print()
 

@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import src.services.browser.playwright_service as playwright_service
-from src.services.browser.playwright_service import PlaywrightBrowserService
+import src.services.browser.patchright_service as patchright_service
+from src.services.browser.patchright_service import PatchrightBrowserService
 
 
 @pytest.mark.parametrize(
@@ -19,12 +19,12 @@ from src.services.browser.playwright_service import PlaywrightBrowserService
 def test_browser_launch_concurrency_env(monkeypatch, raw, expected):
     monkeypatch.setenv("WMB_BROWSER_LAUNCH_CONCURRENCY", raw)
 
-    assert PlaywrightBrowserService._read_browser_launch_concurrency() == expected
+    assert PatchrightBrowserService._read_browser_launch_concurrency() == expected
 
 
 @pytest.mark.asyncio
 async def test_open_browser_for_account_uses_launch_semaphore(monkeypatch):
-    service = PlaywrightBrowserService(None)
+    service = PatchrightBrowserService(None)
     service._browser_launch_semaphore = asyncio.Semaphore(1)
     running = 0
     max_running = 0
@@ -58,7 +58,7 @@ async def test_open_browser_for_account_uses_launch_semaphore(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_extract_nickname_falls_back_to_http_verification(monkeypatch):
-    service = PlaywrightBrowserService(None)
+    service = PatchrightBrowserService(None)
     calls = {}
 
     class FakePlugin:
@@ -73,14 +73,14 @@ async def test_extract_nickname_falls_back_to_http_verification(monkeypatch):
             "username": "real_nickname",
         }
 
-    monkeypatch.setattr(playwright_service, "USE_PLUGIN_SYSTEM", True)
+    monkeypatch.setattr(patchright_service, "USE_PLUGIN_SYSTEM", True)
     monkeypatch.setattr(
-        playwright_service.PluginManager,
+        patchright_service.PluginManager,
         "get_login_plugin",
         lambda platform: FakePlugin(),
     )
     monkeypatch.setattr(
-        playwright_service,
+        patchright_service,
         "verify_login_status",
         fake_verify_login_status,
     )
@@ -113,7 +113,7 @@ async def test_xhs_publish_blocks_when_detached_chrome_profile_is_running(monkey
         async def ensure_account_has_profile_folder(self, account_id):
             return True
 
-    service = PlaywrightBrowserService(FakeAccountManager())
+    service = PatchrightBrowserService(FakeAccountManager())
 
     monkeypatch.setattr(
         "src.infrastructure.browser.detached_chrome_launcher.DetachedChromeLauncher.get_user_data_dir",

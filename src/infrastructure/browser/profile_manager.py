@@ -11,7 +11,7 @@ import random
 import re
 from pathlib import Path
 from typing import Optional, Dict, Any
-from playwright.async_api import BrowserContext
+from src.infrastructure.browser.automation_api import BrowserContext
 
 logger = logging.getLogger(__name__)
 

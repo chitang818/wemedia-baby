@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Playwright 浏览器服务
-文件路径：src/services/browser/playwright_service.py
+文件路径：src/services/browser/patchright_service.py
 功能：管理 Playwright 浏览器实例，提供纯逻辑的浏览器控制服务，不包含UI代码
 """
 
@@ -20,7 +20,7 @@ from src.services.account.account_info_updater import update_account_info_from_c
 from src.services.account.login_status_verifier import verify_login_status
 from config.feature_flags import USE_PLUGIN_SYSTEM
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("src.services.browser.patchright_service")
 
 
 def _is_playwright_target_closed_error(exc: BaseException) -> bool:
@@ -43,7 +43,7 @@ def _browser_context_usable(context: Any) -> bool:
         return not _is_playwright_target_closed_error(e)
 
 
-class PlaywrightBrowserService(QObject):
+class PatchrightBrowserService(QObject):
     """Playwright 浏览器服务 (Logic Only)
     
     负责底层浏览器生命周期管理、Cookie提取、自动化操作。
@@ -538,7 +538,7 @@ class PlaywrightBrowserService(QObject):
         publish_mode: bool = False,
     ):
         try:
-            logger.info(f"正在启动 Playwright 浏览器 for {platform_username}... (headless={headless})")
+            logger.info(f"正在启动 Patchright 浏览器 for {platform_username}... (headless={headless})")
             
             # 1. 启动浏览器（headless 由发布页「显示浏览器」勾选或账号页默认显示决定）
             browser_service = BrowserFactory.get_browser_service(
@@ -666,7 +666,7 @@ class PlaywrightBrowserService(QObject):
                 # 若覆盖时旧实例仍存活，说明上一个新账号添加流程未正常结束，记录警告以便排查。
                 if self.pw_browser_instance and getattr(self.pw_browser_instance, "context", None) is not None:
                     logger.warning(
-                        "[PlaywrightService] pw_browser_instance 被覆盖时旧实例仍存活 "
+                        "[PatchrightBrowserService] pw_browser_instance 被覆盖时旧实例仍存活 "
                         "(account_id=%s)，旧实例可能泄漏，请检查新账号添加流程是否正常关闭。",
                         account_id,
                     )
@@ -1100,7 +1100,7 @@ class PlaywrightBrowserService(QObject):
 
     async def shutdown(self):
         """应用退出时关闭所有活跃浏览器，避免残留进程。"""
-        logger.info("PlaywrightBrowserService 开始 shutdown，关闭所有活跃浏览器...")
+        logger.info("PatchrightBrowserService 开始 shutdown，关闭所有活跃浏览器...")
         self._cancel_all_early_cookie_tasks()
         # 1. 取消所有监听任务
         for account_id, task in list(self._monitor_tasks.items()):
@@ -1169,7 +1169,7 @@ class PlaywrightBrowserService(QObject):
                 pass
             self.pw_browser_instance = None
 
-        logger.info("PlaywrightBrowserService shutdown 完成")
+        logger.info("PatchrightBrowserService shutdown 完成")
 
     async def _handle_directory_cleanup(self, account_id: str):
         """处理目录清理"""

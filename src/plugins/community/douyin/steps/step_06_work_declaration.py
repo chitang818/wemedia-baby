@@ -23,7 +23,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from playwright.async_api import Page, Locator, expect
+from src.infrastructure.browser.automation_api import Page, Locator, expect
 
 from src.plugins.community.douyin.selectors import Selectors
 from src.plugins.core.interfaces.publish_plugin import PublishResult

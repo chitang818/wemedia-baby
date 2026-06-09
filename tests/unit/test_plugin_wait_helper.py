@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+from src.infrastructure.browser.automation_api import TimeoutError as PlaywrightTimeoutError
 
 from src.plugins.core.wait_helper import PluginWaitHelper
 

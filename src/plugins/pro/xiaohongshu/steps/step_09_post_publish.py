@@ -11,7 +11,7 @@ import logging
 import random
 from typing import Dict, Any
 
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from src.infrastructure.anti_risk.delays import random_delay

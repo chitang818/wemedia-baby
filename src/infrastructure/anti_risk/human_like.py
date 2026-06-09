@@ -9,7 +9,7 @@ import asyncio
 import logging
 from typing import Dict, Any, Optional, Union
 
-from playwright.async_api import Page, Locator
+from src.infrastructure.browser.automation_api import Page, Locator
 
 logger = logging.getLogger(__name__)
 

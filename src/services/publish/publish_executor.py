@@ -98,12 +98,12 @@ class PublishExecutor:
                     await UndetectedBrowserManager.ensure_warmup()
                 except Exception:
                     pass
-                # Step 1: 获取 PlaywrightBrowserService 单例
+                # Step 1: 获取 PatchrightBrowserService 单例
                 from src.infrastructure.common.di.service_locator import ServiceLocator
                 
-                pw_service = ServiceLocator().get("PlaywrightBrowserService")
+                pw_service = ServiceLocator().get("PatchrightBrowserService")
                 if not pw_service or not pw_service.account_manager:
-                    return PublishResult(success=False, error_message="PlaywrightBrowserService 未初始化，无法启动浏览器")
+                    return PublishResult(success=False, error_message="PatchrightBrowserService 未初始化，无法启动浏览器")
                 
                 account_mgr = pw_service.account_manager
                 
@@ -235,11 +235,11 @@ class PublishExecutor:
             if close_browser_after and account_db_id:
                 try:
                     from src.infrastructure.common.di.service_locator import ServiceLocator
-                    pw_svc = ServiceLocator().get("PlaywrightBrowserService")
+                    pw_svc = ServiceLocator().get("PatchrightBrowserService")
                     if pw_svc:
                         await pw_svc.close_browser(str(account_db_id))
                 except Exception as e:
-                    logger.warning("通过 PlaywrightBrowserService 关闭浏览器异常: %s", e)
+                    logger.warning("通过 PatchrightBrowserService 关闭浏览器异常: %s", e)
                     if page:
                         try:
                             await page.close()

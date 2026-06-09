@@ -9,7 +9,7 @@
 import logging
 from typing import Dict, Any
 
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 from ._base import BasePublishStep, StepOutcome
 

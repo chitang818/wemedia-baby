@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from playwright.async_api import Locator, Page
+from src.infrastructure.browser.automation_api import Locator, Page
 
 from src.domain.publish.work_description import (
     normalize_topics_for_paste,

@@ -14,24 +14,24 @@ class AccountTableModel(QAbstractTableModel):
     HEADERS = [
         "平台",
         "平台昵称",
+        "操作",
         "登录状态",
         "账号组",
         "账号标签",
         "视频库",
         "图文库",
         "已发布最晚时间",
-        "操作",
     ]
 
     COL_PLATFORM = 0
     COL_USERNAME = 1
-    COL_LOGIN_STATUS = 2
-    COL_GROUP = 3
-    COL_TAGS = 4
-    COL_VIDEO_STATS = 5
-    COL_IMAGE_STATS = 6
-    COL_LATEST_PUBLISH = 7
-    COL_ACTION = 8
+    COL_ACTION = 2
+    COL_LOGIN_STATUS = 3
+    COL_GROUP = 4
+    COL_TAGS = 5
+    COL_VIDEO_STATS = 6
+    COL_IMAGE_STATS = 7
+    COL_LATEST_PUBLISH = 8
 
     AccountIdRole = Qt.ItemDataRole.UserRole + 1
     PlatformIdRole = Qt.ItemDataRole.UserRole + 2

@@ -3,6 +3,6 @@
 浏览器服务模块
 """
 
-from .playwright_service import PlaywrightBrowserService
+from .patchright_service import PatchrightBrowserService
 
-__all__ = ['PlaywrightBrowserService']
+__all__ = ["PatchrightBrowserService"]

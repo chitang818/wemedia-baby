@@ -3,7 +3,7 @@
 import logging
 from typing import Optional, Dict, Any
 from src.infrastructure.common.async_task_registry import get_async_task_registry
-from src.infrastructure.common.config.config_center import ConfigCenter, get_registered_config_center
+from src.infrastructure.common.config.config_center import get_registered_config_center
 from .browser_manager import UndetectedBrowserManager
 from .process_supervisor import ProcessSupervisor
 
@@ -111,11 +111,11 @@ class BrowserFactory:
         BrowserFactory._ensure_initialized()
         _ensure_chrome_path_configured()
         
-        config_center = get_registered_config_center() or ConfigCenter()
-        app_config = config_center.get_app_config()
-        scheme = app_config.get("browser_scheme", "playwright")
-        
-        logger.info(f"浏览器工厂: scheme={scheme}, account={platform_username}, platform={platform}")
+        logger.info(
+            "浏览器工厂: scheme=patchright, account=%s, platform=%s",
+            platform_username,
+            platform,
+        )
         
         # 统一使用 UndetectedBrowserManager
         return UndetectedBrowserManager(

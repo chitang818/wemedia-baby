@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from playwright.async_api import Locator, Page
+from src.infrastructure.browser.automation_api import Locator, Page
 
 # closed Shadow：优先 _sr，其次 shadowRoot（open 时）
 _GET_SHADOW_ROOT_JS = """(el) => {

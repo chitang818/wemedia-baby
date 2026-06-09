@@ -48,7 +48,7 @@ from src.utils.plugin_settings import (
 logger = logging.getLogger(__name__)
 
 # 设置页 UI 常量
-BROWSER_SCHEME_PLAYWRIGHT = "playwright"
+BROWSER_SCHEME_PATCHRIGHT = "patchright"
 BROWSER_SCHEME_MIXED = "mixed"
 FFMPEG_STATUS_COLOR_UNINSTALLED = "#e53935"
 # 媒体库未配置时与 FFmpeg 未安装按钮同色（红色提醒）
@@ -1195,7 +1195,11 @@ class SettingsPage(BasePage):
         """浏览器方案切换"""
         settings_text = self.browser_scheme_combo.currentText()
         try:
-            scheme = BROWSER_SCHEME_PLAYWRIGHT if "Undetected" in settings_text else BROWSER_SCHEME_MIXED
+            scheme = (
+                BROWSER_SCHEME_PATCHRIGHT
+                if "Patchright" in settings_text
+                else BROWSER_SCHEME_MIXED
+            )
             
             config_center = ServiceLocator().get(ConfigCenter)
             

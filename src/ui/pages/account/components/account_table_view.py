@@ -31,7 +31,7 @@ _TABLE_BORDER_LIGHT = QColor("#E5E7EB")
 _TABLE_BORDER_DARK = QColor("#3A3A3A")
 _SETTINGS_ORG = "WeMediaBaby"
 _SETTINGS_APP = "媒小宝"
-_COLUMN_WIDTHS_KEY = "account_table/column_widths_v2"
+_COLUMN_WIDTHS_KEY = "account_table/column_widths_v3"
 
 
 class AccountFilterProxyModel(QSortFilterProxyModel):

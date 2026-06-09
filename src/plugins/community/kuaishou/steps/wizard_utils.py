@@ -10,7 +10,7 @@
 import logging
 from typing import Dict, Any, List
 
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 from ..selectors import Selectors
 

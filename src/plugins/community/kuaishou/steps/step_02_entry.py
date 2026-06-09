@@ -25,7 +25,7 @@
 import logging
 from typing import Dict, Any, Optional
 
-from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
+from src.infrastructure.browser.automation_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from src.plugins.core.wait_helper import PluginWaitHelper
 from src.plugins.core.interfaces.publish_plugin import PublishResult

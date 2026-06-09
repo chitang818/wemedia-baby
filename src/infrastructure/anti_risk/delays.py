@@ -9,7 +9,7 @@ import asyncio
 import logging
 from typing import Dict, Any, Optional
 
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 logger = logging.getLogger(__name__)
 USER_LOG = logging.getLogger("publish.user_log")

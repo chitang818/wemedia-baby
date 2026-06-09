@@ -169,11 +169,11 @@ class AccountPage(BasePage):
         
         # 从 ServiceLocator 获取全局 Playwright 服务（已在 main.py 中用 AccountManagerAsync 初始化）
         from src.infrastructure.common.di.service_locator import ServiceLocator
-        self.playwright_service = ServiceLocator().get("PlaywrightBrowserService")
+        self.patchright_service = ServiceLocator().get("PatchrightBrowserService")
         
         # 连接服务全局信号
-        self.playwright_service.message_signal.connect(self._show_service_message)
-        self.playwright_service.browser_launched.connect(self._on_browser_launched)
+        self.patchright_service.message_signal.connect(self._show_service_message)
+        self.patchright_service.browser_launched.connect(self._on_browser_launched)
         
         # 初始化验证服务
         self.validator_service = AccountValidatorService(self.account_manager, self)
@@ -190,9 +190,9 @@ class AccountPage(BasePage):
         self.operations_service.account_updated.connect(self._on_account_updated)
         
         # 将浏览器操作引起的名字变化也直连到刷新（不可见时只标脏，等显示时再刷）
-        self.playwright_service.account_nickname_updated.connect(self._on_playwright_nickname_updated)
+        self.patchright_service.account_nickname_updated.connect(self._on_patchright_nickname_updated)
         # 静默更新后登录状态变化时刷新列表（不可见时只标脏，等显示时再刷）
-        self.playwright_service.account_login_status_updated.connect(self._on_playwright_login_status_updated)
+        self.patchright_service.account_login_status_updated.connect(self._on_patchright_login_status_updated)
         
         # 将按钮添加到操作组
         actions_group.addWidget(self.btn_add)
@@ -396,7 +396,7 @@ class AccountPage(BasePage):
     def _on_browser_launched(self, account_id, platform_username, platform, is_new_account):
         """浏览器启动成功。新流程不再为新账号显示弹窗，仅保留信号供其他用途（如 Toast）。"""
         # 「先占位、后更新」流程：不再显示「添加新账号」弹窗
-        # 新账号流程的状态更新、登录检测、关闭浏览器均由 PlaywrightService 内部处理
+        # 新账号流程的状态更新、登录检测、关闭浏览器均由 PatchrightBrowserService 内部处理
         pass
 
     def _load_accounts(self, skip_skeleton: bool = False):
@@ -881,9 +881,9 @@ class AccountPage(BasePage):
             platform = result['platform']
             fingerprint_config = result.get('fingerprint_config')
 
-            if not hasattr(self, 'playwright_service') or self.playwright_service is None:
+            if not hasattr(self, 'patchright_service') or self.patchright_service is None:
                 from src.ui.utils.fluent_dialogs import show_warning
-                show_warning(self, "错误", "PlaywrightService 未初始化")
+                show_warning(self, "错误", "PatchrightBrowserService 未初始化")
                 return
 
             # 「先占位、后更新」流程：先创建占位账号，刷新列表，再打开浏览器
@@ -908,7 +908,7 @@ class AccountPage(BasePage):
                     logger.info(f"占位账号已更新: account_id={acc_id}, nickname={nickname}")
 
                 # 4. 打开浏览器（不弹窗）
-                await self.playwright_service.open_new_account_window(
+                await self.patchright_service.open_new_account_window(
                     platform=platform,
                     fingerprint_config=fingerprint_config,
                     existing_account_id=account_id,
@@ -991,7 +991,7 @@ class AccountPage(BasePage):
         if hasattr(self, 'stats_offline'):
             self.stats_offline.set_value(str(offline))
 
-    def _on_playwright_nickname_updated(self, account_id: int, nickname: str) -> None:
+    def _on_patchright_nickname_updated(self, account_id: int, nickname: str) -> None:
         """浏览器侧昵称变更回调。不可见时只标脏，避免发布期间重建账号表格。"""
         if not self.isVisible():
             self._accounts_data_stale = True
@@ -999,7 +999,7 @@ class AccountPage(BasePage):
         # 昵称变更需更新表格中的文本，走防抖全量刷新（但合并同一防抖窗口内的多次触发）
         self._schedule_reload()
 
-    def _on_playwright_login_status_updated(self, account_id: int) -> None:
+    def _on_patchright_login_status_updated(self, account_id: int) -> None:
         """静默更新后登录状态变更回调。精准刷新对应行，不触发全量 reload。"""
         if not self.isVisible():
             self._accounts_data_stale = True
@@ -1352,10 +1352,10 @@ class AccountPage(BasePage):
         """批量删除失败回调"""
         self._show_error(error_msg)
     
-    def _open_playwright_browser_for_account(self, account_id: int, **kwargs):
+    def _open_patchright_browser_for_account(self, account_id: int, **kwargs):
         """打开账号浏览器；小红书账号页使用普通 Chrome，其它平台保持 Playwright。"""
-        if not hasattr(self, 'playwright_service') or self.playwright_service is None:
-            logger.error("Playwright service not initialized")
+        if not hasattr(self, 'patchright_service') or self.patchright_service is None:
+            logger.error("Patchright browser service not initialized")
             InfoBar.error(title="错误", content="浏览器服务未初始化", parent=self)
             return
         task = self._run_bg_task(self._open_account_browser_dispatch(account_id))
@@ -1403,7 +1403,7 @@ class AccountPage(BasePage):
         if account and self._should_use_detached_xhs_login(platform):
             await self._open_detached_xhs_browser_for_account(account_id, account=account)
             return
-        await self.playwright_service.open_browser_for_db_account(account_id)
+        await self.patchright_service.open_browser_for_db_account(account_id)
 
     async def _open_detached_xhs_browser_for_account(
         self,
@@ -1515,8 +1515,8 @@ class AccountPage(BasePage):
                 result = await XhsProfileSyncService(self.account_manager).sync_account(int(account_id))
                 if result.success:
                     if result.nickname:
-                        self.playwright_service.account_nickname_updated.emit(account_id, result.nickname)
-                    self.playwright_service.account_login_status_updated.emit(account_id)
+                        self.patchright_service.account_nickname_updated.emit(account_id, result.nickname)
+                    self.patchright_service.account_login_status_updated.emit(account_id)
                     InfoBar.success(
                         "小红书登录已同步",
                         f"账号状态已更新为在线{f'：{result.nickname}' if result.nickname else ''}",
@@ -1526,7 +1526,7 @@ class AccountPage(BasePage):
                 elif result.profile_in_use:
                     InfoBar.warning("小红书同步等待", result.error or "请关闭 Chrome 后重试", parent=self, duration=5000)
                 else:
-                    self.playwright_service.account_login_status_updated.emit(account_id)
+                    self.patchright_service.account_login_status_updated.emit(account_id)
                     InfoBar.warning(
                         "小红书登录未同步",
                         result.error or "未读取到有效登录状态",
@@ -1578,7 +1578,7 @@ class AccountPage(BasePage):
         self._last_switch_time = now
         try:
             logger.info(f"双击打开浏览器: account_id={account_id}")
-            self._open_playwright_browser_for_account(account_id)
+            self._open_patchright_browser_for_account(account_id)
         except Exception as e:
             logger.error(f"打开浏览器失败: {e}", exc_info=True)
             from src.ui.utils.fluent_dialogs import show_warning

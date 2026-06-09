@@ -187,14 +187,20 @@ async def initialize_services_async() -> bool:
         subscription_service = SubscriptionService()
         service_locator.register(SubscriptionService, subscription_service, scope=Scope.SINGLETON)
         
-        def _create_playwright_browser_service():
-            from src.services.browser.playwright_service import PlaywrightBrowserService
+        _patchright_browser_service_cache = {}
 
-            return PlaywrightBrowserService(browser_account_manager)
+        def _create_patchright_browser_service():
+            from src.services.browser.patchright_service import PatchrightBrowserService
+
+            if "instance" not in _patchright_browser_service_cache:
+                _patchright_browser_service_cache["instance"] = PatchrightBrowserService(
+                    browser_account_manager
+                )
+            return _patchright_browser_service_cache["instance"]
 
         service_locator.register_factory(
-            "PlaywrightBrowserService",
-            _create_playwright_browser_service,
+            "PatchrightBrowserService",
+            _create_patchright_browser_service,
             scope=Scope.SINGLETON,
         )
         

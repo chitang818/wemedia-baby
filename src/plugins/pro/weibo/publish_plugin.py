@@ -18,7 +18,7 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any
 
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 from src.infrastructure.common.bundled_config import load_platform_bundle
 from src.plugins.core.interfaces.publish_plugin import (

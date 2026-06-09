@@ -23,7 +23,7 @@ DOM 参考（来自抖音_图文发布DOM分析报告 §8）：
 import logging
 from typing import Any, Dict
 
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 from ._base import BasePublishStep, StepOutcome
 

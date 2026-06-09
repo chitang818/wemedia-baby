@@ -74,4 +74,4 @@ class BrowserPage(BasePage):
         profile_folder_name: str = None,
     ):
         """已废弃：浏览器仅通过 Playwright 打开，此处不再加载账号。保留为空实现以免调用方报错。"""
-        logger.info("浏览器页为纯提示页，请使用账号管理双击打开 Playwright 浏览器")
+        logger.info("浏览器页为纯提示页，请使用账号管理双击打开 Patchright 浏览器")

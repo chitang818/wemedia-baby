@@ -25,7 +25,7 @@ import logging
 import os
 from typing import Dict, Any, List, Optional
 
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 from src.plugins.core.wait_helper import PluginWaitHelper
 from src.plugins.core.interfaces.publish_plugin import PublishResult

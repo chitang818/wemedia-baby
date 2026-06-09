@@ -11,7 +11,7 @@ import asyncio
 import time
 from typing import Awaitable, Callable, Iterable, Optional, TypeVar
 
-from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
+from src.infrastructure.browser.automation_api import Page, TimeoutError as PlaywrightTimeoutError
 
 T = TypeVar("T")
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Sequence
 
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 from ..selectors import Selectors
 

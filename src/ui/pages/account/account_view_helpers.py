@@ -24,7 +24,7 @@ _PLATFORM_LOGIN_PLUGIN_MAP = {
 async def wait_page_networkidle_and_get_nickname(page: Any, platform: str) -> Optional[str]:
     """等待页面 networkidle 后按平台插件提取昵称（仅接受 page 的旧接口，供 _batch_sync_nicknames 使用）。
 
-    注意：主流程的昵称提取由 PlaywrightService 内的静默更新任务统一处理，
+    注意：主流程的昵称提取由 PatchrightBrowserService 内的静默更新任务统一处理，
     此函数仅供深度同步昵称（Headless 批量提取）场景调用。
 
     Args:
@@ -56,7 +56,7 @@ async def wait_page_networkidle_and_get_nickname(page: Any, platform: str) -> Op
 async def extract_nickname_via_login_plugin(context: Any, platform: str) -> Optional[str]:
     """通过各平台 login_plugin 的 extract_user_info 提取昵称。
 
-    适用于已有 Playwright browser context 的场景（主流程由 PlaywrightService 处理，
+    适用于已有 Patchright browser context 的场景（主流程由 PatchrightBrowserService 处理，
     此函数供辅助场景调用）。
 
     Args:

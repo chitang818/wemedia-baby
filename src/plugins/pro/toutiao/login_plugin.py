@@ -111,7 +111,7 @@ class ToutiaoLoginPlugin(LoginPluginInterface):
 
             # 降级策略：通过 Playwright 选择器提取
             if not nickname:
-                logger.info(f"[{self.platform_name}] 脚本提取失败，尝试 Playwright 原生提取")
+                logger.info(f"[{self.platform_name}] 脚本提取失败，尝试 Patchright 原生提取")
                 selectors = [
                     '.user-name', '.account-name', '.header-user-name',
                     'span[class*="nickname"]', 'div[class*="nickname"]',

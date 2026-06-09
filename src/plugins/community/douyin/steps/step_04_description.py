@@ -23,7 +23,7 @@
 import logging
 import re
 from typing import Any, Callable, Dict, List
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 from src.domain.publish.work_description import parse_topic_list
 from src.plugins.core.interfaces.publish_plugin import PublishResult

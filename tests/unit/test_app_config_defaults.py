@@ -150,6 +150,6 @@ async def test_config_center_missing_file_persists_skeleton(tmp_path: Path):
         assert BATCH_PUBLISH_DESCRIPTION in loaded[KEY_BATCH_PUBLISH]
         assert loaded[KEY_SINGLE_PUBLISH][SINGLE_COPYWRITING_MATCH_MODE] == "standard"
         assert loaded[KEY_SINGLE_PUBLISH][SINGLE_COPYWRITING_RANDOM_CATEGORY] is None
-        assert loaded.get("browser_scheme") == "playwright"
+        assert loaded.get("browser_scheme") == "patchright"
     finally:
         cc.close()

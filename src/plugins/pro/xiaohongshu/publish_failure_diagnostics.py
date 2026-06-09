@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 from ._xhs_submit_probe import (
     evaluate_sr_red_button_state,

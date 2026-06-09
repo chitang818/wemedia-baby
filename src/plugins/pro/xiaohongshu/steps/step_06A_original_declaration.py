@@ -10,7 +10,7 @@
 import logging
 from typing import Any, Dict, Optional, Sequence
 
-from playwright.async_api import Locator, Page
+from src.infrastructure.browser.automation_api import Locator, Page
 
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from ._base import BasePublishStep, StepOutcome

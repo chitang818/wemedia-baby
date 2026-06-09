@@ -13,7 +13,7 @@ import re
 import time
 from typing import Any, Dict, Union
 
-from playwright.async_api import Locator, Page
+from src.infrastructure.browser.automation_api import Locator, Page
 
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from src.plugins.core.wait_helper import PluginWaitHelper

@@ -6,7 +6,7 @@ wujie Shadow DOM 内元素视口坐标与真实鼠标点击（浏览器 isTruste
 import logging
 from typing import Optional, Tuple
 
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 from .wujie_shadow import (
     WUJIE_SHADOW_ROOT_JS,

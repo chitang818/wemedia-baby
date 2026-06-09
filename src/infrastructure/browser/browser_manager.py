@@ -1,7 +1,7 @@
 """
 账号绑定的浏览器管理器
 文件路径：src/infrastructure/browser/browser_manager.py
-功能：统一管理 Playwright 浏览器生命周期，支持账号级环境隔离与指纹持久化
+功能：统一管理 Patchright 浏览器生命周期，支持账号级环境隔离与指纹持久化
 """
 
 import os
@@ -16,12 +16,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import random
 
-from playwright.async_api import async_playwright, Playwright, Browser, BrowserContext, Page
-
-try:
-    from patchright.async_api import async_playwright as compat_async_playwright
-except ImportError:
-    compat_async_playwright = async_playwright
+from src.infrastructure.browser.automation_api import (
+    ENGINE_NAME,
+    Browser,
+    BrowserContext,
+    Page,
+    Playwright,
+    start_patchright,
+)
 
 from .profile_manager import ProfileManager
 from .hardware_profiles import DEFAULT_WEBGL_RENDERER, default_webgl_vendor
@@ -34,7 +36,6 @@ STRICT_REAL_BROWSER_PLATFORMS = {"xiaohongshu"}
 
 # 环境信息标签页 HTML 内注入，用于在多标签/持久化恢复场景下可靠识别该页（不依赖标签顺序）
 _ENV_INFO_TAB_META_SELECTOR = 'meta[name="wemedia-baby-env"][content="1"]'
-_AUTOMATION_CONTROLLED_ARG = "--disable-blink-features=AutomationControlled"
 
 
 def _get_configured_chrome_path() -> Optional[str]:
@@ -61,19 +62,16 @@ UA_TEMPLATES = [
 ]
 
 
-def build_playwright_default_args_to_ignore(
+def build_patchright_default_args_to_ignore(
     *,
     strict_real_browser: bool = False,
     wechat_video: bool = False,
 ) -> List[str]:
-    """Return Playwright default args that should be suppressed for Chrome launch."""
+    """Return Patchright default arguments that may safely be suppressed."""
     ignored = [
         "--enable-automation",
         "--no-sandbox",
         "--disable-popup-blocking",
-        # 所有平台统一忽略该参数——稳定版 Chrome 不支持它，
-        # 会显示黄色「不受支持的命令行标记」警告横幅，反而暴露自动化特征。
-        _AUTOMATION_CONTROLLED_ARG,
     ]
     if wechat_video:
         ignored.extend(
@@ -89,7 +87,7 @@ class UndetectedBrowserManager:
     """账号绑定的浏览器管理器
     
     核心职责：
-    1. 管理 Playwright Browser/Context 生命周期
+    1. 管理 Patchright Browser/Context 生命周期
     2. 自动加载账号凭证和指纹配置
     3. 注入抗检测脚本
     4. 支持有头/无头模式切换
@@ -115,7 +113,7 @@ class UndetectedBrowserManager:
 
     @classmethod
     async def ensure_warmup(cls) -> None:
-        """按需预热：进程内仅执行一次，在首次需要 Playwright 的入口前调用。"""
+        """按需预热：进程内仅执行一次，在首次需要 Patchright 的入口前调用。"""
         if cls._warmup_lock is None:
             with cls._warmup_lock_init:
                 if cls._warmup_lock is None:
@@ -131,11 +129,11 @@ class UndetectedBrowserManager:
         """预热浏览器环境 (后台静默执行)
 
         主要目的：
-        1. 预加载 Playwright 库到内存
+        1. 预加载 Patchright 库到内存
         2. 确保 driver 进程可启动
         3. 减少用户首次点击时的等待时间
 
-        注意：不再使用 async with async_playwright() 立即关闭的方式，
+        注意：不在预热阶段启动并立即关闭 Patchright，
         那样会导致 Node.js 驱动进程因管道关闭抛出 EPIPE 错误崩溃整个程序。
         改为仅做库导入预热，触发模块加载与解压即可。
         """
@@ -144,13 +142,9 @@ class UndetectedBrowserManager:
             import time
             start_time = time.time()
 
-            # 仅导入并访问 async_playwright 对象，触发 Playwright 库与驱动解压，
+            # 仅访问统一入口，触发 Patchright 库与驱动解压，
             # 不实际 start()，避免启动后立即关闭导致 Node.js 端 EPIPE 崩溃。
-            try:
-                from patchright.async_api import async_playwright as _ap
-            except ImportError:
-                from playwright.async_api import async_playwright as _ap
-            _ = _ap  # 触发模块加载
+            _ = start_patchright
             # 短暂让出事件循环，确保任何待处理的异步任务完成
             await asyncio.sleep(0)
 
@@ -385,7 +379,7 @@ class UndetectedBrowserManager:
                     self.platform,
                 )
                 headless = False
-            self.playwright = await compat_async_playwright().start()
+            self.playwright = await start_patchright()
             
             # 如果已有 context，先关闭避免冲突
             if self.context:
@@ -400,8 +394,6 @@ class UndetectedBrowserManager:
             
             # 启动参数：真实浏览器模式只保留稳定性参数；legacy 兼容模式才使用指纹/隐身相关参数。
             args = self._get_launch_args(compat_stealth=compat_stealth)
-            # 注意：不再为 strict_real_browser 主动添加 --disable-blink-features=AutomationControlled
-            # 稳定版 Chrome 不支持此参数，会显示黄色警告横幅，反而暴露自动化特征
             _wx_channels = (self.platform or "").strip().lower() == "wechat_video"
             
             # 仅使用本地 Chrome
@@ -527,7 +519,7 @@ class UndetectedBrowserManager:
                     )
                 tz_id = "Asia/Shanghai"
 
-            _ignore_playwright_defaults = build_playwright_default_args_to_ignore(
+            _ignore_patchright_defaults = build_patchright_default_args_to_ignore(
                 strict_real_browser=strict_real_browser,
                 wechat_video=_wx_channels,
             )
@@ -554,7 +546,7 @@ class UndetectedBrowserManager:
                     "ignore_https_errors": True,
                     "no_viewport": True,
                 } if not strict_real_browser else {}),
-                "ignore_default_args": _ignore_playwright_defaults,
+                "ignore_default_args": _ignore_patchright_defaults,
             }
             # 不论任何平台，统一强制开启沙箱（防止 Playwright 默认自动注入 --no-sandbox 引起不支持警告）
             if user_agent:
@@ -635,7 +627,8 @@ class UndetectedBrowserManager:
                 logger.debug("提取/注册 Chrome PID 失败（不影响启动）: %s", _pid_err)
 
             logger.info(
-                "[BrowserHealth] visible=%s chrome_channel=%s executable=%s profile=%s sandbox=%s trust_mode=%s compat_stealth=%s platform=%s",
+                "[BrowserHealth] engine=%s visible=%s chrome_channel=%s executable=%s profile=%s sandbox=%s trust_mode=%s compat_stealth=%s platform=%s",
+                ENGINE_NAME,
                 not headless,
                 channel,
                 executable_path or "system-channel",
@@ -701,7 +694,7 @@ class UndetectedBrowserManager:
             await session.send("Page.bringToFront")
             return True
         except Exception as e:
-            logger.debug("[BrowserManager] CDP Page.bringToFront 失败，回退 Playwright: %s", e)
+            logger.debug("[BrowserManager] CDP Page.bringToFront 失败，回退 Patchright: %s", e)
             try:
                 await page.bring_to_front()
                 return True
@@ -779,7 +772,7 @@ class UndetectedBrowserManager:
     async def apply_browser_tab_layout(self, *, refresh_env_content: bool = False) -> None:
         """有头模式：按系统设置决定是否保留「环境信息」标签，并把业务页置于前台。
 
-        与 `PlaywrightBrowserService._launch_browser_core` 一致：仅当配置
+        与 `PatchrightBrowserService._launch_browser_core` 一致：仅当配置
         ``show_environment_info_tab`` 为真时才创建/刷新环境标签；关闭该选项时
         不得因「复用已开浏览器」路径再次打开环境页（否则首任务单标签、后续任务
         会多出第二个标签，与设置不符）。
@@ -1731,7 +1724,7 @@ class UndetectedBrowserManager:
                 except asyncio.TimeoutError:
                     logger.warning("[BrowserManager] 优雅关闭 context 超时，将强制结束进程")
                 except asyncio.CancelledError:
-                    logger.warning("[BrowserManager] 关闭 context 被取消，将继续清理 Playwright 实例")
+                    logger.warning("[BrowserManager] 关闭 context 被取消，将继续清理 Patchright 实例")
                     raise
                 except Exception as e:
                     err_msg = str(e).strip().lower()
@@ -1750,7 +1743,7 @@ class UndetectedBrowserManager:
             self.playwright = None
             if pw is not None:
                 try:
-                    logger.info(f"[BrowserManager] 步骤2: 停止 Playwright 实例...")
+                    logger.info("[BrowserManager] 步骤2: 停止 Patchright 实例...")
                     # asyncio.shield 保护 playwright.stop() 不被外层取消中断
                     await asyncio.wait_for(asyncio.shield(pw.stop()), timeout=2.0)
                 except Exception as e:

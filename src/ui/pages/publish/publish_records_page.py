@@ -1700,7 +1700,7 @@ class PublishRecordsPage(BasePage):
                 # 仅使用 Playwright 打开本地浏览器
                 if hasattr(main_window, 'account_page'):
                     logger.info(f"使用外部浏览器打开账号: {platform_username}")
-                    main_window.account_page._open_playwright_browser_for_account(
+                    main_window.account_page._open_patchright_browser_for_account(
                         account_id=account_id,
                         platform_username=platform_username,
                         platform=platform,

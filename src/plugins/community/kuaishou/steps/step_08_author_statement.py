@@ -12,7 +12,7 @@ import json
 import logging
 from typing import Any, Dict, Sequence, Tuple
 
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 from src.plugins.community.kuaishou.selectors import Selectors
 from src.plugins.core.interfaces.publish_plugin import PublishResult

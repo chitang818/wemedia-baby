@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, Mapping, Optional
 
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 
 RISK_PROMPT_KEYWORDS: tuple[str, ...] = (

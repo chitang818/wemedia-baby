@@ -18,7 +18,7 @@ import logging
 import random
 from typing import Dict, Any
 
-from playwright.async_api import Page
+from src.infrastructure.browser.automation_api import Page
 
 from src.plugins.core.interfaces.publish_plugin import PublishResult
 from ._base import BasePublishStep, StepOutcome
@@ -353,27 +353,27 @@ class EnterPublishEntryStep(BasePublishStep):
 
         # 方案B（降级）：Playwright 选择器点击（可能对 open shadow DOM 有效）
         if not clicked:
-            logger.info("[视频号] JS 方案失败，尝试 Playwright 选择器点击...")
+            logger.info("[视频号] JS 方案失败，尝试 Patchright 选择器点击...")
             for sel in btn_selectors:
                 try:
                     btn = page.locator(sel).first
                     if await btn.count() > 0:
                         await btn.wait_for(state="visible", timeout=10000)
-                        logger.info(f"[视频号] Playwright 找到「{btn_label}」按钮: {sel}")
+                        logger.info(f"[视频号] Patchright 找到「{btn_label}」按钮: {sel}")
                         try:
                             from src.infrastructure.anti_risk.human_like import human_click
                             await human_click(page, btn, metadata, anti_risk_config)
                         except Exception:
                             await btn.click()
                         clicked = True
-                        logger.info(f"[视频号] Playwright 已点击「{btn_label}」按钮")
+                        logger.info(f"[视频号] Patchright 已点击「{btn_label}」按钮")
                         break
                 except Exception as e:
-                    logger.debug(f"[视频号] Playwright 通过 {sel} 点击失败: {e}")
+                    logger.debug(f"[视频号] Patchright 通过 {sel} 点击失败: {e}")
                     continue
 
         if not clicked:
-            logger.error(f"[视频号] 未找到「{btn_label}」按钮（JS 与 Playwright 均未成功），终止发布")
+            logger.error(f"[视频号] 未找到「{btn_label}」按钮（JS 与 Patchright 均未成功），终止发布")
             USER_LOG.error(
                 "%s ✗ 未找到「%s」按钮，终止发布",
                 self._step_prefix(metadata, "进入发布页"),

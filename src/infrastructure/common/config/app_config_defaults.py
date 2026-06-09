@@ -80,7 +80,7 @@ def default_app_config_skeleton() -> Dict[str, Any]:
         },
         "material_library_root": "",
         "chrome_executable_path": "",
-        "browser_scheme": "playwright",
+        "browser_scheme": "patchright",
         BROWSER_TRUST_MODE: BROWSER_TRUST_MODE_REAL,
         PUBLISH_FORCE_VISIBLE_BROWSER: True,
         PUBLISH_RESPECT_PLATFORM_INTERVAL: True,
