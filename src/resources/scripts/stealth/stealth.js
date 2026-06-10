@@ -1,432 +1,61 @@
-// ========== 硬件参数伪造 ==========
-Object.defineProperty(navigator, "hardwareConcurrency", {
-  get: () => __HARDWARE_CONCURRENCY__,
-});
-Object.defineProperty(navigator, "deviceMemory", {
-  get: () => __DEVICE_MEMORY__,
-});
+// ==========================================================================
+// WeMediaBaby stealth.js - 全量浏览器指纹与自动化痕迹防护脚本
+// 注意：所有 __PLACEHOLDER__ 变量在注入前由 Python 替换为真实值
+// ==========================================================================
 
-// ========== Screen 屏幕指纹伪造 ==========
-Object.defineProperty(screen, "width", {
-  get: () => __SCREEN_WIDTH__,
-});
-Object.defineProperty(screen, "height", {
-  get: () => __SCREEN_HEIGHT__,
-});
-Object.defineProperty(screen, "availWidth", {
-  get: () => __SCREEN_AVAIL_WIDTH__,
-});
-Object.defineProperty(screen, "availHeight", {
-  get: () => __SCREEN_AVAIL_HEIGHT__,
-});
-Object.defineProperty(screen, "colorDepth", {
-  get: () => __SCREEN_COLOR_DEPTH__,
-});
-Object.defineProperty(screen, "pixelDepth", {
-  get: () => __SCREEN_PIXEL_DEPTH__,
-});
-
-// ========== WebGL 厂商与渲染器伪造 ==========
-const getParameter = WebGLRenderingContext.prototype.getParameter;
-WebGLRenderingContext.prototype.getParameter = function (parameter) {
-  // 37445: UNMASKED_VENDOR_WEBGL
-  // 37446: UNMASKED_RENDERER_WEBGL
-  if (parameter === 37445) {
-    return "__WEBGL_VENDOR__";
-  }
-  if (parameter === 37446) {
-    return "__WEBGL_RENDERER__";
-  }
-  return getParameter.apply(this, arguments);
-};
-
-// 针对 WebGL2 也做同样的修补
-if (typeof WebGL2RenderingContext !== "undefined") {
-  const getParameter2 = WebGL2RenderingContext.prototype.getParameter;
-  WebGL2RenderingContext.prototype.getParameter = function (parameter) {
-    if (parameter === 37445) {
-      return "__WEBGL_VENDOR__";
-    }
-    if (parameter === 37446) {
-      return "__WEBGL_RENDERER__";
-    }
-    return getParameter2.apply(this, arguments);
-  };
-}
-
-// ========== Navigator 扩展属性伪造 ==========
-Object.defineProperty(navigator, "platform", {
-  get: () => "__PLATFORM__",
-});
-Object.defineProperty(navigator, "maxTouchPoints", {
-  get: () => __MAX_TOUCH_POINTS__,
-});
-Object.defineProperty(navigator, "vendor", {
-  get: () => "__VENDOR__",
-});
-Object.defineProperty(navigator, "vendorSub", {
-  get: () => "__VENDOR_SUB__",
-});
-Object.defineProperty(navigator, "productSub", {
-  get: () => "__PRODUCT_SUB__",
-});
-
-// ========== 隐藏 webdriver 属性（原型链保护：toString 伪装为 native code）==========
-// 直接 get: () => undefined 可被检测原型链篡改；改用包装 toString 的方式
+// ========== 0. 工具函数：native code toString 伪装 ==========
+// 检测原理：Object.defineProperty 注入的 getter，调用 toString() 会返回
+// "function () { return xxx; }" 而非 "function get xxx() { [native code] }"
+// 平台据此识别 stealth 注入，必须对所有 getter 统一处理。
 (function () {
-  const _getter = function () { return undefined; };
-  // 令 _getter.toString() 返回与原生代码格式一致的字符串，规避「toString 检测」
-  const _fakeToString = function () { return "function get webdriver() { [native code] }"; };
-  Object.defineProperty(_getter, "toString", { value: _fakeToString, writable: false, configurable: false });
-  Object.defineProperty(navigator, "webdriver", {
-    get: _getter,
-    configurable: true,
-  });
+  // 缓存原生 Function.prototype.toString，防止被后续代码覆盖
+  const _nativeToString = Function.prototype.toString;
+
+  /**
+   * 创建一个 toString 返回 [native code] 格式的 getter 函数
+   * @param {string} propName - 属性名（如 "hardwareConcurrency"）
+   * @param {*} value - getter 返回值（可为常量或函数）
+   * @returns {Function} - 可直接传给 Object.defineProperty 的 getter
+   */
+  window.__makeNativeGetter = function (propName, value) {
+    const getter = typeof value === 'function' ? value : function () { return value; };
+    const fakeToString = function () {
+      return 'function get ' + propName + '() { [native code] }';
+    };
+    // 二级保护：fakeToString 本身的 toString 也伪装
+    const metaToString = function () { return 'function toString() { [native code] }'; };
+    try {
+      Object.defineProperty(fakeToString, 'toString', { value: metaToString, writable: false, configurable: false });
+      Object.defineProperty(getter, 'toString', { value: fakeToString, writable: false, configurable: false });
+    } catch (e) {}
+    return getter;
+  };
+
+  /**
+   * 创建一个 toString 返回 [native code] 的普通方法（非 getter）
+   * @param {string} methodName - 方法名
+   * @param {Function} fn - 实际方法
+   */
+  window.__makeNativeFn = function (methodName, fn) {
+    const fakeToString = function () {
+      return 'function ' + methodName + '() { [native code] }';
+    };
+    const metaToString = function () { return 'function toString() { [native code] }'; };
+    try {
+      Object.defineProperty(fakeToString, 'toString', { value: metaToString, writable: false, configurable: false });
+      Object.defineProperty(fn, 'toString', { value: fakeToString, writable: false, configurable: false });
+    } catch (e) {}
+    return fn;
+  };
 })();
 
-// ========== 伪造插件列表 ==========
-Object.defineProperty(navigator, "plugins", {
-  get: () => [
-    { name: "Chrome PDF Plugin", filename: "internal-pdf-viewer" },
-    { name: "Chrome PDF Viewer", filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai" },
-    { name: "Native Client", filename: "internal-nacl-plugin" },
-  ],
-});
+const _nativeGetter = window.__makeNativeGetter;
+const _nativeFn = window.__makeNativeFn;
 
-// ========== 伪造 languages ==========
-Object.defineProperty(navigator, "languages", {
-  get: () => __LANGUAGES_JSON__,
-});
-
-// ========== 伪造 chrome 对象 ==========
-if (!window.chrome) {
-  window.chrome = {
-    runtime: {},
-    loadTimes: function () {},
-    csi: function () {},
-    app: {},
-  };
-}
-
-// ========== UA-CH / Client Hints 伪造 ==========
-// 注意：这是“尽力而为”的伪装。若浏览器不支持 userAgentData，则安全降级。
-try {
-  const uaCh = __UA_CH_JSON__;
-  if (uaCh && navigator.userAgentData) {
-    const makeUad = () => {
-      const brands = uaCh.brands || uaCh.fullVersionList || [];
-      const base = {
-        brands: brands,
-        mobile: !!uaCh.mobile,
-        platform: uaCh.platform || "Windows",
-      };
-      base.getHighEntropyValues = async (hints) => {
-        const out = { ...base };
-        const want = Array.isArray(hints) ? hints : [];
-        const map = {
-          architecture: uaCh.architecture,
-          bitness: uaCh.bitness,
-          model: uaCh.model,
-          platformVersion: uaCh.platformVersion,
-          uaFullVersion: uaCh.uaFullVersion,
-          fullVersionList: uaCh.fullVersionList,
-          wow64: uaCh.wow64,
-        };
-        for (const k of want) {
-          if (k in map && map[k] !== undefined) out[k] = map[k];
-        }
-        return out;
-      };
-      return base;
-    };
-    Object.defineProperty(navigator, "userAgentData", {
-      get: () => makeUad(),
-      configurable: true,
-    });
-  }
-} catch (e) {}
-
-// ========== Battery API 伪造 ==========
-if (navigator.getBattery) {
-  navigator.getBattery = () =>
-    Promise.resolve({
-      charging: __BATTERY_CHARGING__,
-      chargingTime: 0,
-      dischargingTime: Infinity,
-      level: __BATTERY_LEVEL__,
-      addEventListener: function () {},
-      removeEventListener: function () {},
-      dispatchEvent: function () {},
-    });
-}
-
-// ========== Connection 网络连接伪造 ==========
-if (navigator.connection) {
-  Object.defineProperty(navigator.connection, "effectiveType", {
-    get: () => "__CONNECTION_TYPE__",
-  });
-  Object.defineProperty(navigator.connection, "downlink", {
-    get: () => __CONNECTION_DOWNLINK__,
-  });
-  Object.defineProperty(navigator.connection, "rtt", {
-    get: () => __CONNECTION_RTT__,
-  });
-}
-
-// ========== AudioContext 音频指纹噪声 ==========
-const audioContextSeed = __AUDIO_CONTEXT_SEED__;
-if (__PATCH_AUDIO_CONTEXT__ && typeof AudioContext !== "undefined") {
-  const OriginalAudioContext = AudioContext;
-  window.AudioContext = function () {
-    const context = new OriginalAudioContext(...arguments);
-    const originalCreateOscillator = context.createOscillator.bind(context);
-    context.createOscillator = function () {
-      const oscillator = originalCreateOscillator();
-      const originalStart = oscillator.start.bind(oscillator);
-      oscillator.start = function (when) {
-        // 添加基于种子的微小频率偏移
-        oscillator.frequency.value += (audioContextSeed % 10) * 0.001;
-        return originalStart(when);
-      };
-      return oscillator;
-    };
-    return context;
-  };
-}
-
-// ========== Canvas 指纹噪声 (基于账号种子) ==========
-const canvasNoiseSeed = __CANVAS_NOISE_SEED__;
-const canvasNoiseStrength = __CANVAS_NOISE_STRENGTH__;
-
-// ---------- 内部噪声施加函数 ----------
-// 使用伪随机间隔（而非固定 i+=4），使噪声分布更自然，难以被逆向分析
-function _applyCanvasNoise(imageData) {
-  const data = imageData.data;
-  const len = data.length;
-  const seed = canvasNoiseSeed;
-  const strength = canvasNoiseStrength || 1;
-  // 伪随机步进：基于种子的 LCG，每次步进 4~16 字节
-  let lcg = (seed * 1664525 + 1013904223) & 0xffffffff;
-  let i = 0;
-  while (i < len - 3) {
-    const noise = (lcg ^ (seed >> 3)) & 0x3; // 0-3 范围的噪声
-    data[i] ^= noise * strength;
-    // 步进：4 + (lcg & 0xf) 即 4~19，增加随机性
-    const step = 4 + (lcg & 0xf);
-    lcg = (lcg * 1664525 + 1013904223) & 0xffffffff;
-    i += step;
-  }
-}
-
-const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-HTMLCanvasElement.prototype.toDataURL = function (type) {
-  if (type === "image/png" || type === "image/webp" || !type) {
-    const context = this.getContext("2d");
-    if (context && this.width > 0 && this.height > 0) {
-      try {
-        const imageData = context.getImageData(0, 0, this.width, this.height);
-        _applyCanvasNoise(imageData);
-        context.putImageData(imageData, 0, 0);
-      } catch (e) {}
-    }
-  }
-  return originalToDataURL.apply(this, arguments);
-};
-
-// 补充 toBlob 路径：部分指纹库通过 toBlob 导出
-const originalToBlob = HTMLCanvasElement.prototype.toBlob;
-HTMLCanvasElement.prototype.toBlob = function (callback, type, quality) {
-  const mimeType = type || "image/png";
-  if (mimeType === "image/png" || mimeType === "image/webp") {
-    const ctx = this.getContext("2d");
-    if (ctx && this.width > 0 && this.height > 0) {
-      try {
-        const imageData = ctx.getImageData(0, 0, this.width, this.height);
-        _applyCanvasNoise(imageData);
-        ctx.putImageData(imageData, 0, 0);
-      } catch (e) {}
-    }
-  }
-  return originalToBlob.call(this, callback, type, quality);
-};
-
-// ★ 补全 getImageData 路径：部分高级指纹库直接读取 getImageData 绕过 toDataURL
-// 需要在 getImageData 返回之前同样施加噪声，保持三条路径一致
-const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
-CanvasRenderingContext2D.prototype.getImageData = function (sx, sy, sw, sh) {
-  const imageData = originalGetImageData.call(this, sx, sy, sw, sh);
-  // 仅对全尺寸导出施加噪声（w>=8 && h>=8），避免干扰正常小图形操作
-  if (sw >= 8 && sh >= 8) {
-    try {
-      _applyCanvasNoise(imageData);
-    } catch (e) {}
-  }
-  return imageData;
-};
-
-// ========== Font 字体指纹防护 ==========
-// 字体指纹检测的主要手段：对比不同字体渲染同一字符串时 span 的 offsetWidth 差异
-// 防护策略：
-//   1. hook document.fonts.check() 使非白名单字体返回 false
-//   2. 让 FontFace / FontFaceSet.load 对非白名单字体静默失败
-const commonFonts = new Set([
-  "Arial",
-  "Verdana",
-  "Helvetica",
-  "Times New Roman",
-  "Courier New",
-  "Georgia",
-  "Palatino",
-  "Garamond",
-  "Bookman",
-  "Comic Sans MS",
-  "Trebuchet MS",
-  "Impact",
-  "Microsoft YaHei",
-  "SimSun",
-  "SimHei",
-]);
-
-// hook document.fonts.check()：对白名单外的字体返回 false，模拟未安装
-if (document.fonts && document.fonts.check) {
-  const _origFontsCheck = document.fonts.check.bind(document.fonts);
-  document.fonts.check = function (font, text) {
-    const match = font.match(/"([^"]+)"|'([^']+)'|(\S+)/);
-    const fontName = match ? (match[1] || match[2] || match[3]) : "";
-    if (fontName && !commonFonts.has(fontName)) return false;
-    try { return _origFontsCheck(font, text); } catch (e) { return false; }
-  };
-}
-
-// hook FontFaceSet.load()：对白名单外的字体返回空列表，阻止探测
-if (document.fonts && document.fonts.load) {
-  const _origFontsLoad = document.fonts.load.bind(document.fonts);
-  document.fonts.load = function (font, text) {
-    const match = font.match(/"([^"]+)"|'([^']+)'|(\S+)/);
-    const fontName = match ? (match[1] || match[2] || match[3]) : "";
-    if (fontName && !commonFonts.has(fontName)) return Promise.resolve([]);
-    return _origFontsLoad(font, text);
-  };
-}
-
-// ========== Timezone 一致性保护 ==========
-// 软件仅在中国使用，统一东八区 (UTC+8)，偏移量 -480
-const originalGetTimezoneOffset = Date.prototype.getTimezoneOffset;
-Date.prototype.getTimezoneOffset = function () {
-  return -480; // UTC+8，与 Playwright timezone_id: Asia/Shanghai 一致
-};
-
-// ========== WebRTC IP 泄露完全防护 ==========
-// 方案1: 完全禁用 RTCPeerConnection
-if (typeof RTCPeerConnection !== "undefined") {
-  const OriginalRTCPeerConnection = RTCPeerConnection;
-  window.RTCPeerConnection = function () {
-    const pc = new OriginalRTCPeerConnection(...arguments);
-
-    // 拦截 createOffer,过滤真实IP
-    const originalCreateOffer = pc.createOffer.bind(pc);
-    pc.createOffer = function () {
-      return originalCreateOffer(...arguments).then((offer) => {
-        // 替换SDP中的真实IP为0.0.0.0
-        if (offer.sdp) {
-          offer.sdp = offer.sdp.replace(
-            /c=IN IP4 \d+\.\d+\.\d+\.\d+/g,
-            "c=IN IP4 0.0.0.0",
-          );
-          offer.sdp = offer.sdp.replace(/a=candidate:.+?(\r\n|\n|$)/g, "");
-        }
-        return offer;
-      });
-    };
-
-    return pc;
-  };
-
-  // 同步处理 webkit 前缀
-  if (typeof webkitRTCPeerConnection !== "undefined") {
-    window.webkitRTCPeerConnection = window.RTCPeerConnection;
-  }
-}
-
-// ========== Media Devices 伪造 ==========
-if (__PATCH_MEDIA_DEVICES__ && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-  const fakeDevices = [
-    {
-      deviceId: "default",
-      kind: "audioinput",
-      label: "Default - Microphone (Realtek High Definition Audio)",
-      groupId: "group-audio-input-1",
-    },
-    {
-      deviceId: "communications",
-      kind: "audioinput",
-      label: "Communications - Microphone (Realtek High Definition Audio)",
-      groupId: "group-audio-input-1",
-    },
-    {
-      deviceId: "default",
-      kind: "audiooutput",
-      label: "Default - Speakers (Realtek High Definition Audio)",
-      groupId: "group-audio-output-1",
-    },
-    {
-      deviceId: "webcam-1",
-      kind: "videoinput",
-      label: "HD Webcam (04f2:b5ce)",
-      groupId: "group-video-input-1",
-    },
-  ];
-
-  navigator.mediaDevices.enumerateDevices = () => Promise.resolve(fakeDevices);
-}
-
-// ========== Permissions API 完善 ==========
-if (__PATCH_PERMISSIONS__ && navigator.permissions && navigator.permissions.query) {
-  const originalPermissionsQuery = navigator.permissions.query;
-  const permissionsMap = {
-    notifications: "granted",
-    geolocation: "prompt",
-    camera: "prompt",
-    microphone: "prompt",
-    "clipboard-read": "denied",
-    "clipboard-write": "granted",
-    "persistent-storage": "granted",
-    push: "prompt",
-    midi: "prompt",
-  };
-
-  navigator.permissions.query = function (params) {
-    const permName =
-      params.name || (params.descriptor && params.descriptor.name);
-    if (permName && permissionsMap[permName]) {
-      return Promise.resolve({ state: permissionsMap[permName] });
-    }
-    return originalPermissionsQuery.apply(this, arguments);
-  };
-}
-
-// ========== Intl 国际化一致性 ==========
-// 软件仅在中国使用，统一 zh-CN + Asia/Shanghai，与 Playwright locale/timezone_id 参数一致
-if (typeof Intl !== "undefined" && Intl.DateTimeFormat) {
-  const OriginalDateTimeFormat = Intl.DateTimeFormat;
-  Intl.DateTimeFormat = function (locales, options) {
-    const newLocales = locales || "zh-CN";
-    const newOptions = options || {};
-    if (!newOptions.timeZone) {
-      newOptions.timeZone = "Asia/Shanghai";
-    }
-    return new OriginalDateTimeFormat(newLocales, newOptions);
-  };
-
-  // 保留原型链
-  Intl.DateTimeFormat.prototype = OriginalDateTimeFormat.prototype;
-  Intl.DateTimeFormat.supportedLocalesOf =
-    OriginalDateTimeFormat.supportedLocalesOf;
-}
-
-// ========== CDP/Playwright/Puppeteer 检测绕过 ==========
-// 删除自动化工具留下的痕迹
+// ========== 1. CDP / 自动化框架痕迹清理 ==========
+// 必须最先执行，防止后续脚本引用这些属性
 delete window.__playwright;
+delete window.__pw_target;
 delete window.__puppeteer;
 delete window.__selenium;
 delete window.callPhantom;
@@ -443,137 +72,526 @@ delete window.__webdriver_script_function;
 delete window.__webdriver_script_func;
 delete window.__webdriver_script_fn;
 
-// ========== Headless 检测绕过 ==========
-// 伪造 window.outerWidth/outerHeight (headless模式下这些值为0)
-if (window.outerWidth === 0) {
-  Object.defineProperty(window, "outerWidth", {
-    get: () => window.innerWidth,
-  });
-}
-if (window.outerHeight === 0) {
-  Object.defineProperty(window, "outerHeight", {
-    get: () => window.innerHeight + 85, // 加上浏览器UI高度
-  });
-}
-
-// 伪造 chrome.runtime (headless模式下可能缺失)
-if (window.chrome && !window.chrome.runtime) {
-  window.chrome.runtime = {
-    connect: function () {},
-    sendMessage: function () {},
-    onMessage: {
-      addListener: function () {},
-      removeListener: function () {},
-    },
-  };
-}
-
-// ========== 其他高级伪造 ==========
-// 伪造 window.external (IE遗留,但某些检测会查看)
-if (!window.external) {
-  window.external = {
-    AddSearchProvider: function () {},
-    IsSearchProviderInstalled: function () {},
-  };
-}
-
-// 伪造 navigator.mimeTypes
-Object.defineProperty(navigator, "mimeTypes", {
-  get: () => [
-    {
-      type: "application/pdf",
-      suffixes: "pdf",
-      description: "Portable Document Format",
-    },
-    {
-      type: "application/x-google-chrome-pdf",
-      suffixes: "pdf",
-      description: "Portable Document Format",
-    },
-  ],
-});
-
-// 确保 navigator.doNotTrack 存在
-if (typeof navigator.doNotTrack === "undefined") {
-  Object.defineProperty(navigator, "doNotTrack", {
-    get: () => null,
-  });
-}
-
-// ========== 页面焦点与可见性伪造 ==========
-// 自动化下浏览器窗口通常不在前台，document.hasFocus() 返回 false、
-// visibilityState 为 hidden，是重要的自动化特征，需要统一伪造为「前台激活状态」
+// 清理 cdc_ 前缀属性（ChromeDriver 遗留命名约定）
 try {
-  Object.defineProperty(document, "hidden", { get: () => false, configurable: true });
-  Object.defineProperty(document, "visibilityState", { get: () => "visible", configurable: true });
-  // document.hasFocus()
-  const _origHasFocus = document.hasFocus.bind(document);
-  document.hasFocus = function () { return true; };
-  // Page Visibility API 事件：确保 visibilitychange 不会触发 hidden 逻辑
-  document.addEventListener("visibilitychange", function (e) {
-    e.stopImmediatePropagation();
-  }, true);
+  ['window', 'document'].forEach(function (target) {
+    var obj = target === 'window' ? window : document;
+    try {
+      var keys = Object.getOwnPropertyNames(obj);
+      for (var i = 0; i < keys.length; i++) {
+        if (keys[i].startsWith('cdc_') || keys[i].startsWith('__playwright') || keys[i].startsWith('__pw_')) {
+          try { delete obj[keys[i]]; } catch (e) {}
+        }
+      }
+    } catch (e) {}
+  });
 } catch (e) {}
 
-// ========== performance.now() 时序微抖动 ==========
-// 机器操作时序过于精准，缺乏真实用户的「认知延迟」抖动。
-// 添加 ±0.08ms 范围内的随机抖动，使时序更接近真实浏览器。
+// ========== 2. 硬件参数伪造（navigator） ==========
 try {
-  const _origPerfNow = performance.now.bind(performance);
-  let _perfNowOffset = 0;
-  performance.now = function () {
-    // 每次调用随机漂移 ±0.08ms，累计偏移不超过 ±2ms（防止累计误差过大）
-    _perfNowOffset += (Math.random() - 0.5) * 0.16;
-    if (_perfNowOffset > 2) _perfNowOffset = 2;
-    if (_perfNowOffset < -2) _perfNowOffset = -2;
-    return _origPerfNow() + _perfNowOffset;
-  };
+  Object.defineProperty(navigator, 'hardwareConcurrency', {
+    get: _nativeGetter('hardwareConcurrency', __HARDWARE_CONCURRENCY__),
+    configurable: true,
+  });
 } catch (e) {}
 
-// ========== navigator.connection 兜底 ==========
-// 若 navigator.connection 不存在（某些环境），避免脚本报错且补充合理值
-if (!navigator.connection) {
-  try {
-    Object.defineProperty(navigator, "connection", {
-      get: () => ({
-        effectiveType: "4g",
-        downlink: 10,
-        rtt: 50,
+try {
+  Object.defineProperty(navigator, 'deviceMemory', {
+    get: _nativeGetter('deviceMemory', __DEVICE_MEMORY__),
+    configurable: true,
+  });
+} catch (e) {}
+
+// ========== 3. Screen 屏幕指纹伪造 ==========
+try {
+  Object.defineProperty(screen, 'width', { get: _nativeGetter('width', __SCREEN_WIDTH__), configurable: true });
+  Object.defineProperty(screen, 'height', { get: _nativeGetter('height', __SCREEN_HEIGHT__), configurable: true });
+  Object.defineProperty(screen, 'availWidth', { get: _nativeGetter('availWidth', __SCREEN_AVAIL_WIDTH__), configurable: true });
+  Object.defineProperty(screen, 'availHeight', { get: _nativeGetter('availHeight', __SCREEN_AVAIL_HEIGHT__), configurable: true });
+  Object.defineProperty(screen, 'colorDepth', { get: _nativeGetter('colorDepth', __SCREEN_COLOR_DEPTH__), configurable: true });
+  Object.defineProperty(screen, 'pixelDepth', { get: _nativeGetter('pixelDepth', __SCREEN_PIXEL_DEPTH__), configurable: true });
+} catch (e) {}
+
+// ========== 4. WebGL 厂商与渲染器伪造 ==========
+try {
+  const _origGetParam = WebGLRenderingContext.prototype.getParameter;
+  WebGLRenderingContext.prototype.getParameter = _nativeFn('getParameter', function (parameter) {
+    if (parameter === 37445) return '__WEBGL_VENDOR__';   // UNMASKED_VENDOR_WEBGL
+    if (parameter === 37446) return '__WEBGL_RENDERER__'; // UNMASKED_RENDERER_WEBGL
+    return _origGetParam.apply(this, arguments);
+  });
+} catch (e) {}
+
+try {
+  if (typeof WebGL2RenderingContext !== 'undefined') {
+    const _origGetParam2 = WebGL2RenderingContext.prototype.getParameter;
+    WebGL2RenderingContext.prototype.getParameter = _nativeFn('getParameter', function (parameter) {
+      if (parameter === 37445) return '__WEBGL_VENDOR__';
+      if (parameter === 37446) return '__WEBGL_RENDERER__';
+      return _origGetParam2.apply(this, arguments);
+    });
+  }
+} catch (e) {}
+
+// ========== 5. Navigator 扩展属性伪造 ==========
+try {
+  Object.defineProperty(navigator, 'platform', { get: _nativeGetter('platform', '__PLATFORM__'), configurable: true });
+  Object.defineProperty(navigator, 'maxTouchPoints', { get: _nativeGetter('maxTouchPoints', __MAX_TOUCH_POINTS__), configurable: true });
+  Object.defineProperty(navigator, 'vendor', { get: _nativeGetter('vendor', '__VENDOR__'), configurable: true });
+  Object.defineProperty(navigator, 'vendorSub', { get: _nativeGetter('vendorSub', '__VENDOR_SUB__'), configurable: true });
+  Object.defineProperty(navigator, 'productSub', { get: _nativeGetter('productSub', '__PRODUCT_SUB__'), configurable: true });
+} catch (e) {}
+
+// doNotTrack 兜底
+try {
+  if (typeof navigator.doNotTrack === 'undefined') {
+    Object.defineProperty(navigator, 'doNotTrack', { get: _nativeGetter('doNotTrack', null), configurable: true });
+  }
+} catch (e) {}
+
+// ========== 6. 隐藏 navigator.webdriver ==========
+// 原型链保护：toString 伪装为 native code（最成熟的检测手段）
+(function () {
+  const _getter = _nativeGetter('webdriver', undefined);
+  Object.defineProperty(navigator, 'webdriver', {
+    get: _getter,
+    configurable: true,
+  });
+})();
+
+// ========== 7. 伪造插件列表 ==========
+// 插件名/deviceId 均来自账号固定的随机种子，多账号不完全相同
+try {
+  Object.defineProperty(navigator, 'plugins', {
+    get: _nativeGetter('plugins', [
+      { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+      { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+      { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
+    ]),
+    configurable: true,
+  });
+} catch (e) {}
+
+// ========== 8. 伪造 mimeTypes ==========
+try {
+  Object.defineProperty(navigator, 'mimeTypes', {
+    get: _nativeGetter('mimeTypes', [
+      { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format' },
+      { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format' },
+    ]),
+    configurable: true,
+  });
+} catch (e) {}
+
+// ========== 9. 伪造 languages ==========
+try {
+  Object.defineProperty(navigator, 'languages', {
+    get: _nativeGetter('languages', __LANGUAGES_JSON__),
+    configurable: true,
+  });
+} catch (e) {}
+
+// ========== 10. 伪造 chrome 对象 ==========
+try {
+  if (!window.chrome) {
+    window.chrome = {
+      runtime: {
+        connect: _nativeFn('connect', function () {}),
+        sendMessage: _nativeFn('sendMessage', function () {}),
+        onMessage: { addListener: function () {}, removeListener: function () {} },
+        id: undefined,
+      },
+      loadTimes: _nativeFn('loadTimes', function () {}),
+      csi: _nativeFn('csi', function () {}),
+      app: {},
+    };
+  } else if (!window.chrome.runtime) {
+    window.chrome.runtime = {
+      connect: _nativeFn('connect', function () {}),
+      sendMessage: _nativeFn('sendMessage', function () {}),
+      onMessage: { addListener: function () {}, removeListener: function () {} },
+    };
+  }
+} catch (e) {}
+
+// ========== 11. UA-CH / navigator.userAgentData 伪造 ==========
+try {
+  const uaCh = __UA_CH_JSON__;
+  if (uaCh && navigator.userAgentData) {
+    const makeUad = function () {
+      const brands = uaCh.brands || uaCh.fullVersionList || [];
+      const base = {
+        brands: brands,
+        mobile: !!uaCh.mobile,
+        platform: uaCh.platform || 'Windows',
+        toJSON: _nativeFn('toJSON', function () { return { brands: brands, mobile: !!uaCh.mobile, platform: uaCh.platform || 'Windows' }; }),
+      };
+      base.getHighEntropyValues = _nativeFn('getHighEntropyValues', async function (hints) {
+        const out = { brands: brands, mobile: !!uaCh.mobile, platform: uaCh.platform || 'Windows' };
+        const want = Array.isArray(hints) ? hints : [];
+        const map = {
+          architecture: uaCh.architecture,
+          bitness: uaCh.bitness,
+          model: uaCh.model,
+          platformVersion: uaCh.platformVersion,
+          uaFullVersion: uaCh.uaFullVersion,
+          fullVersionList: uaCh.fullVersionList,
+          wow64: uaCh.wow64,
+        };
+        for (var i = 0; i < want.length; i++) {
+          var k = want[i];
+          if (k in map && map[k] !== undefined) out[k] = map[k];
+        }
+        return out;
+      });
+      return base;
+    };
+    Object.defineProperty(navigator, 'userAgentData', {
+      get: _nativeGetter('userAgentData', makeUad()),
+      configurable: true,
+    });
+  }
+} catch (e) {}
+
+// ========== 12. Battery API 伪造 ==========
+try {
+  if (navigator.getBattery) {
+    navigator.getBattery = _nativeFn('getBattery', function () {
+      return Promise.resolve({
+        charging: __BATTERY_CHARGING__,
+        chargingTime: 0,
+        dischargingTime: Infinity,
+        level: __BATTERY_LEVEL__,
+        addEventListener: function () {},
+        removeEventListener: function () {},
+        dispatchEvent: function () { return true; },
+      });
+    });
+  }
+} catch (e) {}
+
+// ========== 13. Connection 网络连接伪造 ==========
+try {
+  if (navigator.connection) {
+    Object.defineProperty(navigator.connection, 'effectiveType', { get: _nativeGetter('effectiveType', '__CONNECTION_TYPE__'), configurable: true });
+    Object.defineProperty(navigator.connection, 'downlink', { get: _nativeGetter('downlink', __CONNECTION_DOWNLINK__), configurable: true });
+    Object.defineProperty(navigator.connection, 'rtt', { get: _nativeGetter('rtt', __CONNECTION_RTT__), configurable: true });
+    Object.defineProperty(navigator.connection, 'saveData', { get: _nativeGetter('saveData', false), configurable: true });
+  } else {
+    // navigator.connection 不存在时兜底
+    Object.defineProperty(navigator, 'connection', {
+      get: _nativeGetter('connection', {
+        effectiveType: '__CONNECTION_TYPE__',
+        downlink: __CONNECTION_DOWNLINK__,
+        rtt: __CONNECTION_RTT__,
         saveData: false,
         addEventListener: function () {},
         removeEventListener: function () {},
       }),
       configurable: true,
     });
-  } catch (e) {}
-}
+  }
+} catch (e) {}
 
-// ========== Headless 额外特征清理 ==========
-// 某些检测脚本探测 CSS/DOM 属性差异来判断 Headless
+// ========== 14. AudioContext 音频指纹噪声 ==========
 try {
-  // 确保 window.screen.orientation 存在
-  if (!window.screen.orientation) {
-    Object.defineProperty(window.screen, "orientation", {
-      get: () => ({ type: "landscape-primary", angle: 0 }),
+  const _audioSeed = __AUDIO_CONTEXT_SEED__;
+  if (__PATCH_AUDIO_CONTEXT__ && typeof AudioContext !== 'undefined') {
+    const _OrigAudioContext = AudioContext;
+    window.AudioContext = _nativeFn('AudioContext', function () {
+      const ctx = new _OrigAudioContext(...arguments);
+      const _origCreateOsc = ctx.createOscillator.bind(ctx);
+      ctx.createOscillator = _nativeFn('createOscillator', function () {
+        const osc = _origCreateOsc();
+        const _origStart = osc.start.bind(osc);
+        osc.start = _nativeFn('start', function (when) {
+          osc.frequency.value += (_audioSeed % 10) * 0.001;
+          return _origStart(when);
+        });
+        return osc;
+      });
+      return ctx;
+    });
+  }
+} catch (e) {}
+
+// ========== 15. Canvas 指纹噪声（基于账号种子）==========
+try {
+  const _canvasSeed = __CANVAS_NOISE_SEED__;
+  const _canvasStrength = __CANVAS_NOISE_STRENGTH__;
+
+  function _applyCanvasNoise(imageData) {
+    const data = imageData.data;
+    const len = data.length;
+    let lcg = (_canvasSeed * 1664525 + 1013904223) & 0xffffffff;
+    let i = 0;
+    while (i < len - 3) {
+      const noise = (lcg ^ (_canvasSeed >> 3)) & 0x3;
+      data[i] ^= noise * _canvasStrength;
+      const step = 4 + (lcg & 0xf);
+      lcg = (lcg * 1664525 + 1013904223) & 0xffffffff;
+      i += step;
+    }
+  }
+
+  const _origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+  HTMLCanvasElement.prototype.toDataURL = _nativeFn('toDataURL', function (type) {
+    if (type === 'image/png' || type === 'image/webp' || !type) {
+      const ctx2d = this.getContext('2d');
+      if (ctx2d && this.width > 0 && this.height > 0) {
+        try {
+          const imgData = ctx2d.getImageData(0, 0, this.width, this.height);
+          _applyCanvasNoise(imgData);
+          ctx2d.putImageData(imgData, 0, 0);
+        } catch (e) {}
+      }
+    }
+    return _origToDataURL.apply(this, arguments);
+  });
+
+  const _origToBlob = HTMLCanvasElement.prototype.toBlob;
+  HTMLCanvasElement.prototype.toBlob = _nativeFn('toBlob', function (callback, type, quality) {
+    const mimeType = type || 'image/png';
+    if (mimeType === 'image/png' || mimeType === 'image/webp') {
+      const ctx2d = this.getContext('2d');
+      if (ctx2d && this.width > 0 && this.height > 0) {
+        try {
+          const imgData = ctx2d.getImageData(0, 0, this.width, this.height);
+          _applyCanvasNoise(imgData);
+          ctx2d.putImageData(imgData, 0, 0);
+        } catch (e) {}
+      }
+    }
+    return _origToBlob.call(this, callback, type, quality);
+  });
+
+  // getImageData 路径：部分高级指纹库直接读取绕过 toDataURL
+  const _origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+  CanvasRenderingContext2D.prototype.getImageData = _nativeFn('getImageData', function (sx, sy, sw, sh) {
+    const imgData = _origGetImageData.call(this, sx, sy, sw, sh);
+    if (sw >= 8 && sh >= 8) {
+      try { _applyCanvasNoise(imgData); } catch (e) {}
+    }
+    return imgData;
+  });
+} catch (e) {}
+
+// ========== 16. Font 字体指纹防护 ==========
+try {
+  const _commonFonts = new Set([
+    'Arial', 'Verdana', 'Helvetica', 'Times New Roman', 'Courier New',
+    'Georgia', 'Palatino', 'Garamond', 'Bookman', 'Comic Sans MS',
+    'Trebuchet MS', 'Impact', 'Microsoft YaHei', 'SimSun', 'SimHei',
+    'Microsoft JhengHei', 'FangSong', 'KaiTi',
+  ]);
+
+  if (document.fonts && document.fonts.check) {
+    const _origFontsCheck = document.fonts.check.bind(document.fonts);
+    document.fonts.check = _nativeFn('check', function (font, text) {
+      const m = font.match(/"([^"]+)"|'([^']+)'|(\S+)/);
+      const fontName = m ? (m[1] || m[2] || m[3]) : '';
+      if (fontName && !_commonFonts.has(fontName)) return false;
+      try { return _origFontsCheck(font, text); } catch (e) { return false; }
+    });
+  }
+
+  if (document.fonts && document.fonts.load) {
+    const _origFontsLoad = document.fonts.load.bind(document.fonts);
+    document.fonts.load = _nativeFn('load', function (font, text) {
+      const m = font.match(/"([^"]+)"|'([^']+)'|(\S+)/);
+      const fontName = m ? (m[1] || m[2] || m[3]) : '';
+      if (fontName && !_commonFonts.has(fontName)) return Promise.resolve([]);
+      return _origFontsLoad(font, text);
+    });
+  }
+} catch (e) {}
+
+// ========== 17. Timezone 一致性保护 ==========
+// 时区偏移量由 Python 注入（与 Playwright timezone_id 参数对应）
+try {
+  const _origGetTimezoneOffset = Date.prototype.getTimezoneOffset;
+  Date.prototype.getTimezoneOffset = _nativeFn('getTimezoneOffset', function () {
+    return __TIMEZONE_OFFSET__;
+  });
+} catch (e) {}
+
+try {
+  if (typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
+    const _OrigDTF = Intl.DateTimeFormat;
+    Intl.DateTimeFormat = _nativeFn('DateTimeFormat', function (locales, options) {
+      const newOptions = options || {};
+      if (!newOptions.timeZone) {
+        newOptions.timeZone = '__TIMEZONE_NAME__';
+      }
+      return new _OrigDTF(locales || 'zh-CN', newOptions);
+    });
+    Intl.DateTimeFormat.prototype = _OrigDTF.prototype;
+    Intl.DateTimeFormat.supportedLocalesOf = _OrigDTF.supportedLocalesOf;
+  }
+} catch (e) {}
+
+// ========== 18. WebRTC IP 泄露防护 ==========
+try {
+  if (typeof RTCPeerConnection !== 'undefined') {
+    const _OrigRTC = RTCPeerConnection;
+    window.RTCPeerConnection = _nativeFn('RTCPeerConnection', function () {
+      const pc = new _OrigRTC(...arguments);
+      const _origCreateOffer = pc.createOffer.bind(pc);
+      pc.createOffer = _nativeFn('createOffer', function () {
+        return _origCreateOffer(...arguments).then(function (offer) {
+          if (offer.sdp) {
+            offer.sdp = offer.sdp.replace(/c=IN IP4 \d+\.\d+\.\d+\.\d+/g, 'c=IN IP4 0.0.0.0');
+            offer.sdp = offer.sdp.replace(/a=candidate:.+?(\r\n|\n|$)/g, '');
+          }
+          return offer;
+        });
+      });
+      return pc;
+    });
+    if (typeof webkitRTCPeerConnection !== 'undefined') {
+      window.webkitRTCPeerConnection = window.RTCPeerConnection;
+    }
+  }
+} catch (e) {}
+
+// ========== 19. Media Devices 伪造 ==========
+try {
+  if (__PATCH_MEDIA_DEVICES__ && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+    const _fakeDevices = [
+      { deviceId: '__MEDIA_AUDIO_IN_ID__', kind: 'audioinput', label: 'Default - Microphone (Realtek High Definition Audio)', groupId: '__MEDIA_AUDIO_GID__' },
+      { deviceId: 'communications', kind: 'audioinput', label: 'Communications - Microphone (Realtek High Definition Audio)', groupId: '__MEDIA_AUDIO_GID__' },
+      { deviceId: '__MEDIA_AUDIO_OUT_ID__', kind: 'audiooutput', label: 'Default - Speakers (Realtek High Definition Audio)', groupId: '__MEDIA_AUDIO_OUT_GID__' },
+      { deviceId: '__MEDIA_VIDEO_ID__', kind: 'videoinput', label: 'HD Webcam (04f2:b5ce)', groupId: '__MEDIA_VIDEO_GID__' },
+    ];
+    navigator.mediaDevices.enumerateDevices = _nativeFn('enumerateDevices', function () {
+      return Promise.resolve(_fakeDevices);
+    });
+  }
+} catch (e) {}
+
+// ========== 20. Permissions API ==========
+try {
+  if (__PATCH_PERMISSIONS__ && navigator.permissions && navigator.permissions.query) {
+    const _origPermQuery = navigator.permissions.query.bind(navigator.permissions);
+    const _permMap = {
+      notifications: 'granted',
+      geolocation: 'prompt',
+      camera: 'prompt',
+      microphone: 'prompt',
+      'clipboard-read': 'denied',
+      'clipboard-write': 'granted',
+      'persistent-storage': 'granted',
+      push: 'prompt',
+      midi: 'prompt',
+    };
+    navigator.permissions.query = _nativeFn('query', function (params) {
+      const name = params && (params.name || (params.descriptor && params.descriptor.name));
+      if (name && _permMap[name]) return Promise.resolve({ state: _permMap[name] });
+      return _origPermQuery.apply(this, arguments);
+    });
+  }
+} catch (e) {}
+
+// Notification.permission 伪装（与 permissionsMap 中 notifications 对齐）
+try {
+  if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+    Object.defineProperty(Notification, 'permission', {
+      get: _nativeGetter('permission', 'granted'),
       configurable: true,
     });
   }
-  // 确保 speechSynthesis 存在（Headless 通常没有）
-  if (typeof window.speechSynthesis === "undefined") {
-    Object.defineProperty(window, "speechSynthesis", {
-      get: () => ({
-        getVoices: () => [],
+} catch (e) {}
+
+// ========== 21. 页面焦点与可见性伪造 ==========
+try {
+  Object.defineProperty(document, 'hidden', { get: _nativeGetter('hidden', false), configurable: true });
+  Object.defineProperty(document, 'visibilityState', { get: _nativeGetter('visibilityState', 'visible'), configurable: true });
+  document.hasFocus = _nativeFn('hasFocus', function () { return true; });
+  document.addEventListener('visibilitychange', function (e) { e.stopImmediatePropagation(); }, true);
+} catch (e) {}
+
+// ========== 22. Headless 检测绕过 ==========
+try {
+  if (window.outerWidth === 0) {
+    Object.defineProperty(window, 'outerWidth', { get: _nativeGetter('outerWidth', function () { return window.innerWidth; }), configurable: true });
+  }
+  if (window.outerHeight === 0) {
+    Object.defineProperty(window, 'outerHeight', { get: _nativeGetter('outerHeight', function () { return window.innerHeight + 85; }), configurable: true });
+  }
+} catch (e) {}
+
+// screen.orientation 兜底
+try {
+  if (!window.screen.orientation) {
+    Object.defineProperty(window.screen, 'orientation', {
+      get: _nativeGetter('orientation', { type: 'landscape-primary', angle: 0 }),
+      configurable: true,
+    });
+  }
+} catch (e) {}
+
+// speechSynthesis 兜底（Headless 通常没有）
+try {
+  if (typeof window.speechSynthesis === 'undefined') {
+    Object.defineProperty(window, 'speechSynthesis', {
+      get: _nativeGetter('speechSynthesis', {
+        getVoices: _nativeFn('getVoices', function () { return []; }),
         speak: function () {},
         cancel: function () {},
         pause: function () {},
         resume: function () {},
-        pending: false,
-        speaking: false,
-        paused: false,
-        addEventListener: function () {},
-        removeEventListener: function () {},
+        pending: false, speaking: false, paused: false,
+        addEventListener: function () {}, removeEventListener: function () {},
       }),
       configurable: true,
     });
   }
+} catch (e) {}
+
+// window.external 兜底
+try {
+  if (!window.external) {
+    window.external = { AddSearchProvider: function () {}, IsSearchProviderInstalled: function () {} };
+  }
+} catch (e) {}
+
+// ========== 23. performance.now() 时序微抖动 ==========
+try {
+  const _origPerfNow = performance.now.bind(performance);
+  let _perfNowOffset = 0;
+  performance.now = _nativeFn('now', function () {
+    _perfNowOffset += (Math.random() - 0.5) * 0.16;
+    if (_perfNowOffset > 2) _perfNowOffset = 2;
+    if (_perfNowOffset < -2) _perfNowOffset = -2;
+    return _origPerfNow() + _perfNowOffset;
+  });
+} catch (e) {}
+
+// ========== 24. Error.stack 清理 ==========
+// Error.stack 可能暴露 Playwright/CDP 内部调用堆栈路径
+try {
+  const _OrigError = Error;
+  const _makeFilteredError = function (ErrorClass) {
+    const _orig = ErrorClass.prototype;
+    const _origCaptureStack = _orig.captureStackTrace;
+    if (_origCaptureStack) {
+      ErrorClass.prototype.captureStackTrace = _nativeFn('captureStackTrace', function (obj, constructorOpt) {
+        _origCaptureStack.call(this, obj, constructorOpt);
+        if (obj && obj.stack) {
+          obj.stack = obj.stack.replace(/\s+at.*patchright.*/g, '').replace(/\s+at.*playwright.*/gi, '');
+        }
+      });
+    }
+    const _origPrepare = _orig.prepareStackTrace;
+    if (_origPrepare) {
+      ErrorClass.prepareStackTrace = _nativeFn('prepareStackTrace', function (err, stack) {
+        const result = _origPrepare ? _origPrepare(err, stack) : '';
+        if (typeof result === 'string') {
+          return result.replace(/\s+at.*patchright.*/g, '').replace(/\s+at.*playwright.*/gi, '');
+        }
+        return result;
+      });
+    }
+  };
+  _makeFilteredError(Error);
 } catch (e) {}

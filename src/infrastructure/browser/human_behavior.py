@@ -457,3 +457,36 @@ class HumanBehavior:
             if sleep_time > 0:
                 await asyncio.sleep(sleep_time)
             elapsed += sleep_time
+
+    @staticmethod
+    async def realistic_delay(
+        mean_ms: float = 500,
+        std_ms: float = 150,
+        min_ms: float = 100,
+        max_ms: float = 3000,
+    ) -> None:
+        """P1 方向五：基于正态分布的真实人类认知延迟。
+
+        相比均匀分布（random.uniform），正态分布更接近真实用户的反应时间分布：
+        绝大多数操作集中在均值附近，偶有较短/较长的极端值。
+
+        Args:
+            mean_ms:  均值延迟（毫秒），对应"普通操作"期望时间
+            std_ms:   标准差（毫秒），控制延迟分散程度
+            min_ms:   最小延迟下限（毫秒），防止延迟过短失去真实感
+            max_ms:   最大延迟上限（毫秒），防止因极端值阻塞流程
+
+        常见场景预设：
+            - 快速确认：mean=300, std=80
+            - 普通操作：mean=500, std=150（默认）
+            - 阅读/思考：mean=1200, std=300
+            - 上传等待中扫视：mean=2000, std=400
+        """
+        import math
+        # Box-Muller 变换生成正态分布随机数（Python random.gauss 内部也是 Box-Muller）
+        delay_ms = random.gauss(mean_ms, std_ms)
+        # 截断到合理范围
+        delay_ms = max(min_ms, min(max_ms, delay_ms))
+        await asyncio.sleep(delay_ms / 1000.0)
+        logger.debug("realistic_delay: %.0f ms (mean=%.0f std=%.0f)", delay_ms, mean_ms, std_ms)
+

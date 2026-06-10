@@ -43,7 +43,7 @@ def _parse_image_paths(file_path: str, metadata: Dict[str, Any]) -> List[str]:
         return [str(p).strip() for p in paths if str(p).strip()]
     # 兼容历史：逗号分隔，过滤文件夹来源标记
     return [
-        p.strip() for p in str(file_path).split(",")
+        p.strip() for p in file_path.split(",")
         if p.strip() and not p.strip().startswith(_FOLDER_MARKER_PREFIX)
     ]
 
@@ -56,30 +56,7 @@ class UploadMediaStep(BasePublishStep):
         file_type = (metadata.get("file_type") or "video").lower()
 
 
-logger = logging.getLogger(__name__)
-USER_LOG = logging.getLogger("publish.user_log")
 
-
-_FOLDER_MARKER_PREFIX = "__FOLDER__:"
-
-
-def _parse_image_paths(file_path: str, metadata: Dict[str, Any]) -> List[str]:
-    paths = metadata.get("image_paths")
-    if isinstance(paths, list) and paths:
-        return [str(p).strip() for p in paths if str(p).strip()]
-    # 兼容历史：逗号分隔，过滤文件夹来源标记
-    return [
-        p.strip() for p in str(file_path).split(",")
-        if p.strip() and not p.strip().startswith(_FOLDER_MARKER_PREFIX)
-    ]
-
-
-class UploadMediaStep(BasePublishStep):
-    """统一上传步骤：根据 file_type 上传视频或图文。"""
-
-    async def execute(self, page: Page, file_path: str, metadata: Dict[str, Any]) -> StepOutcome:
-        await self._await_pause(metadata)
-        file_type = (metadata.get("file_type") or "video").lower()
 
         if file_type == "image":
             return await self._upload_images(page, file_path, metadata)
@@ -87,7 +64,7 @@ class UploadMediaStep(BasePublishStep):
 
     async def _upload_video(self, page: Page, file_path: str, metadata: Dict[str, Any]) -> Optional[PublishResult]:
         logger.info("===== 开始上传视频文件 =====")
-        base = os.path.basename(str(file_path))
+        base = os.path.basename(file_path)
         prefix = metadata.get("_step_prefix", "")
         if prefix:
             USER_LOG.info(f"{prefix} · 文件: {base}")
@@ -139,7 +116,7 @@ class UploadMediaStep(BasePublishStep):
     async def _upload_images(self, page: Page, file_path: str, metadata: Dict[str, Any]) -> Optional[PublishResult]:
         logger.info("===== 开始上传图文图片 =====")
         image_paths = _parse_image_paths(file_path, metadata)
-        base = os.path.basename(str(image_paths[0])) if image_paths else ""
+        base = os.path.basename(image_paths[0]) if image_paths else ""
         prefix = metadata.get("_step_prefix", "")
         if prefix:
             USER_LOG.info(f"{prefix} · 图文数量: {len(image_paths)} · 示例文件: {base}")

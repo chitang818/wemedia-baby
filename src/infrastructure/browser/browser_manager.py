@@ -67,11 +67,22 @@ def build_patchright_default_args_to_ignore(
     strict_real_browser: bool = False,
     wechat_video: bool = False,
 ) -> List[str]:
-    """Return Patchright default arguments that may safely be suppressed."""
+    """返回可安全屏蔽的 Patchright 默认启动参数列表。
+
+    Patchright 会自动注入 --disable-blink-features=AutomationControlled 用于隐藏
+    navigator.webdriver，但新版 Chrome 稳定版已移除对该标记的支持，会在顶部显示
+    "您使用的是不受支持的命令行标记" 黄色警告横幅。
+
+    此处将其加入忽略列表以消除警告；navigator.webdriver 的隐藏由 stealth JS 脚本
+    注入（_inject_stealth_scripts）负责，不依赖命令行标记。
+    """
     ignored = [
         "--enable-automation",
         "--no-sandbox",
         "--disable-popup-blocking",
+        # Patchright 默认注入此参数用于反自动化检测，但新版 Chrome 稳定版已不支持，
+        # 会触发浏览器顶部黄色警告横幅。改由 stealth JS 脚本覆盖 navigator.webdriver。
+        "--disable-blink-features=AutomationControlled",
     ]
     if wechat_video:
         ignored.extend(
@@ -401,7 +412,8 @@ class UndetectedBrowserManager:
             executable_path = _get_configured_chrome_path()
             
             # 获取用户数据目录（登录态仅依赖 Chromium 持久化目录，不再从旧版 storage_state 启动时灌 Cookie）
-            self.user_data_dir = self.profile_manager.get_user_data_dir()
+            from pathlib import Path
+            self.user_data_dir = Path(self.profile_manager.get_user_data_dir())
             logger.info(f"正在启动浏览器 (Persistent Context): channel={channel}, user_data_dir={self.user_data_dir}")
 
             # 启动前主动清理残留进程：防止上一次任务的 Chrome 进程还锁着 user_data_dir，
@@ -412,7 +424,7 @@ class UndetectedBrowserManager:
                 await self._force_kill_browser_process()
 
             # 启动前修正 Local State 退出类型，防止 Chrome 检测到上次异常退出后弹出「要恢复页面吗？」InfoBar
-            await asyncio.to_thread(self._reset_chrome_exit_type, self.user_data_dir)
+            await asyncio.to_thread(self._reset_chrome_exit_type, str(self.user_data_dir))
             
             # 获取指纹配置
             fingerprint = self.profile_manager.get_fingerprint()
@@ -559,11 +571,11 @@ class UndetectedBrowserManager:
             launch_options["chromium_sandbox"] = True
             
             if extra_headers:
-                launch_options["extra_http_headers"] = extra_headers
+                launch_options["extra_http_headers"] = extra_headers  # type: ignore
             
             # 使用 launch_persistent_context；发布场景不允许回退 no-sandbox，非发布诊断场景才允许兜底。
             try:
-                self.context = await self.playwright.chromium.launch_persistent_context(**launch_options)
+                self.context = await self.playwright.chromium.launch_persistent_context(**launch_options)  # type: ignore
             except Exception as e:
                 # 若显式传入沙箱为 True 但因为权限等启动失败，降级退回无沙箱模式
                 fallback_args = self._get_no_sandbox_fallback_args(
@@ -584,10 +596,10 @@ class UndetectedBrowserManager:
                 )
                 launch_options.pop("chromium_sandbox", None)
                 launch_options["args"] = fallback_args
-                self.context = await self.playwright.chromium.launch_persistent_context(**launch_options)
+                self.context = await self.playwright.chromium.launch_persistent_context(**launch_options)  # type: ignore
             
             # 兼容性设置：让 self.browser 指向 context 
-            self.browser = self.context 
+            self.browser = self.context  # type: ignore
 
             # 指纹 virtual_geo：对浏览器上下文固定 Geolocation
             try:
@@ -598,7 +610,7 @@ class UndetectedBrowserManager:
                 _fp_geo = self.profile_manager.get_fingerprint()
                 _spec = build_playwright_geolocation(_fp_geo)
                 if _spec and self.context:
-                    await self.context.set_geolocation(_spec)
+                    await self.context.set_geolocation(_spec)  # type: ignore
                     logger.info(
                         "已应用 virtual_geo 至浏览器 Geolocation: lat=%s lon=%s",
                         _spec.get("latitude"),
@@ -610,7 +622,7 @@ class UndetectedBrowserManager:
             
             # 真实浏览器模式不做 JS 指纹改写；仅 legacy compat_stealth 保留旧脚本注入。
             await self._inject_stealth_scripts()
-            self._headless_mode = bool(headless)
+            self._headless_mode = headless
 
             if maximize_window and not headless:
                 await self.maximize_browser_window()
@@ -769,6 +781,23 @@ class UndetectedBrowserManager:
             return
         await self.open_environment_info_tab(focus_tab=False)
 
+    async def maximize_browser_window(self) -> None:
+        """最大化浏览器窗口（仅真实浏览器模式且窗口可见时可用）"""
+        try:
+            if not self.context or not self.context.pages:
+                return
+            page = self.context.pages[0]
+            client = await page.context.new_cdp_session(page)
+            res = await client.send("Browser.getWindowForTarget")
+            window_id = res.get("windowId")
+            if window_id:
+                await client.send("Browser.setWindowBounds", {
+                    "windowId": window_id,
+                    "bounds": {"windowState": "maximized"}
+                })
+        except Exception as e:
+            logger.warning("[BrowserManager] CDP 最大化窗口失败（忽略）: %s", e)
+
     async def apply_browser_tab_layout(self, *, refresh_env_content: bool = False) -> None:
         """有头模式：按系统设置决定是否保留「环境信息」标签，并把业务页置于前台。
 
@@ -794,38 +823,7 @@ class UndetectedBrowserManager:
                 await self._ensure_env_tab_as_second()
         await self.focus_first_tab_for_ui()
 
-    async def maximize_browser_window(self) -> None:
-        """通过 Chrome DevTools Protocol 将浏览器主窗口最大化。
-
-        无头模式或无可用页面时静默跳过；失败仅打日志，不中断流程。
-        """
-        if not self.context:
-            return
-        pages = self.context.pages
-        if not pages:
-            return
-        page = pages[0]
-        try:
-            session = await self.context.new_cdp_session(page)
-            info = await session.send("Browser.getWindowForTarget", {})
-            wid = info.get("windowId")
-            if wid is None:
-                logger.debug("[BrowserManager] CDP getWindowForTarget 未返回 windowId")
-                return
-            await session.send(
-                "Browser.setWindowBounds",
-                {"windowId": wid, "bounds": {"windowState": "maximized"}},
-            )
-            logger.info("[BrowserManager] 已请求浏览器窗口最大化 (CDP)")
-        except Exception as e:
-            logger.warning("[BrowserManager] CDP 最大化窗口失败（忽略）: %s", e)
-
     def _real_chrome_args_common(self) -> List[str]:
-        """真实浏览器稳定模式启动参数。
-
-        该模式尽量少传命令行参数，避免把普通 Windows 桌面 Chrome 不常见的
-        legacy 隐身参数带给抖音、小红书、视频号等发布后台。
-        """
         return [
             "--start-maximized",
             "--no-first-run",
@@ -833,75 +831,15 @@ class UndetectedBrowserManager:
         ]
 
     def _legacy_stealth_chrome_args_common(self) -> List[str]:
-        """旧兼容 stealth 模式启动参数。
-
-        仅在 ``browser_trust_mode=compat_stealth`` 时使用；默认真实浏览器模式不会
-        携带这些 WebRTC/legacy 隐身参数。
-        """
         return [
             "--disable-dev-shm-usage",
             "--webrtc-ip-handling-policy=default_public_interface_only",
             "--disable-webrtc-hw-encoding",
             "--disable-webrtc-hw-decoding",
             *self._real_chrome_args_common(),
-            # 三重防护：禁止 Chrome 在上次非正常退出后弹出「要恢复页面吗？」InfoBar / 对话框，
-            # 避免该弹窗遮挡发布页操作区域（如音乐选择列表）导致点击失效。
-            # 配合启动前 _reset_chrome_exit_type() 修正 Local State 实现彻底屏蔽。
-            # --disable-blink-features=AutomationControlled 已移除：
-            # 稳定版 Chrome 会将其标记为「不受支持的命令行标记」并显示黄色警告横幅。
-            # navigator.webdriver 的隐藏仅在 legacy _inject_stealth_scripts() 中处理。
         ]
-
-    @staticmethod
-    def _reset_chrome_exit_type(user_data_dir: str) -> None:
-        """在浏览器启动前将 Chrome Local State 中的退出类型重置为正常，
-        防止 Chrome 检测到上次异常退出后弹出「要恢复页面吗？」InfoBar。
-        
-        同时清理 Default/Preferences 中的 profile.exit_type，双重保险。
-        适用于所有平台（抖音、快手、视频号等），因此放在通用浏览器管理器中。
-        """
-        if not user_data_dir:
-            return
-
-        targets = [
-            (Path(user_data_dir) / "Local State", ["profile", "exit_type"]),
-            (Path(user_data_dir) / "Default" / "Preferences", ["profile", "exit_type"]),
-        ]
-
-        for file_path, key_path in targets:
-            if not file_path.exists():
-                continue
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-
-                # 定位到目标键，若值已经是 "Normal" 则跳过写入
-                node = data
-                for key in key_path[:-1]:
-                    node = node.get(key, {})
-                    if not isinstance(node, dict):
-                        node = {}
-                        break
-
-                last_key = key_path[-1]
-                if node.get(last_key) == "Normal":
-                    continue
-
-                # 找到并修正
-                node2 = data
-                for key in key_path[:-1]:
-                    node2 = node2.setdefault(key, {})
-                node2[last_key] = "Normal"
-
-                with open(file_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
-
-                logger.info("[BrowserManager] 已重置 %s 中的退出类型为 Normal，防止「恢复页面」弹窗", file_path.name)
-            except Exception as e:
-                logger.debug("[BrowserManager] 修正 %s 退出类型失败（不影响启动）: %s", file_path.name, e)
 
     def _get_launch_args(self, *, compat_stealth: bool = False) -> List[str]:
-        """获取浏览器启动参数。"""
         if compat_stealth:
             return self._legacy_stealth_chrome_args_common()
         return self._real_chrome_args_common()
@@ -912,32 +850,81 @@ class UndetectedBrowserManager:
         compat_stealth: bool,
         publishing: bool,
     ) -> Optional[List[str]]:
-        """沙箱启动失败时的非发布兜底参数；发布流程不允许 no-sandbox 回退。"""
         if publishing:
             return None
         return ["--no-sandbox", *self._get_launch_args(compat_stealth=compat_stealth)]
-    
+
+    @staticmethod
+    def _reset_chrome_exit_type(user_data_dir: str) -> None:
+        """修正 Local State 退出类型，避免异常退出恢复弹窗"""
+        if not user_data_dir:
+            return
+        import json
+        from pathlib import Path
+        try:
+            local_state_path = Path(user_data_dir) / "Local State"
+            if local_state_path.exists():
+                with open(local_state_path, "r", encoding="utf-8") as f:
+                    state = json.load(f)
+                changed = False
+                if "profile" in state and "info_cache" in state["profile"]:
+                    for profile in state["profile"]["info_cache"].values():
+                        if profile.get("exit_type") != "Normal":
+                            profile["exit_type"] = "Normal"
+                            changed = True
+                        if profile.get("exited_cleanly") is not True:
+                            profile["exited_cleanly"] = True
+                            changed = True
+                if changed:
+                    with open(local_state_path, "w", encoding="utf-8") as f:
+                        json.dump(state, f)
+        except Exception:
+            pass
+        try:
+            pref_path = Path(user_data_dir) / "Default" / "Preferences"
+            if pref_path.exists():
+                with open(pref_path, "r", encoding="utf-8") as f:
+                    prefs = json.load(f)
+                changed = False
+                if "profile" in prefs:
+                    if prefs["profile"].get("exit_type") != "Normal":
+                        prefs["profile"]["exit_type"] = "Normal"
+                        changed = True
+                    if prefs["profile"].get("exited_cleanly") is not True:
+                        prefs["profile"]["exited_cleanly"] = True
+                        changed = True
+                if changed:
+                    with open(pref_path, "w", encoding="utf-8") as f:
+                        json.dump(prefs, f)
+        except Exception:
+            pass
     async def _inject_stealth_scripts(self):
-        """仅在 compat_stealth 旧兼容模式下注入 legacy stealth 脚本。"""
+        """注入反检测脚本：
+        - real_browser 模式：注入 stealth_minimal.js（P0：消除基础 JS 泄漏）
+        - compat_stealth 模式：注入全量 stealth.js（含指纹伪造、媒体设备、时区等）
+        """
         if not self.context:
             return
-        
+
         try:
             from .browser_launch_policy import get_browser_launch_policy
-
             launch_policy = get_browser_launch_policy()
         except Exception:
             launch_policy = None
 
-        if self.is_strict_real_browser_platform() or not (
-            launch_policy and launch_policy.use_compat_stealth
-        ):
-            logger.info(
-                "[BrowserManager] %s real_browser mode: skip stealth add_init_script",
-                self.platform,
-            )
+        use_compat_stealth = (
+            launch_policy
+            and launch_policy.use_compat_stealth
+            and not self.is_strict_real_browser_platform()
+        )
+
+        if not use_compat_stealth:
+            # ── P0 方向一：real_browser 模式注入最小化 stealth 脚本 ──
+            # 即使是"真实浏览器模式"也需要清理 webdriver、焦点、插件列表等基础泄漏
+            await self._inject_minimal_stealth()
             return
 
+        # ── compat_stealth 全量指纹注入 ──
         # 获取指纹配置
         fingerprint = self.profile_manager.get_fingerprint()
 
@@ -945,7 +932,6 @@ class UndetectedBrowserManager:
         fp_cfg = {}
         try:
             from src.infrastructure.common.config.app_config_merge import get_app_config_for_read
-
             fp_cfg = get_app_config_for_read()
         except Exception:
             fp_cfg = {}
@@ -954,13 +940,13 @@ class UndetectedBrowserManager:
         patch_audio_context = self.platform != "douyin"
         patch_media_devices = self.platform != "douyin"
         patch_permissions = self.platform != "douyin"
-        
+
         # 提取所有指纹参数 (提供默认值以防旧配置缺失)
         hardware_concurrency = fingerprint.get("hardware_concurrency", 4)
         device_memory = fingerprint.get("device_memory", 8)
         webgl_vendor = fingerprint.get("webgl_vendor") or default_webgl_vendor()
         webgl_renderer = fingerprint.get("webgl_renderer") or DEFAULT_WEBGL_RENDERER
-        
+
         # Screen 参数
         screen_width = fingerprint.get("screen_width", 1920)
         screen_height = fingerprint.get("screen_height", 1080)
@@ -968,10 +954,10 @@ class UndetectedBrowserManager:
         screen_avail_height = fingerprint.get("screen_avail_height", 1040)
         screen_color_depth = fingerprint.get("screen_color_depth", 24)
         screen_pixel_depth = fingerprint.get("screen_pixel_depth", 24)
-        
+
         # AudioContext 种子
         audio_context_seed = fingerprint.get("audio_context_seed", 12345)
-        
+
         # Battery 参数
         battery_charging = str(fingerprint.get("battery_charging", True)).lower()
         battery_level = fingerprint.get("battery_level", 1.0)
@@ -1004,15 +990,49 @@ class UndetectedBrowserManager:
                     canvas_noise_strength_level = 3
         except Exception:
             canvas_noise_strength_level = 1
-        
-        # 读取 legacy JS 模板文件（须列入 scripts/build/data_dirs.json，否则打包后缺失）
+
+        # ── P1 方向六：时区偏移量参数化 ──
+        # 根据 fingerprint timezone_id 计算 JS 中 getTimezoneOffset() 返回值
+        # JS 惯例：UTC+8 → -480（偏移量与 UTC 相反）
+        tz_id = fingerprint.get("timezone_id", "Asia/Shanghai")
+        if self.platform == "wechat_video":
+            tz_id = "Asia/Shanghai"  # 视频号固定东八区
+        _tz_offset_map = {
+            "Asia/Shanghai": -480, "Asia/Chongqing": -480, "Asia/Hong_Kong": -480,
+            "Asia/Taipei": -480, "Asia/Tokyo": -540, "Asia/Seoul": -540,
+            "Asia/Singapore": -480, "America/New_York": 300, "America/Los_Angeles": 480,
+            "Europe/London": 0, "Europe/Berlin": -60, "Europe/Paris": -60,
+            "UTC": 0,
+        }
+        timezone_offset = _tz_offset_map.get(tz_id, -480)
+        timezone_name = tz_id  # Intl.DateTimeFormat 中使用的时区名字符串
+
+        # ── P1 方向四：媒体设备 ID 基于账号种子确定性生成 ──
+        # 同一账号每次注入的设备 ID 保持一致，但不同账号不同，
+        # 消除"所有账号媒体设备 ID 完全相同"这一明显的自动化批量特征
+        import hashlib as _hashlib
+
+        def _seed_uuid(prefix: str) -> str:
+            """基于账号 canvas_noise_seed + prefix 生成确定性伪 UUID。"""
+            raw = f"{canvas_noise_seed}_{prefix}"
+            h = _hashlib.md5(raw.encode()).hexdigest()
+            return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
+
+        media_audio_in_id = _seed_uuid("audio_in")
+        media_audio_gid = _seed_uuid("audio_group")
+        media_audio_out_id = _seed_uuid("audio_out")
+        media_audio_out_gid = _seed_uuid("audio_out_group")
+        media_video_id = _seed_uuid("video_in")
+        media_video_gid = _seed_uuid("video_group")
+
+        # 读取 stealth.js 模板文件（须列入 scripts/build/data_dirs.json，否则打包后缺失）
         try:
             script_path = PathManager.get_resource_path(
                 "src/resources/scripts/stealth/stealth.js"
             )
-            
+
             if not script_path.exists():
-                logger.error(f"legacy stealth 脚本文件未找到: {script_path}")
+                logger.error(f"全量 stealth 脚本文件未找到: {script_path}")
                 return
 
             stealth_template = script_path.read_text(encoding="utf-8")
@@ -1027,8 +1047,9 @@ class UndetectedBrowserManager:
                 ua_ch_obj = {}
             ua_ch_json = json.dumps(ua_ch_obj, ensure_ascii=False)
 
-            # 执行变量替换
-            stealth_script = stealth_template.replace("__HARDWARE_CONCURRENCY__", str(hardware_concurrency)) \
+            # 执行变量替换（核心指纹 + 时区参数化 + 媒体设备 ID 随机化）
+            stealth_script = stealth_template \
+                .replace("__HARDWARE_CONCURRENCY__", str(hardware_concurrency)) \
                 .replace("__DEVICE_MEMORY__", str(device_memory)) \
                 .replace("__SCREEN_WIDTH__", str(screen_width)) \
                 .replace("__SCREEN_HEIGHT__", str(screen_height)) \
@@ -1053,7 +1074,15 @@ class UndetectedBrowserManager:
                 .replace("__PATCH_MEDIA_DEVICES__", "true" if patch_media_devices else "false") \
                 .replace("__PATCH_PERMISSIONS__", "true" if patch_permissions else "false") \
                 .replace("__CANVAS_NOISE_SEED__", str(canvas_noise_seed)) \
-                .replace("__CANVAS_NOISE_STRENGTH__", str(canvas_noise_strength_level))
+                .replace("__CANVAS_NOISE_STRENGTH__", str(canvas_noise_strength_level)) \
+                .replace("__TIMEZONE_OFFSET__", str(timezone_offset)) \
+                .replace("__TIMEZONE_NAME__", str(timezone_name)) \
+                .replace("__MEDIA_AUDIO_IN_ID__", media_audio_in_id) \
+                .replace("__MEDIA_AUDIO_GID__", media_audio_gid) \
+                .replace("__MEDIA_AUDIO_OUT_ID__", media_audio_out_id) \
+                .replace("__MEDIA_AUDIO_OUT_GID__", media_audio_out_gid) \
+                .replace("__MEDIA_VIDEO_ID__", media_video_id) \
+                .replace("__MEDIA_VIDEO_GID__", media_video_gid)
 
             # 可选注入：languages / UA-CH
             stealth_script = stealth_script.replace(
@@ -1063,17 +1092,49 @@ class UndetectedBrowserManager:
             )
 
         except Exception as e:
-            logger.error(f"加载 legacy stealth 脚本失败: {e}", exc_info=True)
+            logger.error(f"加载全量 stealth 脚本失败: {e}", exc_info=True)
             return
-        
+
         await self.context.add_init_script(stealth_script)
         logger.info(
-            "compat_stealth legacy stealth 脚本已注入 (WebRTC/MediaDevices/Permissions/Intl/CDP/Headless)，"
-            "媒体补丁: audio=%s mediaDevices=%s permissions=%s",
+            "compat_stealth 全量 stealth 脚本已注入 (native-toString/时区/媒体ID/WebRTC/CDP)，"
+            "媒体补丁: audio=%s mediaDevices=%s permissions=%s tz=%s(%s)",
             patch_audio_context,
             patch_media_devices,
             patch_permissions,
+            tz_id,
+            timezone_offset,
         )
+
+    async def _inject_minimal_stealth(self) -> None:
+        """P0 方向一：real_browser / strict_real_browser 模式注入最小化 stealth 脚本。
+
+        仅清理 webdriver/焦点/插件/CDP 痕迹等无副作用的基础防护，
+        不做硬件/Canvas/Audio 等重型指纹伪造，保持真实浏览器环境。
+        native-toString 伪装已集成在 stealth_minimal.js 中。
+        """
+        if not self.context:
+            return
+        try:
+            script_path = PathManager.get_resource_path(
+                "src/resources/scripts/stealth/stealth_minimal.js"
+            )
+            if not script_path.exists():
+                logger.warning(
+                    "[BrowserManager] stealth_minimal.js 未找到，跳过基础 stealth 注入"
+                )
+                return
+            minimal_script = script_path.read_text(encoding="utf-8")
+            await self.context.add_init_script(minimal_script)
+            logger.info(
+                "[BrowserManager] %s 已注入 stealth_minimal.js "
+                "（webdriver/焦点/插件/CDP痕迹清理/native-toString）",
+                self.platform or "unknown",
+            )
+        except Exception as e:
+            logger.warning(
+                "[BrowserManager] 注入 stealth_minimal.js 失败（不影响启动）: %s", e
+            )
 
     def _clear_persistent_context_refs(self, reason: str = "") -> None:
         """Playwright 侧上下文已关闭时清空本地引用，避免上层继续操作已断开的 Context。"""

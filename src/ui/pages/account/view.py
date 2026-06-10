@@ -62,6 +62,7 @@ class AccountPage(BasePage):
     def __init__(self, parent=None):
         super().__init__("账号管理", parent, enable_scroll=True)  # type: ignore
         self.account_manager = None
+        self.progress_dialog: Optional[QProgressDialog] = None
         from src.services.auth import CurrentUserService
         self.user_id = CurrentUserService().get_user_id_or_default(1)
         self._active_workers = []
@@ -147,7 +148,7 @@ class AccountPage(BasePage):
         
         # 1. 操作栏（使用 CardWidget 包裹，看起来更统一）
         header_card = CardWidget(self)
-        header_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        header_card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         # header_card.setFixedHeight(80) # Removed fixed height
         header_layout = QHBoxLayout(header_card)
         header_layout.setContentsMargins(16, 12, 16, 12)
@@ -207,7 +208,7 @@ class AccountPage(BasePage):
         self.search_box = SearchLineEdit(self)
         self.search_box.setPlaceholderText("搜索账号...")
         self.search_box.setMinimumWidth(150)
-        self.search_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.search_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.search_box.textChanged.connect(self._schedule_filter_accounts)
         
         self.platform_filter = ComboBox(self)
@@ -215,8 +216,8 @@ class AccountPage(BasePage):
         self.platform_filter.setMinimumWidth(120)
         self.platform_filter.currentIndexChanged.connect(self._schedule_filter_accounts)
         
-        header_layout.addWidget(self.search_box, 0, Qt.AlignVCenter)
-        header_layout.addWidget(self.platform_filter, 0, Qt.AlignVCenter)
+        header_layout.addWidget(self.search_box, 0, Qt.AlignmentFlag.AlignVCenter)
+        header_layout.addWidget(self.platform_filter, 0, Qt.AlignmentFlag.AlignVCenter)
         
         self.content_layout.addWidget(header_card)
         
@@ -308,9 +309,9 @@ class AccountPage(BasePage):
             )
             merge_app_config_top_level_to_disk_sync({
                 "account_auto_refresh": {
-                    "enabled": bool(enabled),
-                    "on_show": bool(on_show),
-                    "interval_minutes": max(1, int(interval_minutes)),
+                    "enabled": enabled,
+                    "on_show": on_show,
+                    "interval_minutes": max(1, interval_minutes),
                 }
             })
         except Exception as e:
@@ -389,7 +390,7 @@ class AccountPage(BasePage):
         try:
             mw = self.window()
             if mw and callable(getattr(mw, "navigate_to", None)):
-                mw.navigate_to("settings_page")
+                getattr(mw, "navigate_to")("settings_page")
         except Exception:
             pass
 
@@ -513,7 +514,9 @@ class AccountPage(BasePage):
         account_ids: list[int] = []
         for account in accounts or []:
             try:
-                account_ids.append(int(account.get("id")))
+                account_id = account.get("id")
+                if account_id is not None:
+                    account_ids.append(int(account_id))
             except Exception:
                 continue
 
@@ -666,7 +669,7 @@ class AccountPage(BasePage):
                 InfoBar.warning(
                     title="无法打开",
                     content="请先在「设置」→「数据管理」中配置有效的媒体库存储位置。",
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=4000,
                     position=InfoBarPosition.TOP,
@@ -678,7 +681,7 @@ class AccountPage(BasePage):
                 InfoBar.warning(
                     title="打开失败",
                     content="系统无法打开该文件夹，请手动在资源管理器中进入。",
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=4000,
                     position=InfoBarPosition.TOP,
@@ -689,7 +692,7 @@ class AccountPage(BasePage):
             InfoBar.error(
                 title="错误",
                 content="打开文件夹时发生异常，请稍后重试。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=4000,
                 position=InfoBarPosition.TOP,
@@ -861,7 +864,6 @@ class AccountPage(BasePage):
             from src.ui.dialogs.login_dialog import LoginDialog
             curr = CurrentUserService()
             if not curr.is_logged_in():
-                from qfluentwidgets import InfoBar
                 InfoBar.warning("请先登录", "添加账号需要先登录软件", parent=self)
                 login_dialog = LoginDialog(self)
                 if not login_dialog.exec():
@@ -1030,7 +1032,7 @@ class AccountPage(BasePage):
         """刷新账号列表（验证Cookie有效性）；有筛选时仅验证当前可见账号。"""
         if not self.account_manager:
             return
-        self._refresh_silent_mode = bool(silent)
+        self._refresh_silent_mode = silent
         if (
             hasattr(self, "account_table_widget")
             and self.account_table_widget
@@ -1052,7 +1054,7 @@ class AccountPage(BasePage):
         self.progress_dialog = QProgressDialog(
             "正在验证账号状态...", "取消", 0, total, self.window() or self
         )
-        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
         self.progress_dialog.setMinimumDuration(0)
         self.progress_dialog.setWindowTitle("同步账号状态")
         self.progress_dialog.resize(400, 150)
@@ -1101,7 +1103,7 @@ class AccountPage(BasePage):
                 self._account_status_cache[acc_id] = 'online' if res.get('is_logged_in') else 'offline'
                 
             online_count = list(self._account_status_cache.values()).count('online')
-            offline_count = int(total) - int(online_count)
+            offline_count = total - online_count
             
             if hasattr(self, 'stats_total'):
                 self.stats_total.set_value(str(total))
@@ -1365,12 +1367,14 @@ class AccountPage(BasePage):
                 exc = t.exception()
                 if exc is not None:
                     msg = str(exc) or "未知错误"
-                    self._schedule_base_page_timer("account_open_browser_error", 0, lambda: InfoBar.error(
-                        title="打开浏览器失败",
-                        content=msg,
-                        parent=self,
-                        duration=5000,
-                    ))
+                    def _show_err():
+                        InfoBar.error(
+                            title="打开浏览器失败",
+                            content=msg,
+                            parent=self,
+                            duration=5000,
+                        )
+                    self._schedule_base_page_timer("account_open_browser_error", 0, _show_err)
             except Exception:
                 pass
         task.add_done_callback(_on_done)  # type: ignore
