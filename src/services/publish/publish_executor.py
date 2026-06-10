@@ -9,6 +9,7 @@ import logging
 import asyncio
 
 from src.infrastructure.common.pipeline.base_filter import PublishContext, PipelineResult, PipelineResult as PublishResult
+from src.plugins.core.publish_failure_kind import PublishFailureKind
 from src.utils.date_utils import format_schedule_time_st_str
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ class PublishExecutor:
         self,
         user_id: int,
         data_storage=None,
-        max_concurrent: int = 3
+        max_concurrent: int = 2
     ):
         """初始化发布执行器
         
@@ -39,9 +40,11 @@ class PublishExecutor:
         """
         self.user_id = user_id
         self.data_storage = data_storage
-        self.max_concurrent = max_concurrent
+        self.max_concurrent = max(1, min(2, int(max_concurrent or 2)))
+        self._platform_locks: dict[str, asyncio.Lock] = {}
+        self._account_locks: dict[tuple[str, str], asyncio.Lock] = {}
         
-        self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._semaphore = asyncio.Semaphore(self.max_concurrent)
     
     async def execute_single(
         self,
@@ -52,7 +55,7 @@ class PublishExecutor:
         description: str = "",
         tags: Optional[List[str]] = None,
         file_type: str = "video",
-        headless: bool = True,
+        headless: bool = False,
         speed_rate: float = 1.0,
         pause_event: Any = None,
         scheduled_publish_time: Optional[Any] = None,
@@ -84,10 +87,35 @@ class PublishExecutor:
         Returns:
             发布结果
         """
+        headless = False
+        platform_key = (platform or "").strip()
+        account_key = (account_name or "").strip()
+        platform_lock = self._platform_locks.setdefault(platform_key, asyncio.Lock())
+        account_lock = self._account_locks.setdefault((platform_key, account_key), asyncio.Lock())
+        platform_lock_acquired = False
+        account_lock_acquired = False
+        try:
+            await platform_lock.acquire()
+            platform_lock_acquired = True
+            await account_lock.acquire()
+            account_lock_acquired = True
+        except BaseException:
+            if account_lock_acquired:
+                try:
+                    account_lock.release()
+                except RuntimeError:
+                    pass
+            if platform_lock_acquired:
+                try:
+                    platform_lock.release()
+                except RuntimeError:
+                    pass
+            raise
+
         browser_manager = None
         context = None
         page = None
-        result = None  # 初始化 result 用于 finally 块判断
+        result = None
         account_db_id = None  # 提前初始化，防止 finally 中访问时因提前 return 而 NameError
         
         try:
@@ -111,9 +139,11 @@ class PublishExecutor:
                 account_db_id = None
                 try:
                     all_accounts = await account_mgr.get_accounts(platform=platform)
+                    matched_account = None
                     for a in all_accounts:
                         name = a.get('platform_username') or a.get('account_name', '') if isinstance(a, dict) else getattr(a, 'platform_username', '')
                         if name == account_name:
+                            matched_account = a
                             account_db_id = a.get('id') if isinstance(a, dict) else getattr(a, 'id', None)
                             break
                 except Exception as e:
@@ -122,6 +152,13 @@ class PublishExecutor:
                 
                 if not account_db_id:
                     return PublishResult(success=False, error_message=f"未在数据库中找到账号: {account_name} (平台: {platform})")
+                if isinstance(matched_account, dict) and matched_account.get("publish_risk_state") == "quarantined":
+                    reason = matched_account.get("publish_risk_reason") or "账号已处于发布风险隔离状态"
+                    return PublishResult(
+                        success=False,
+                        error_message=f"账号已处于发布风险隔离状态，请在账号管理页人工确认后解除：{reason}",
+                        failure_kind=PublishFailureKind.RISK_CHALLENGE.value,
+                    )
                 
                 logger.info(f"发布任务: 账号={account_name}, 数据库ID={account_db_id}, 平台={platform}")
                 try:
@@ -256,7 +293,17 @@ class PublishExecutor:
                             await browser_manager._force_kill_browser_process()
                         except Exception as e3:
                             logger.warning("兜底强杀浏览器进程异常: %s", e3)
-    
+            if account_lock_acquired:
+                try:
+                    account_lock.release()
+                except RuntimeError:
+                    pass
+            if platform_lock_acquired:
+                try:
+                    platform_lock.release()
+                except RuntimeError:
+                    pass
+
     async def _execute_platform_publish(
         self,
         context: PublishContext,
@@ -583,7 +630,7 @@ class PublishExecutorFactory:
         cls,
         user_id: int,
         data_storage=None,
-        max_concurrent: int = 3
+        max_concurrent: int = 2
     ) -> PublishExecutor:
         """获取或创建发布执行器
         

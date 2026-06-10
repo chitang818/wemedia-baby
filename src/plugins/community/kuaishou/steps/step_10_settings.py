@@ -8,7 +8,6 @@
   不操作互动设置、不操作查看权限（保持页面默认，避免误改为好友可见/仅自己可见）。
 """
 import logging
-import random
 import re
 from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
@@ -52,7 +51,7 @@ class PublishSettingsStep(BasePublishStep):
 
     @staticmethod
     def _with_random_seconds(st_str: str) -> str:
-        """将 YYYY-MM-DD HH:mm 补成 YYYY-MM-DD HH:mm:ss（随机秒），若已含秒则原样返回。"""
+        """将 YYYY-MM-DD HH:mm 补成 YYYY-MM-DD HH:mm:00，若已含秒则原样返回。"""
         st_str = (st_str or "").strip()
         if not st_str:
             return ""
@@ -65,12 +64,9 @@ class PublishSettingsStep(BasePublishStep):
         # 补随机秒
         try:
             dt = datetime.strptime(st_str, "%Y-%m-%d %H:%M")
-            sec = random.randint(0, 59)
-            return dt.replace(second=sec).strftime("%Y-%m-%d %H:%M:%S")
+            return dt.replace(second=0).strftime("%Y-%m-%d %H:%M:%S")
         except Exception:
-            # 兜底：直接拼接 :ss（保持强约束，不改原主体）
-            sec = random.randint(0, 59)
-            return f"{st_str}:{sec:02d}"
+            return f"{st_str}:00"
 
     async def execute(self, page: Page, file_path: str, metadata: Dict[str, Any]) -> StepOutcome:
         await self._await_pause(metadata)

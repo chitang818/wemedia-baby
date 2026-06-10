@@ -124,7 +124,13 @@ class KuaishouPublishPlugin(PublishPluginInterface):
             )
 
             platform_data = _platform_config()
-            anti_risk_config = platform_data.get("anti_risk") if isinstance(platform_data.get("anti_risk"), dict) else {}
+            anti_risk_config = (
+                platform_data.get("publish_pacing")
+                if isinstance(platform_data.get("publish_pacing"), dict)
+                else platform_data.get("anti_risk")
+                if isinstance(platform_data.get("anti_risk"), dict)
+                else {}
+            )
             probes = {
                 "file_input": ", ".join(Selectors.PUBLISH.get("FILE_INPUT", [])),
                 "upload_success": ", ".join(Selectors.PUBLISH.get("UPLOAD_SUCCESS_MARKER", [])),

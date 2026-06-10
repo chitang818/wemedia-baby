@@ -14,6 +14,11 @@ from .base_repository_async import BaseRepositoryAsync
 from src.infrastructure.storage.orm_models.publish_record import PublishRecord
 from src.infrastructure.storage.orm_models.platform_account import PlatformAccount
 from src.infrastructure.storage.retry import retry_on_locked
+from src.plugins.core.publish_failure_kind import (
+    classify_publish_failure,
+    is_blocking_failure_kind,
+    normalize_failure_kind,
+)
 from src.utils.date_utils import format_schedule_time_st_str, merge_latest_publish_display_time
 
 logger = logging.getLogger(__name__)
@@ -64,6 +69,7 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
         task_source: Optional[str] = None,
         group_id: Optional[int] = None,
         diagnostic_path: Optional[str] = None,
+        failure_kind: Optional[str] = None,
     ) -> int:
         """创建发布记录
 
@@ -104,6 +110,7 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
                 scheduled_publish_time=scheduled_publish_time,
                 task_source=task_source,
                 diagnostic_path=diagnostic_path,
+                failure_kind=normalize_failure_kind(failure_kind),
                 status="pending",
             )
             return record.id
@@ -119,6 +126,7 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
         publish_url: Optional[str] = None,
         error_message: Optional[str] = None,
         diagnostic_path: Optional[str] = None,
+        failure_kind: Optional[str] = None,
     ) -> bool:
         """更新发布记录状态
 
@@ -137,6 +145,12 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
                 update_data["publish_url"] = publish_url
             if error_message is not None:
                 update_data["error_message"] = error_message
+            if failure_kind is not None:
+                update_data["failure_kind"] = normalize_failure_kind(failure_kind)
+            elif status == "failed" and error_message:
+                update_data["failure_kind"] = classify_publish_failure(error_message)
+            elif status in {"pending", "running", "success"}:
+                update_data["failure_kind"] = None
             if diagnostic_path is not None:
                 update_data["diagnostic_path"] = diagnostic_path
 
@@ -744,6 +758,51 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
             else:
                 r["account_group_name"] = id_to_name.get(pid_int, "")
 
+    async def get_publish_risk_summary(self, days: int = 30) -> Dict[str, Any]:
+        """Return local publish risk statistics grouped by account and platform."""
+        try:
+            since = datetime.now() - timedelta(days=max(1, int(days)))
+            records = await PublishRecord.filter(created_at__gte=since).all()
+            by_account: Dict[str, Dict[str, Any]] = {}
+            by_platform: Dict[str, Dict[str, Any]] = {}
+
+            def _bucket(container: Dict[str, Dict[str, Any]], key: str) -> Dict[str, Any]:
+                if key not in container:
+                    container[key] = {
+                        "total": 0,
+                        "success": 0,
+                        "failed": 0,
+                        "risk_count": 0,
+                        "consecutive_failures": 0,
+                        "last_risk_at": None,
+                    }
+                return container[key]
+
+            sorted_records = sorted(records, key=lambda r: r.created_at or datetime.min)
+            for record in sorted_records:
+                platform = record.platform or ""
+                account_key = f"{platform}:{record.platform_username or ''}"
+                failure_kind = getattr(record, "failure_kind", None)
+                risk_hit = is_blocking_failure_kind(failure_kind)
+                event_time = record.updated_at or record.created_at
+                for container, key in ((by_account, account_key), (by_platform, platform)):
+                    item = _bucket(container, key)
+                    item["total"] += 1
+                    if record.status == "success":
+                        item["success"] += 1
+                        item["consecutive_failures"] = 0
+                    elif record.status == "failed":
+                        item["failed"] += 1
+                        item["consecutive_failures"] += 1
+                    if risk_hit:
+                        item["risk_count"] += 1
+                        item["last_risk_at"] = event_time.isoformat() if event_time else None
+
+            return {"days": days, "by_account": by_account, "by_platform": by_platform}
+        except Exception as e:
+            self.handle_error(e, "get_publish_risk_summary")
+            return {"days": days, "by_account": {}, "by_platform": {}}
+
     @staticmethod
     def _to_dict(record: PublishRecord) -> Dict[str, Any]:
         """将 ORM 模型实例转换为字典（兼容旧格式）"""
@@ -773,6 +832,7 @@ class PublishRecordRepositoryAsync(BaseRepositoryAsync):
             "scheduled_publish_time": format_schedule_time_st_str(record.scheduled_publish_time),
             "status": record.status,
             "error_message": record.error_message,
+            "failure_kind": getattr(record, "failure_kind", None),
             "diagnostic_path": getattr(record, "diagnostic_path", None),
             "publish_url": record.publish_url,
             "created_at": record.created_at.isoformat() if record.created_at else None,

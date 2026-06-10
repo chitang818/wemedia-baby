@@ -249,6 +249,38 @@ class AccountRepositoryAsync(BaseRepositoryAsync):
             self.handle_error(e, "update_profile_folder_name")
             return False
 
+    @retry_on_locked()
+    async def mark_publish_quarantined(
+        self,
+        account_id: int,
+        reason: str = "",
+    ) -> bool:
+        """Persistently quarantine an account after a publish risk signal."""
+        try:
+            updated = await PlatformAccount.filter(id=account_id).update(
+                publish_risk_state="quarantined",
+                publish_risk_reason=reason or "",
+                publish_risk_at=datetime.now(),
+            )
+            return updated > 0
+        except Exception as e:
+            self.handle_error(e, "mark_publish_quarantined")
+            return False
+
+    @retry_on_locked()
+    async def clear_publish_quarantine(self, account_id: int) -> bool:
+        """Manually clear publish quarantine after user confirmation."""
+        try:
+            updated = await PlatformAccount.filter(id=account_id).update(
+                publish_risk_state="normal",
+                publish_risk_reason=None,
+                publish_risk_at=None,
+            )
+            return updated > 0
+        except Exception as e:
+            self.handle_error(e, "clear_publish_quarantine")
+            return False
+
     async def delete(self, account_id: int) -> bool:
         """删除账号
 
@@ -336,6 +368,13 @@ class AccountRepositoryAsync(BaseRepositoryAsync):
                 account.last_login_at.isoformat() if account.last_login_at else None
             ),
             "profile_folder_name": account.profile_folder_name,
+            "publish_risk_state": getattr(account, "publish_risk_state", "normal") or "normal",
+            "publish_risk_reason": getattr(account, "publish_risk_reason", None),
+            "publish_risk_at": (
+                account.publish_risk_at.isoformat()
+                if getattr(account, "publish_risk_at", None)
+                else None
+            ),
             "group_id": account.group_id,
             "created_at": (
                 account.created_at.isoformat() if account.created_at else None

@@ -114,8 +114,8 @@ class PatchrightBrowserService(QObject):
             return 2
 
     async def verify_account_headless(self, account_id: str, platform: str) -> Dict[str, Any]:
-        """无头模式验证账号状态"""
-        logger.info(f"启动无头验证: {account_id} ({platform})")
+        """兼容入口：账号浏览器验证统一使用可见 Chrome。"""
+        logger.info(f"启动可见浏览器验证: {account_id} ({platform})")
         context = None
         browser_service = None
         try:
@@ -130,7 +130,7 @@ class PatchrightBrowserService(QObject):
             platform_username = account.get('platform_username', f"user_{account_id}") if account else f"user_{account_id}"
             profile_folder_name = account.get('profile_folder_name') if account else None
             
-            # 2. 启动浏览器 (Headless)
+            # 2. 启动可见浏览器
             browser_service = BrowserFactory.get_browser_service(
                 account_id=str(account_id),
                 platform=platform,
@@ -138,7 +138,7 @@ class PatchrightBrowserService(QObject):
                 profile_folder_name=profile_folder_name
             )
             
-            context = await browser_service.launch(headless=True)
+            context = await browser_service.launch(headless=False)
             if not context:
                 raise Exception("无法启动浏览器上下文")
                 
@@ -261,10 +261,19 @@ class PatchrightBrowserService(QObject):
         """
         if headless is None:
             headless = False  # 账号页等调用不传时默认显示浏览器
+        if publish_mode and headless:
+            logger.info("发布模式强制使用可见浏览器，忽略 headless=True")
+            headless = False
         # 同账号已打开浏览器时复用，并尝试置前、提示用户，避免“双击无反应”
         existing = self.get_browser_context_by_account(str(account_id))
         if existing:
             try:
+                if publish_mode:
+                    existing.publish_mode = True
+                    self._cancel_early_cookie_tasks(str(account_id))
+                    monitor_task = self._monitor_tasks.pop(str(account_id), None)
+                    if monitor_task and monitor_task is not asyncio.current_task():
+                        monitor_task.cancel()
                 svc = getattr(existing, "browser_manager", None) or getattr(
                     existing, "service", None
                 )
@@ -301,25 +310,24 @@ class PatchrightBrowserService(QObject):
             return None
         logger.info(f"模块化开浏览器: account_id={account_id}, 用户名={platform_username}, 平台={platform}, headless={headless}")
 
-        if publish_mode and (platform or "").strip().lower() == "xiaohongshu":
-            from src.infrastructure.browser.detached_chrome_launcher import DetachedChromeLauncher
+        from src.infrastructure.browser.detached_chrome_launcher import DetachedChromeLauncher
 
-            user_data_dir = DetachedChromeLauncher.get_user_data_dir(
-                platform=platform,
-                platform_username=platform_username,
-                profile_folder_name=profile_folder_name,
+        user_data_dir = DetachedChromeLauncher.get_user_data_dir(
+            platform=platform,
+            platform_username=platform_username,
+            profile_folder_name=profile_folder_name,
+        )
+        blocking_pid = DetachedChromeLauncher.find_profile_process(user_data_dir)
+        if blocking_pid:
+            message = "该账号的数据目录正被另一个 Chrome 窗口占用。请先关闭该账号浏览器，再继续。"
+            logger.warning(
+                "阻止重复浏览器会话启动: account_id=%s pid=%s profile=%s",
+                account_id,
+                blocking_pid,
+                user_data_dir,
             )
-            blocking_pid = DetachedChromeLauncher.find_profile_process(user_data_dir)
-            if blocking_pid:
-                message = "该小红书账号的普通 Chrome 窗口仍在运行。请先关闭该账号浏览器，再启动自动发布。"
-                logger.warning(
-                    "阻止小红书发布浏览器启动：profile 正被普通 Chrome 占用 account_id=%s pid=%s profile=%s",
-                    account_id,
-                    blocking_pid,
-                    user_data_dir,
-                )
-                self.message_signal.emit("warning", "小红书浏览器未关闭", message)
-                raise RuntimeError(message)
+            self.message_signal.emit("warning", "账号浏览器未关闭", message)
+            raise RuntimeError(message)
 
         # 视频号：微信侧常见“单点登录/互踢”现象提醒
         # 现象：同时打开两个视频号账号窗口，后登录的账号可能导致先前窗口被要求重新登录（提示“当前账号在其他浏览器或设备登录”）。
@@ -538,6 +546,8 @@ class PatchrightBrowserService(QObject):
         publish_mode: bool = False,
     ):
         try:
+            if publish_mode:
+                headless = False
             logger.info(f"正在启动 Patchright 浏览器 for {platform_username}... (headless={headless})")
             
             # 1. 启动浏览器（headless 由发布页「显示浏览器」勾选或账号页默认显示决定）
@@ -598,43 +608,10 @@ class PatchrightBrowserService(QObject):
                     else:
                         logger.debug("Profile 为空且无 cookies.json，跳过注入 (account_id=%s)", account_id)
             elif not inject_cookies:
-                # 离线账号：持久化上下文会从磁盘自动加载旧的过期 Cookie，
-                # 必须主动清除，否则旧 Cookie 会干扰微信扫码登录流程（导致"登录失败"）
-                try:
-                    await context.clear_cookies()
-                    logger.info("已清除持久化上下文中的旧 Cookie（离线账号，确保干净扫码环境）")
-                except Exception as e:
-                    logger.debug("清除旧 Cookie 失败（不影响流程）: %s", e)
+                logger.info("未注入 cookies.json，保留 Chrome Profile 的现有登录态 (account_id=%s)", account_id)
 
-            # ── 标签顺序策略：先环境页（标签1），再业务页（标签2）──
-            # Chromium 底层规律：最后创建/导航的标签自动获得焦点。
-            # 利用这一规律而非对抗它：
-            #   1. 用 pages[0]（持久化 Context 自带的第一个标签）渲染环境信息页（同步完成）
-            #   2. 再 new_page() + goto 业务页，Chromium 天然将焦点给业务页
-            # 这样彻底消除了之前所有"切完业务页又被环境页抢走"的竞态。
-            # 可通过设置页「显示环境标签页」开关关闭此行为（关闭后只有一个业务标签）。
-            _show_env_tab = True
-            try:
-                from src.infrastructure.common.config.app_config_merge import get_app_config_for_read
-                _show_env_tab = get_app_config_for_read().get("show_environment_info_tab", False)
-            except Exception:
-                pass
-            if not headless and _show_env_tab and hasattr(browser_service, "open_environment_info_tab"):
-                env_page = context.pages[0] if context.pages else None
-                if env_page is not None:
-                    await browser_service.open_environment_info_tab(
-                        focus_tab=False,
-                        reuse_page=env_page,
-                    )
-                    logger.info("有头模式：已在 pages[0] 渲染环境页，即将新建业务标签")
-
-            # 新建业务标签（Chromium 将焦点切到该新标签——这正是我们想要的）
-            # 若「显示环境标签页」已关闭：直接复用 pages[0] 作为业务页，不新建标签，保持只有一个标签
-            if not headless and not _show_env_tab and context.pages:
-                page = context.pages[0]
-                logger.info("环境标签页已关闭，复用 pages[0] 作为业务标签（只保留一个标签）")
-            else:
-                page = await context.new_page()
+            # 只使用业务标签页。额外的指纹/诊断标签会改变标签顺序，不属于账号登录或发布流程。
+            page = context.pages[0] if context.pages else await context.new_page()
 
             await page.goto(platform_url, wait_until="domcontentloaded", timeout=30000)
 
@@ -677,9 +654,6 @@ class PatchrightBrowserService(QObject):
 
             # 4.1 监听用户手动关闭浏览器（context/page close），及时终止静默更新并输出日志
             self._attach_manual_close_watchers(account_id, platform, platform_username)
-            # 4.2 监听并自动关闭平台弹出的额外标签（SSO 验证/广告等），保持业务只有一个标签
-            self._attach_extra_tab_guard(context, platform)
-            
             # 5. 发送启动成功信号 -> UI层响应此信号来弹出 Dialog
             self.browser_launched.emit(account_id, platform_username, platform, is_new_account)
 

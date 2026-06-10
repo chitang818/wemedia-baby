@@ -41,7 +41,7 @@ class PipelineFactoryAsync:
         Returns:
             配置好的发布管道实例
         """
-        pipeline = PublishPipeline(max_concurrent=3)
+        pipeline = PublishPipeline(max_concurrent=2)
         service_locator = ServiceLocator()
         
         # 获取所需服务

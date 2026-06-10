@@ -149,7 +149,7 @@ class ProfileManager:
                     config["canvas_noise_seed"] = random.randint(1, 1000000)
                     is_dirty = True
 
-                # 5. 补全 languages（避免 stealth.js 写死与配置脱节）
+                # 5. 补全 languages（兼容旧 profile 元数据）
                 if "languages" not in config or not isinstance(config.get("languages"), list) or not config.get("languages"):
                     locale = config.get("locale", "zh-CN") or "zh-CN"
                     # 简单规则：中文默认带 en 作为次选；其他 locale 兜底为 [locale, "en"]

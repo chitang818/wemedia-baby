@@ -2,6 +2,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
+from src.plugins.core.publish_failure_kind import (
+    classify_publish_failure,
+    normalize_failure_kind,
+)
+
 @dataclass
 class FormField:
     """表单字段定义"""
@@ -22,6 +27,16 @@ class PublishResult:
     error_message: Optional[str] = None
     failed_step: Optional[str] = None  # 失败时所在步骤名，便于主程序/UI 单独展示
     diagnostic_path: Optional[str] = None
+    failure_kind: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.success:
+            self.failure_kind = None
+            return
+        self.failure_kind = (
+            normalize_failure_kind(self.failure_kind)
+            or classify_publish_failure(self.error_message)
+        )
 
 class PublishPluginInterface(ABC):
     """发布插件抽象接口"""

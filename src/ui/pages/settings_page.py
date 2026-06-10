@@ -848,22 +848,8 @@ class SettingsPage(BasePage):
         )
         self.close_behavior_card.hBoxLayout.addSpacing(16)
 
-        # 显示指纹环境标签页
-        self.env_tab_card = SettingCard(
-            FluentIcon.GLOBE,
-            "显示指纹环境标签页",
-            "打开账号浏览器时，在第一个标签页显示账号指纹环境信息（关闭后只保留业务标签页，方便排查问题）",
-            parent=self.system_group
-        )
-        self.env_tab_switch = SwitchButton(self.env_tab_card)
-        self.env_tab_switch.setOnText("开")
-        self.env_tab_switch.setOffText("关")
-        self.env_tab_card.hBoxLayout.addWidget(self.env_tab_switch, 0, Qt.AlignRight)
-        self.env_tab_card.hBoxLayout.addSpacing(16)
-        
         self.system_group.addSettingCard(self.auto_start_card)
         self.system_group.addSettingCard(self.close_behavior_card)
-        self.system_group.addSettingCard(self.env_tab_card)
         self.expand_layout.addWidget(self.system_group)
 
         self._load_system_settings()
@@ -871,8 +857,6 @@ class SettingsPage(BasePage):
         self.close_behavior_combo.currentIndexChanged.connect(
             self._on_close_behavior_changed
         )
-        self.env_tab_switch.checkedChanged.connect(self._on_env_tab_changed)
-
     # ---- 系统选项：配置读写与功能实现 ----
 
     def _load_system_settings(self):
@@ -891,9 +875,6 @@ class SettingsPage(BasePage):
 
             if app_cfg.get("auto_start", False):
                 self.auto_start_switch.setChecked(True)
-            # 指纹环境标签页：默认开启，读取持久化值
-            show_env = app_cfg.get("show_environment_info_tab", False)
-            self.env_tab_switch.setChecked(bool(show_env))
         except Exception as e:
             logger.warning("加载系统选项配置失败: %s", e)
 
@@ -961,19 +942,6 @@ class SettingsPage(BasePage):
                 main_win.set_tray_visible(behavior == "tray")
         except Exception:
             pass
-
-    def _on_env_tab_changed(self, checked: bool):
-        """显示指纹环境标签页 开关变更"""
-        async def _save():
-            config_center = ServiceLocator().get(ConfigCenter)
-            await config_center.initialize()
-            app_cfg = {**config_center.get_app_config()}
-            app_cfg["show_environment_info_tab"] = checked
-            await config_center.update("app_config", app_cfg)
-        try:
-            run_async_from_ui(_save)
-        except Exception as e:
-            logger.error("保存指纹环境标签页配置失败: %s", e)
 
     def _on_auto_start_changed(self, checked: bool):
         """开机自启动 开关变更"""

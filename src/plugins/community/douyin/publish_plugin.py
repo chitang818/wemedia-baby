@@ -166,7 +166,13 @@ class DouyinPublishPlugin(PublishPluginInterface):
                 probes["music_select"] = ", ".join(Selectors.PUBLISH.get("MUSIC_ENTRY_SELECT", []))
                 probes["music_modify"] = ", ".join(Selectors.PUBLISH.get("MUSIC_ENTRY_MODIFY", []))
             platform_data = _platform_config()
-            anti_risk_config = platform_data.get("anti_risk") if isinstance(platform_data.get("anti_risk"), dict) else {}
+            anti_risk_config = (
+                platform_data.get("publish_pacing")
+                if isinstance(platform_data.get("publish_pacing"), dict)
+                else platform_data.get("anti_risk")
+                if isinstance(platform_data.get("anti_risk"), dict)
+                else {}
+            )
             metadata_for_runner = {**metadata, "selector_probes": probes, "anti_risk_config": anti_risk_config}
             runner = StepRunner(
                 page=page,

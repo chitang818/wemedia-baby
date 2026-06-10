@@ -196,25 +196,15 @@ async def _click_submit_with_fallback(
     except Exception as e:
         logger.info("发布按钮标准 click 失败，尝试拟人移动后再 click: %s", e)
 
-    # 第二步：拟人鼠标移动（制造自然轨迹），然后用 locator.click 完成点击
+    # 第二步：滚动到目标后再次使用标准 click
     try:
         from src.infrastructure.browser.human_behavior import HumanBehavior
-        import random as _random
-        box = await target_btn.bounding_box()
-        if box:
-            vp = await page.evaluate("() => ({ w: window.innerWidth, h: window.innerHeight })")
-            vw, vh = vp.get("w") or 800, vp.get("h") or 600
-            from_x = _random.uniform(0, max(1, vw))
-            from_y = _random.uniform(0, max(1, vh))
-            to_x = box["x"] + box["width"] * _random.uniform(0.3, 0.7)
-            to_y = box["y"] + box["height"] * _random.uniform(0.3, 0.7)
-            await HumanBehavior.mouse_move(page, from_x, from_y, to_x, to_y, steps=_random.randint(18, 30))
-            await page.wait_for_timeout(_random.randint(80, 200))
+        await HumanBehavior.scroll_to_locator(page, target_btn)
         await target_btn.click(timeout=8000)
-        logger.info("发布按钮拟人移动后 click 成功")
+        logger.info("发布按钮滚入视口后 click 成功")
         return
     except Exception as e:
-        logger.info("拟人移动后 click 失败，尝试 force: %s", e)
+        logger.info("滚入视口后 click 失败，尝试 force: %s", e)
 
     # 第三步：force click（跳过遮盖检测，仍走 Playwright 事件派发）
     try:

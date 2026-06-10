@@ -5,8 +5,14 @@
   "login_url": "https://creator.xiaohongshu.com/login",
   "publish_url": "https://creator.xiaohongshu.com/publish",
   "supported_formats": {
-    "video": ["mp4", "mov"],
-    "image": ["jpg", "png"]
+    "video": [
+      "mp4",
+      "mov"
+    ],
+    "image": [
+      "jpg",
+      "png"
+    ]
   },
   "max_file_size": {
     "video": 1073741824,
@@ -19,19 +25,10 @@
   },
   "selectors_file": "config/selectors/xiaohongshu_selectors.json",
   "status": "reserved",
-  "anti_risk": {
-    "delay_jitter_ratio": 0.25,
+  "publish_pacing": {
     "step_interval_base_seconds": 2.0,
-    "step_interval_jitter_seconds": 5.0,
-    "enable_human_like": true,
-    "enable_mouse_wander": true,
-    "enable_browse_before_action": true,
-    "browse_probability": 0.55,
+    "cooldown_after_frequent_seconds": 180,
     "operation_delay_min_seconds": 1.0,
-    "operation_delay_max_seconds": 3.5,
-    "operation_delay_before_click": true,
-    "operation_delay_before_type": true,
-    "type_mistake_probability": 0.04
+    "operation_delay_max_seconds": 3.5
   }
 }
-

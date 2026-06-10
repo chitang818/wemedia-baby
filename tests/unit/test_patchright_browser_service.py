@@ -124,5 +124,5 @@ async def test_xhs_publish_blocks_when_detached_chrome_profile_is_running(monkey
         lambda _path: 12345,
     )
 
-    with pytest.raises(RuntimeError, match="普通 Chrome 窗口仍在运行"):
+    with pytest.raises(RuntimeError, match="数据目录正被另一个 Chrome 窗口占用"):
         await service.open_browser_for_db_account(1, publish_mode=True)

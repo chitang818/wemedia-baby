@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 import logging
-import random as _random
 import time as _time
 from typing import Any, Callable, Dict, Optional, Sequence
 
@@ -309,7 +308,7 @@ def _xhs_strict_real_browser_enabled(metadata: Dict[str, Any]) -> bool:
 
 
 def _xhs_auto_click_submit_enabled(metadata: Dict[str, Any]) -> bool:
-    return bool(metadata.get("xhs_auto_click_submit", False))
+    return bool(metadata.get("xhs_auto_click_submit", True))
 
 
 def _xhs_manual_submit_timeout_ms(metadata: Dict[str, Any]) -> int:
@@ -397,32 +396,16 @@ async def _simulate_mouse_click_at(
     desc: str = "",
 ) -> bool:
     try:
-        vp = await page.evaluate(
-            "() => ({ w: window.innerWidth, h: window.innerHeight })",
-        )
-        vw, vh = float(vp.get("w") or 800), float(vp.get("h") or 600)
-        tx = x + _random.uniform(-3, 3)
-        ty = y + _random.uniform(-3, 3)
-        from_x = vw / 2 + _random.uniform(-100, 100)
-        from_y = vh / 2 + _random.uniform(-100, 100)
+        tx = float(x)
+        ty = float(y)
         try:
             from src.infrastructure.browser.human_behavior import HumanBehavior
 
-            await HumanBehavior.mouse_move(
-                page, from_x, from_y, tx, ty,
-                steps=_random.randint(20, 35),
-            )
+            await HumanBehavior.mouse_move(page, tx, ty, tx, ty, steps=1)
         except Exception:
-            await page.mouse.move(tx, ty, steps=_random.randint(10, 20))
-            
-        await page.mouse.move(tx + _random.uniform(-2, 2), ty + _random.uniform(-2, 2), steps=3)
-        await page.wait_for_timeout(_random.randint(30, 80))
-        await page.mouse.move(tx, ty, steps=2)
-        await page.wait_for_timeout(_random.randint(80, 180))
-        
-        await page.mouse.down()
-        await page.wait_for_timeout(_random.randint(60, 180))
-        await page.mouse.up()
+            await page.mouse.move(tx, ty, steps=1)
+
+        await page.mouse.click(tx, ty)
         
         logger.info("模拟鼠标点击发布钮 (%.0f, %.0f)%s", tx, ty, f" [{desc}]" if desc else "")
         return True

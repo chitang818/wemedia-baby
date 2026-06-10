@@ -19,6 +19,27 @@ from src.plugins.core.steps_base import BasePublishStep, NeedsAction, StepOutcom
 logger = logging.getLogger(__name__)
 USER_LOG = logging.getLogger("publish.user_log")
 
+_NON_RETRYABLE_RISK_KEYWORDS = (
+    "验证码",
+    "异常验证",
+    "安全验证",
+    "验证失败",
+    "操作频繁",
+    "风控",
+    "账号异常",
+    "环境异常",
+    "强制登录",
+    "扫码登录",
+    "重新登录",
+    "risk",
+    "captcha",
+)
+
+
+def _looks_like_non_retryable_risk(message: str) -> bool:
+    text = str(message or "").lower()
+    return any(keyword.lower() in text for keyword in _NON_RETRYABLE_RISK_KEYWORDS)
+
 
 @dataclass
 class BaseRunnerConfig:
@@ -162,22 +183,20 @@ class GenericStepRunner:
                     logger.info(f"--- 正在执行步骤: {step_name} ---")
                     USER_LOG.info(f"{prefix} ▶ 执行中")
 
-                if not self._should_skip_browse(step_name):
-                    try:
-                        from src.infrastructure.anti_risk.human_like import optional_browse_before_action
-                        await asyncio.wait_for(
-                            optional_browse_before_action(
-                                self.page, self.metadata, self.metadata.get("anti_risk_config")
-                            ),
-                            timeout=3.0,
-                        )
-                    except Exception:
-                        pass
-
                 try:
                     outcome: StepOutcome = await step.execute(self.page, self.file_path, self.metadata)
                 except Exception as e:
                     last_failure = PublishResult(success=False, error_message=f"{step_name} 执行异常: {e}")
+                    if _looks_like_non_retryable_risk(str(e)):
+                        diagnostic_path = await self._diagnose(step_name, reason=f"non_retryable_risk: {e}")
+                        short = str(e)[:50] + ("..." if len(str(e)) > 50 else "")
+                        USER_LOG.warning(f"{prefix} ✗ 失败: {short}")
+                        return PublishResult(
+                            success=False,
+                            error_message=f"{step_name} 执行异常: {e}",
+                            failed_step=step_name,
+                            diagnostic_path=diagnostic_path,
+                        )
                     if attempt >= step_max_retries:
                         diagnostic_path = await self._diagnose(step_name, reason=f"exception_after_retries: {e}")
                         short = str(e)[:50] + ("..." if len(str(e)) > 50 else "")
@@ -203,13 +222,12 @@ class GenericStepRunner:
                             rate = max(0.1, float(self.metadata.get("speed_rate", 1.0)))
                             await self.page.wait_for_timeout(max(50, int(80 * rate)))
                         else:
-                            from src.infrastructure.anti_risk.delays import step_interval, cognitive_pause
+                            from src.infrastructure.anti_risk.delays import step_interval
                             await step_interval(
                                 self.page,
                                 self.metadata,
                                 self.metadata.get("anti_risk_config"),
                             )
-                            await cognitive_pause(self.page, self.metadata)
                     except Exception:
                         pass
                     i += 1
@@ -286,6 +304,16 @@ class GenericStepRunner:
                         USER_LOG.info(f"{prefix} ✓ 完成")
                         return outcome
                     last_failure = outcome
+                    if _looks_like_non_retryable_risk(outcome.error_message or ""):
+                        diagnostic_path = await self._diagnose(step_name, reason=outcome.error_message or "non_retryable_risk")
+                        short = (outcome.error_message or "未知原因")[:50]
+                        USER_LOG.warning(f"{prefix} ✗ 失败: {short}")
+                        return PublishResult(
+                            success=False,
+                            error_message=outcome.error_message or "平台返回验证/风控提示，已停止该账号本轮发布",
+                            failed_step=step_name,
+                            diagnostic_path=diagnostic_path or getattr(outcome, "diagnostic_path", None),
+                        )
                     if attempt >= step_max_retries:
                         diagnostic_path = await self._diagnose(step_name, reason=outcome.error_message or "failed")
                         short = (outcome.error_message or "未知原因")[:50]
@@ -318,7 +346,7 @@ class GenericStepRunner:
         if action.action in ("need_cover", "need_supplement"):
             return True
         if action.action == "need_retry":
-            return self._submit_retry_count < self.config.max_submit_retries
+            return False
         return False
 
     # ------ 诊断 ------

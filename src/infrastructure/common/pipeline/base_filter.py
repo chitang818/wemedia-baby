@@ -9,6 +9,11 @@ from typing import Optional, Protocol, Any
 from dataclasses import dataclass
 import logging
 
+from src.plugins.core.publish_failure_kind import (
+    classify_publish_failure,
+    normalize_failure_kind,
+)
+
 
 @dataclass
 class PublishContext:
@@ -26,11 +31,12 @@ class PublishContext:
     description: Optional[str] = None
     tags: Optional[str] = None
     account: Optional[Any] = None  # Account实体
-    headless: bool = True  # 是否无头模式
+    headless: bool = False  # 发布默认使用可见浏览器
     speed_rate: float = 1.0  # 发布速度倍率 (1.0=正常, >1.0=慢速)
     pause_event: Any = None  # 暂停控制事件 (asyncio.Event)
     error_message: Optional[str] = None
     diagnostic_path: Optional[str] = None
+    failure_kind: Optional[str] = None
     cover_type: Optional[str] = None  # 封面类型: "first_frame", "custom", "ai"
     cover_path: Optional[str] = None  # 本地封面图片路径（custom 时使用）
     scheduled_publish_time: Optional[Any] = None  # 定时发布时间 (datetime 或 str)
@@ -58,7 +64,7 @@ class PublishRequest:
     title: Optional[str] = None
     description: Optional[str] = None
     tags: Optional[str] = None
-    headless: bool = True  # 是否无头模式
+    headless: bool = False  # 发布默认使用可见浏览器
     speed_rate: float = 1.0  # 发布速度倍率
     pause_event: Any = None  # 暂停控制事件 (asyncio.Event)
     cover_type: Optional[str] = None  # 封面类型: "first_frame", "custom", "ai"
@@ -83,7 +89,17 @@ class PipelineResult:
     publish_url: Optional[str] = None
     error_message: Optional[str] = None
     diagnostic_path: Optional[str] = None
+    failure_kind: Optional[str] = None
     execution_time: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.success:
+            self.failure_kind = None
+            return
+        self.failure_kind = (
+            normalize_failure_kind(self.failure_kind)
+            or classify_publish_failure(self.error_message)
+        )
 
 
 # 向后兼容别名：旧代码中 `from base_filter import PublishResult` 仍可用

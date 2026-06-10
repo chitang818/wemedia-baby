@@ -112,6 +112,9 @@ class AccountTableModel(QAbstractTableModel):
         return self._display_value(record, col)
 
     def _tooltip_value(self, record: Dict[str, Any], col: int) -> Optional[str]:
+        if col == self.COL_LOGIN_STATUS and record.get("publish_risk_state") == "quarantined":
+            reason = str(record.get("publish_risk_reason") or "").strip()
+            return f"发布风险隔离：{reason}" if reason else "发布风险隔离"
         if col == self.COL_VIDEO_STATS:
             text = self._display_value(record, col)
             return f"视频库：{text}" if text and text != "—" else "视频库：—"
@@ -129,6 +132,8 @@ class AccountTableModel(QAbstractTableModel):
         if col == self.COL_USERNAME:
             return str(record.get("platform_username") or record.get("account_name") or "未命名")
         if col == self.COL_LOGIN_STATUS:
+            if record.get("publish_risk_state") == "quarantined":
+                return "风险隔离"
             return "在线" if record.get("login_status") == "online" else "离线"
         if col == self.COL_GROUP:
             group_name = str(record.get("group_name") or "").strip()

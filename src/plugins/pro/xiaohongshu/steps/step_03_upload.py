@@ -214,39 +214,14 @@ class UploadMediaStep(BasePublishStep):
         upload_btn_selector: str,
         metadata: Dict[str, Any],
     ) -> None:
-        """上传文件前，将鼠标移至上传区域附近并短暂停顿，模拟用户找到上传区域的自然行为。
-
-        降低 set_input_files 直接注入时「鼠标从未到达上传区域」的自动化特征。
-        若定位失败则静默跳过，不影响上传主流程。
-        """
-        import random
+        """上传文件前滚动上传区域入视口，不做随机悬停。"""
         try:
             upload_area = page.locator(upload_btn_selector).first
             if await upload_area.count() == 0:
                 return
-            box = await upload_area.bounding_box()
-            if not box:
-                return
-            # 在上传区域内随机选点，加 ±25px 抖动模拟人手不精准
-            target_x = box["x"] + box["width"] / 2 + random.uniform(-25, 25)
-            target_y = box["y"] + box["height"] / 2 + random.uniform(-12, 12)
-            try:
-                from src.infrastructure.browser.human_behavior import HumanBehavior
-                vp = await page.evaluate("() => ({ w: window.innerWidth, h: window.innerHeight })")
-                from_x = random.uniform(0, max(1, float(vp.get("w") or 800)) * 0.4)
-                from_y = random.uniform(0, max(1, float(vp.get("h") or 600)) * 0.4)
-                await HumanBehavior.mouse_move(
-                    page, from_x, from_y, target_x, target_y,
-                    steps=random.randint(12, 25),
-                )
-            except Exception:
-                await page.mouse.move(target_x, target_y)
-            # 在上传区域停顿 0.8-2.2 秒（模拟用户确认区域后才拖动/选择文件）
-            pause_ms = random.randint(800, 2200)
-            await page.wait_for_timeout(pause_ms)
-            logger.debug("上传前悬停完成：(%.0f, %.0f)，停顿 %dms", target_x, target_y, pause_ms)
+            await upload_area.scroll_into_view_if_needed()
         except Exception as e:
-            logger.debug("上传前悬停异常（已忽略）: %s", e)
+            logger.debug("上传区域滚入视口异常（已忽略）: %s", e)
 
 
 

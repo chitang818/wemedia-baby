@@ -50,11 +50,11 @@ async def test_xiaohongshu_entry_publish_url_wait_uses_async_predicate(monkeypat
     )
 
 
-def test_xiaohongshu_submit_defaults_to_manual_in_strict_mode() -> None:
+def test_xiaohongshu_submit_defaults_to_automatic_in_strict_mode() -> None:
     metadata = {}
 
     assert step_08_submit._xhs_strict_real_browser_enabled(metadata) is True
-    assert step_08_submit._xhs_auto_click_submit_enabled(metadata) is False
+    assert step_08_submit._xhs_auto_click_submit_enabled(metadata) is True
 
 
 @pytest.mark.asyncio

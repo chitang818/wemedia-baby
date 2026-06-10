@@ -47,7 +47,7 @@ class PublishService:
         title: Optional[str] = None,
         description: Optional[str] = None,
         tags: Optional[str] = None,
-        headless: bool = True,
+        headless: bool = False,
         speed_rate: float = 1.0,
         pause_event: Any = None,
         cover_type: Optional[str] = None,
@@ -178,4 +178,3 @@ class PublishService:
             发布结果列表
         """
         return await self.pipeline.resume_failed_tasks(user_id, platform)
-

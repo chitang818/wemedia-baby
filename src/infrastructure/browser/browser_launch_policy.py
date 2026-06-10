@@ -6,12 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Dict
 
 from src.infrastructure.common.config.app_config_keys import (
-    BROWSER_TRUST_MODE,
-    BROWSER_TRUST_MODE_COMPAT_STEALTH,
     BROWSER_TRUST_MODE_REAL,
-    PUBLISH_FORCE_VISIBLE_BROWSER,
-    PUBLISH_RESPECT_PLATFORM_INTERVAL,
-    PUBLISH_STOP_ON_RISK_PROMPT,
 )
 from src.infrastructure.common.config.app_config_merge import get_app_config_for_read
 
@@ -25,7 +20,7 @@ class BrowserLaunchPolicy:
 
     @property
     def use_compat_stealth(self) -> bool:
-        return self.trust_mode == BROWSER_TRUST_MODE_COMPAT_STEALTH
+        return False
 
     @property
     def use_real_browser(self) -> bool:
@@ -41,15 +36,14 @@ def _read_app_config() -> Dict[str, Any]:
 
 
 def get_browser_launch_policy() -> BrowserLaunchPolicy:
-    cfg = _read_app_config()
-    raw_mode = str(cfg.get(BROWSER_TRUST_MODE, BROWSER_TRUST_MODE_REAL) or "").strip()
-    if raw_mode not in {BROWSER_TRUST_MODE_REAL, BROWSER_TRUST_MODE_COMPAT_STEALTH}:
-        raw_mode = BROWSER_TRUST_MODE_REAL
+    # Legacy browser safety keys remain readable during migration, but no longer
+    # alter runtime behavior. Publishing always uses visible, standard Chrome.
+    _read_app_config()
     return BrowserLaunchPolicy(
-        trust_mode=raw_mode,
-        force_visible_publish=bool(cfg.get(PUBLISH_FORCE_VISIBLE_BROWSER, True)),
-        respect_platform_interval=bool(cfg.get(PUBLISH_RESPECT_PLATFORM_INTERVAL, True)),
-        stop_on_risk_prompt=bool(cfg.get(PUBLISH_STOP_ON_RISK_PROMPT, True)),
+        trust_mode=BROWSER_TRUST_MODE_REAL,
+        force_visible_publish=True,
+        respect_platform_interval=False,
+        stop_on_risk_prompt=True,
     )
 
 

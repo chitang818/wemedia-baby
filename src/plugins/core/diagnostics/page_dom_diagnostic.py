@@ -29,6 +29,10 @@ _SENSITIVE_ASSIGNMENT_RE = re.compile(
     """
 )
 _COOKIE_ATTR_RE = re.compile(r"(?i)(document\.cookie\s*=\s*['\"])[^'\"]+(['\"])")
+_SENSITIVE_HEADER_RE = re.compile(
+    r"(?im)^(\s*(?:authorization|cookie|set-cookie|x-csrf-token|x-xsrf-token)\s*[:=]\s*).+$"
+)
+_BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{12,}")
 
 
 @dataclass(frozen=True)
@@ -61,7 +65,9 @@ def redact_sensitive_text(text: str) -> str:
     if not text:
         return text
     redacted = _SENSITIVE_ASSIGNMENT_RE.sub(r"\g<prefix>\g<quote>***REDACTED***\g<quote>", text)
-    return _COOKIE_ATTR_RE.sub(r"\1***REDACTED***\2", redacted)
+    redacted = _COOKIE_ATTR_RE.sub(r"\1***REDACTED***\2", redacted)
+    redacted = _SENSITIVE_HEADER_RE.sub(r"\1***REDACTED***", redacted)
+    return _BEARER_RE.sub("Bearer ***REDACTED***", redacted)
 
 
 def _redact_json(value: Any) -> Any:

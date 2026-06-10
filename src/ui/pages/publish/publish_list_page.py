@@ -53,6 +53,11 @@ from .list_settings_dialog import (
     MODE_ACCOUNT,
 )
 from src.infrastructure.browser.browser_launch_policy import should_stop_on_risk_prompt
+from src.plugins.core.publish_failure_kind import (
+    classify_publish_failure,
+    is_blocking_failure_kind,
+    PublishFailureKind,
+)
 from src.infrastructure.common.publish_material_path_policy import (
     desired_persisted_post_publish_action,
     message_for_auto_post_publish_change,
@@ -70,6 +75,10 @@ _RISK_PROMPT_KEYWORDS = (
     "验证失败",
     "环境异常",
     "账号异常",
+    "强制登录",
+    "扫码登录",
+    "重新登录",
+    "登录已过期",
     "稍后重试",
     "脚本",
     "自动化",
@@ -979,13 +988,19 @@ class PublishListPage(PublishRecordsPage):
         run_task_items: list,
         run_total: int,
         pending_count: int,
+        failure_kind: Optional[str] = None,
     ) -> None:
         """发布循环内的统一失败标记：更新 DB、总览卡片、内存状态、文件分组。"""
         from src.infrastructure.common.post_publish_file_handler import PostPublishFileHandler
         self.log_widget.start_current_task()
         self.log_widget.append_error(f"任务 {task_id} 发布失败：{error_message}")
         if db_publish:
-            await db_publish.update_status(task_id, 'failed', error_message=error_message)
+            await db_publish.update_status(
+                task_id,
+                'failed',
+                error_message=error_message,
+                failure_kind=failure_kind or classify_publish_failure(error_message),
+            )
         if post_publish_action != "none":
             PostPublishFileHandler.on_task_failed(task_id, file_groups)
         for item in run_task_items:
@@ -1119,6 +1134,7 @@ class PublishListPage(PublishRecordsPage):
             return True
         user_log = logging.getLogger("publish.user_log")
         user_log.info("[检测] 发布前账号在线检测：开始批量检查")
+        self._publish_verified_accounts = set()
 
         def _normalize_offline_reason(reason: str) -> str:
             """将底层英文/技术错误原因转换为用户可读中文。"""
@@ -1189,6 +1205,10 @@ class PublishListPage(PublishRecordsPage):
             if not matched_acc:
                 offline_accounts.append(f"{platform}:{account_name}（账号库未匹配）")
                 continue
+            if matched_acc.get("publish_risk_state") == "quarantined":
+                reason = matched_acc.get("publish_risk_reason") or "发布风险隔离"
+                offline_accounts.append(f"{platform}:{account_name}（风险隔离：{reason}）")
+                continue
             acc_id = matched_acc.get("id")
             cookie_dict = await self._await_with_publish_stop_cancel(
                 account_manager.load_account_cookie(acc_id, merge_storage_state=True)
@@ -1215,6 +1235,8 @@ class PublishListPage(PublishRecordsPage):
                     await account_manager.update_account_login_status(acc_id, "offline")
                 except Exception:
                     pass
+            else:
+                self._publish_verified_accounts.add((platform, account_name))
         if not offline_accounts:
             user_log.info("[检测] 发布前账号在线检测：全部在线，继续发布")
             return True
@@ -1366,6 +1388,9 @@ class PublishListPage(PublishRecordsPage):
 
             _current_retry_count = 0
             _risk_blocked_accounts: set[tuple[str, str]] = set()
+            _platform_risk_accounts: dict[str, set[str]] = {}
+            _risk_blocked_platforms: set[str] = set()
+            self._publish_verified_accounts = getattr(self, "_publish_verified_accounts", set())
 
             while self._is_publishing_loop_active:
                 await self._publish_queue_checkpoint()
@@ -1389,6 +1414,11 @@ class PublishListPage(PublishRecordsPage):
                                 for rid in (self._publish_queue_scoped_ids or ())
                             )
                             if r and r.get("status") == "failed"
+                            and (r.get("platform") or "") not in _risk_blocked_platforms
+                            and (
+                                (r.get("platform") or ""),
+                                (r.get("platform_username") or "").strip(),
+                            ) not in _risk_blocked_accounts
                         ]
                         if failed_in_scope:
                             _current_retry_count += 1
@@ -1476,11 +1506,37 @@ class PublishListPage(PublishRecordsPage):
                 platform = task.get('platform')
                 file_path = task.get('file_path')
                 self._current_publish_platform = platform or ""
+                if (platform or "") in _risk_blocked_platforms:
+                    skip_msg = "同平台已有多个账号在本轮发布中触发验证、频繁操作或账号异常提示，已停止该平台后续任务，请人工检查后再继续。"
+                    self.log_widget.append_warning(f"⚠️ {skip_msg}")
+                    if db_publish:
+                        await db_publish.update_status(
+                            task_id,
+                            'failed',
+                            error_message=skip_msg,
+                            failure_kind=PublishFailureKind.RISK_CHALLENGE.value,
+                        )
+                    if post_publish_action != "none":
+                        PostPublishFileHandler.on_task_failed(task_id, file_groups)
+                    if run_task_items:
+                        for item in run_task_items:
+                            if item.get("task_id") == task_id:
+                                item["status"] = "failed"
+                                break
+                    self._update_task_status_in_memory(task_id, "failed", error_message=skip_msg)
+                    if _pending_deque and _pending_deque[0].get("id") == task_id:
+                        _pending_deque.popleft()
+                    continue
                 if (platform or "", account_name) in _risk_blocked_accounts:
                     skip_msg = "检测到该账号/平台本轮已有异常验证或操作频繁提示，已停止后续任务，请人工检查后再继续。"
                     self.log_widget.append_warning(f"⚠️ {skip_msg}")
                     if db_publish:
-                        await db_publish.update_status(task_id, 'failed', error_message=skip_msg)
+                        await db_publish.update_status(
+                            task_id,
+                            'failed',
+                            error_message=skip_msg,
+                            failure_kind=PublishFailureKind.RISK_CHALLENGE.value,
+                        )
                     if post_publish_action != "none":
                         PostPublishFileHandler.on_task_failed(task_id, file_groups)
                     if run_task_items:
@@ -1608,6 +1664,20 @@ class PublishListPage(PublishRecordsPage):
                          raise ValueError(f"系统账号库中未匹配到该账号 '{account_name}'")
                     
                     # 与账号库刷新一致：合并 storage_state，避免仅 cookies.json 子集导致误判掉线
+                    if matched_acc.get("publish_risk_state") == "quarantined":
+                        reason = matched_acc.get("publish_risk_reason") or "发布风险隔离"
+                        await self._mark_task_failed_in_loop(
+                            task_id,
+                            f"账号已处于发布风险隔离状态，请在账号管理页人工确认后解除：{reason}",
+                            db_publish=db_publish,
+                            post_publish_action=post_publish_action,
+                            file_groups=file_groups,
+                            run_task_items=run_task_items,
+                            run_total=run_total,
+                            pending_count=len(pending_records),
+                            failure_kind=PublishFailureKind.RISK_CHALLENGE.value,
+                        )
+                        continue
                     acc_id = matched_acc.get('id')
                     platform_username = matched_acc.get('platform_username') or matched_acc.get('account_name', '')
                     plat = matched_acc.get('platform', '')
@@ -1618,18 +1688,24 @@ class PublishListPage(PublishRecordsPage):
                     )
                     if not cookie_dict or not isinstance(cookie_dict, dict):
                         raise ValueError("Cookie 文件不存在或格式错误")
-                    from src.services.account.login_status_verifier import verify_login_status
-                    res_info = await self._await_with_publish_stop_cancel(
-                        verify_login_status(
-                            platform=plat,
-                            cookies=cookie_dict,
-                            account_id=acc_id,
-                            account_name=platform_username,
-                            user_agent=matched_acc.get('user_agent'),
-                            http_session=None,
-                            timeout=15,
+                    verified_key = ((plat or "").strip(), (platform_username or "").strip())
+                    if verified_key in getattr(self, "_publish_verified_accounts", set()):
+                        res_info = {"is_logged_in": True}
+                    else:
+                        from src.services.account.login_status_verifier import verify_login_status
+                        res_info = await self._await_with_publish_stop_cancel(
+                            verify_login_status(
+                                platform=plat,
+                                cookies=cookie_dict,
+                                account_id=acc_id,
+                                account_name=platform_username,
+                                user_agent=matched_acc.get('user_agent'),
+                                http_session=None,
+                                timeout=15,
+                            )
                         )
-                    )
+                        if res_info.get("is_logged_in"):
+                            self._publish_verified_accounts.add(verified_key)
                     
                     _fail_kw = dict(
                         db_publish=db_publish, post_publish_action=post_publish_action,
@@ -1730,7 +1806,12 @@ class PublishListPage(PublishRecordsPage):
                         _timeout_msg = f"任务执行超时（已超过 {_SINGLE_TASK_TIMEOUT // 60} 分钟），已强制终止"
                         self.log_widget.append_error(f"⏰ {_timeout_msg}")
                         if db_publish:
-                            await db_publish.update_status(task_id, 'failed', error_message=_timeout_msg)
+                            await db_publish.update_status(
+                                task_id,
+                                'failed',
+                                error_message=_timeout_msg,
+                                failure_kind=PublishFailureKind.NETWORK_ERROR.value,
+                            )
                         if post_publish_action != "none":
                             PostPublishFileHandler.on_task_failed(task_id, file_groups)
                         for item in run_task_items:
@@ -1766,9 +1847,38 @@ class PublishListPage(PublishRecordsPage):
                          self._update_task_status_in_memory(task_id, "success")
                     else:
                          msg = result.error_message if result else "未知错误"
+                         failure_kind = (
+                             getattr(result, "failure_kind", None)
+                             if result
+                             else classify_publish_failure(msg)
+                         )
+                         failure_kind = failure_kind or classify_publish_failure(msg)
                          self.log_widget.append_error(f"❌ 任务发布失败: {msg}")
-                         if should_stop_on_risk_prompt() and _looks_like_platform_risk_prompt(msg):
+                         blocking_failure = is_blocking_failure_kind(failure_kind)
+                         if should_stop_on_risk_prompt() and (blocking_failure or _looks_like_platform_risk_prompt(msg)):
                              _risk_blocked_accounts.add((platform or "", account_name))
+                             account_set = _platform_risk_accounts.setdefault(platform or "", set())
+                             if account_name:
+                                 account_set.add(account_name)
+                             if len(account_set) >= 2:
+                                 _risk_blocked_platforms.add(platform or "")
+                                 user_log.warning(
+                                     "[风险控制] 同平台已有多个账号触发风险，停止本轮该平台后续任务: 平台=%s 账号数=%s",
+                                     platform,
+                                     len(account_set),
+                                 )
+                             try:
+                                 acc_id_to_quarantine = matched_acc.get("id") if isinstance(matched_acc, dict) else None
+                                 if acc_id_to_quarantine:
+                                     await account_repo.mark_publish_quarantined(
+                                         int(acc_id_to_quarantine),
+                                         str(msg or "发布触发平台风险提示"),
+                                     )
+                                     if isinstance(matched_acc, dict):
+                                         matched_acc["publish_risk_state"] = "quarantined"
+                                         matched_acc["publish_risk_reason"] = str(msg or "")
+                             except Exception as risk_e:
+                                 logger.warning("持久化账号发布风险隔离失败: %s", risk_e)
                              user_log.warning(
                                  "[风险控制] 检测到平台异常提示，停止本轮该账号后续任务: 平台=%s 账号=%s",
                                  platform,
@@ -1793,6 +1903,7 @@ class PublishListPage(PublishRecordsPage):
                                  'failed',
                                  error_message=msg,
                                  diagnostic_path=diagnostic_path,
+                                  failure_kind=failure_kind,
                              )
                          if post_publish_action != "none":
                              PostPublishFileHandler.on_task_failed(task_id, file_groups)
@@ -1821,7 +1932,12 @@ class PublishListPage(PublishRecordsPage):
                     error_msg = str(e)
                     self.log_widget.append_error(f"🔥 处理队列发生业务崩溃: {error_msg}")
                     if db_publish:
-                        await db_publish.update_status(task_id, 'failed', error_message=error_msg)
+                        await db_publish.update_status(
+                            task_id,
+                            'failed',
+                            error_message=error_msg,
+                            failure_kind=classify_publish_failure(error_msg),
+                        )
                     if post_publish_action != "none":
                         PostPublishFileHandler.on_task_failed(task_id, file_groups)
                     for item in run_task_items:
@@ -1854,6 +1970,7 @@ class PublishListPage(PublishRecordsPage):
             InfoBar.error("组件错误", f"队列异常断开：{str(queue_e)}", parent=self)
         finally:
             self._publish_queue_scoped_ids = None
+            self._publish_verified_accounts = set()
             self._ui_active_publishing_task_id = None
             self._sync_publish_queue_ui_executing_from_active_id()
             self._is_publishing_loop_active = False

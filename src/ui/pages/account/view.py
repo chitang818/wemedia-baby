@@ -647,6 +647,7 @@ class AccountPage(BasePage):
             'on_set_group': lambda acc_id: self._on_set_account_group(acc_id, account_data),
             'on_copy_name': lambda name: QApplication.clipboard().setText(name),
             'on_refresh_status': lambda acc_id: self._refresh_single_account_status(acc_id),
+            'on_clear_publish_risk': lambda acc_id: self._clear_publish_risk_quarantine(acc_id),
             'on_open_media_library': lambda data: self._open_account_material_library_folder(data),
         }
         
@@ -657,6 +658,33 @@ class AccountPage(BasePage):
             account_data.get('platform'),
             callbacks,
             account_data=account_data,
+        )
+
+    def _clear_publish_risk_quarantine(self, account_id: int) -> None:
+        """Clear publish risk quarantine after explicit user action."""
+        async def _run():
+            try:
+                from src.domain.repositories.account_repository_async import AccountRepositoryAsync
+
+                ok = await AccountRepositoryAsync().clear_publish_quarantine(account_id)
+                if ok:
+                    InfoBar.success(
+                        "已解除隔离",
+                        "该账号已解除发布风险隔离，请确认平台账号状态正常后再发布。",
+                        parent=self,
+                    )
+                    self._load_accounts()
+                else:
+                    InfoBar.warning("解除失败", "未找到该账号或数据库未更新。", parent=self)
+            except Exception as exc:
+                logger.error("解除发布风险隔离失败: %s", exc, exc_info=True)
+                InfoBar.error("解除失败", str(exc), parent=self)
+
+        get_async_task_registry().create_task(
+            _run(),
+            name=f"account.clear_publish_risk.{account_id}",
+            group="account",
+            log_exceptions=True,
         )
 
     def _open_account_material_library_folder(self, account_data: Dict[str, Any]) -> None:
@@ -1176,7 +1204,7 @@ class AccountPage(BasePage):
         InfoBar.warning(title='警告', content=content, parent=self)
 
     def _batch_sync_nicknames(self, accounts, progress_dialog, parent_worker):
-        """批量深度同步昵称 (Headless Browser)"""
+        """批量深度同步昵称（兼容入口，浏览器始终可见）。"""
         logger.info(f"开始批量深度同步昵称，共 {len(accounts)} 个账号")
         
         # 使用 AsyncWorker 执行耗时操作
@@ -1200,14 +1228,14 @@ class AccountPage(BasePage):
                 
                 browser_manager = None
                 try:
-                    # 1. 启动 Headless 浏览器
+                    # 1. 启动可见浏览器
                     # 使用正确的参数初始化 BrowserFactory
                     browser_manager = BrowserFactory.get_browser_service(
                         account_id=account_id,
                         platform=account.get('platform', 'douyin'),
                         platform_username=account.get('platform_username', account_name)
                     )
-                    context = await browser_manager.launch(headless=True)
+                    context = await browser_manager.launch(headless=False)
                     if not context:
                         logger.error(f"启动浏览器失败: {account_name}")
                         return False

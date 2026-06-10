@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# stealth.js / 缺省回退（与随机档案中某条保持一致）
+# Legacy profile fallback values retained for old account metadata compatibility.
 DEFAULT_WEBGL_RENDERER = (
     "ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11)"
 )

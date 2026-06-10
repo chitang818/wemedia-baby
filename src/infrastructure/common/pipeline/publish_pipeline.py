@@ -33,7 +33,7 @@ class PublishPipeline:
     - 动态过滤器（执行前可插入过滤器）
     """
     
-    def __init__(self, max_concurrent: int = 5, data_storage=None):
+    def __init__(self, max_concurrent: int = 2, data_storage=None):
         """初始化发布管道
         
         Args:
@@ -41,7 +41,8 @@ class PublishPipeline:
             data_storage: 数据存储服务（可选，用于任务恢复）
         """
         self.filters: List[IPublishFilter] = []
-        self.semaphore = asyncio.Semaphore(max_concurrent)
+        self.max_concurrent = max(1, min(2, int(max_concurrent or 2)))
+        self.semaphore = asyncio.Semaphore(self.max_concurrent)
         self.data_storage = data_storage  # 用于任务恢复
         self.logger = logging.getLogger(__name__)
     
@@ -164,6 +165,7 @@ class PublishPipeline:
                             success=False,
                             error_message=error,
                             diagnostic_path=getattr(context, "diagnostic_path", None),
+                            failure_kind=getattr(context, "failure_kind", None),
                             execution_time=time.time() - start_time
                         )]
                 
@@ -172,6 +174,7 @@ class PublishPipeline:
                     success=True,
                     publish_url=context.publish_url if hasattr(context, 'publish_url') else None,
                     diagnostic_path=getattr(context, "diagnostic_path", None),
+                    failure_kind=None,
                     execution_time=execution_time
                 )]
             
@@ -180,6 +183,7 @@ class PublishPipeline:
                 return [PipelineResult(
                     success=False,
                     error_message=str(e),
+                    failure_kind=None,
                     execution_time=time.time() - start_time
                 )]
     
@@ -269,7 +273,7 @@ class PublishPipeline:
                     title=record.get('title', ''),
                     description=record.get('description'),
                     tags=record.get('tags', '').split(',') if record.get('tags') else [],
-                    headless=True,  # 恢复任务默认使用无头模式
+                    headless=False,
                     speed_rate=1.0,
                     scheduled_publish_time=record.get('scheduled_publish_time'),
                     privacy_settings=record.get('privacy_settings'),

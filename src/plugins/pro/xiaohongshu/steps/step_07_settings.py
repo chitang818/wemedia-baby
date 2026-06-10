@@ -514,33 +514,18 @@ class PublishSettingsStep(BasePublishStep):
         wait_ms: Callable[[int], int],
         speed_rate: float,
     ) -> bool:
-        """优先用输入框写入（模拟真实键盘行为，避免被平台识别）。"""
-        import random
+        """优先用输入框写入。"""
 
         try:
             await self._mouse_click_locator_center(page, inp)
-            await page.wait_for_timeout(wait_ms(random.randint(100, 200)))
+            await page.wait_for_timeout(wait_ms(120))
             
             await page.keyboard.press("Control+A")
-            await page.wait_for_timeout(wait_ms(random.randint(80, 150)))
+            await page.wait_for_timeout(wait_ms(80))
             await page.keyboard.press("Backspace")
-            await page.wait_for_timeout(wait_ms(random.randint(100, 200)))
-
-            for i, char in enumerate(st_str):
-                if i > 0 and i % random.randint(3, 5) == 0:
-                    await page.wait_for_timeout(wait_ms(random.randint(300, 600)))
-                    
-                if random.random() < 0.03 and char.isdigit():
-                    wrong_char = str((int(char) + 1) % 10)
-                    await page.keyboard.type(wrong_char)
-                    await page.wait_for_timeout(wait_ms(random.randint(150, 300)))
-                    await page.keyboard.press("Backspace")
-                    await page.wait_for_timeout(wait_ms(random.randint(100, 200)))
-                
-                await page.keyboard.type(char)
-                await page.wait_for_timeout(wait_ms(random.randint(80, 200)))
-
-            await page.wait_for_timeout(wait_ms(random.randint(150, 300)))
+            await page.wait_for_timeout(wait_ms(100))
+            await page.keyboard.type(st_str)
+            await page.wait_for_timeout(wait_ms(150))
             await page.keyboard.press("Enter")
             await page.wait_for_timeout(wait_ms(250))
             

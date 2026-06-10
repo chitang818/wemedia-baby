@@ -138,7 +138,9 @@ class QiehaoPublishPlugin(PublishPluginInterface):
 
             platform_data = _platform_config()
             anti_risk_config = (
-                platform_data.get("anti_risk")
+                platform_data.get("publish_pacing")
+                if isinstance(platform_data.get("publish_pacing"), dict)
+                else platform_data.get("anti_risk")
                 if isinstance(platform_data.get("anti_risk"), dict)
                 else {}
             )

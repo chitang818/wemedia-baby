@@ -15,7 +15,6 @@
                  metadata['_publish_btn_ready']（步骤1已确认按钮就绪时可快速点击）
 """
 import logging
-import random
 from typing import Dict, Any
 
 from src.infrastructure.browser.automation_api import Page
@@ -149,27 +148,8 @@ class EnterPublishEntryStep(BasePublishStep):
         return True
 
     async def _human_mouse_click_point(self, page: Page, x: float, y: float) -> None:
-        """用拟人轨迹移动到坐标点，并保证最后一帧精确落在目标点。"""
-        try:
-            from src.infrastructure.browser.human_behavior import HumanBehavior
-            viewport = await page.evaluate("() => ({ w: window.innerWidth, h: window.innerHeight })")
-            from_x = random.uniform(40, max(80, (viewport.get("w") or 800) - 40))
-            from_y = random.uniform(40, max(80, (viewport.get("h") or 600) - 40))
-            await HumanBehavior.mouse_move(
-                page,
-                from_x,
-                from_y,
-                x,
-                y,
-                steps=random.randint(22, 38),
-            )
-            await page.mouse.move(x, y)
-            await page.wait_for_timeout(random.randint(40, 120))
-            await page.mouse.down()
-            await page.wait_for_timeout(random.randint(60, 150))
-            await page.mouse.up()
-        except Exception:
-            await page.mouse.click(x, y)
+        """Click the resolved DOM point directly."""
+        await page.mouse.click(x, y)
 
     async def _switch_to_image_tab(self, page: Page) -> bool:
         """图文任务先切到「最近图文」，该 Tab 下才会出现「发表图文」入口。"""

@@ -162,7 +162,7 @@ async def initialize_services_async() -> bool:
                 user_repo=service_locator.get(UserRepositoryAsync),
                 sub_repo=service_locator.get(SubscriptionRepositoryAsync),
             )
-            publish_pipeline = PublishPipeline(max_concurrent=3)
+            publish_pipeline = PublishPipeline(max_concurrent=2)
             publish_pipeline.add_filter(PermissionCheckFilterAsync(permission_controller))
             publish_pipeline.add_filter(MediaValidateFilterAsync(MediaValidator()))
             publish_pipeline.add_filter(AccountLoadFilterAsync(browser_account_manager))

@@ -81,8 +81,7 @@ def _topic_pause_ms(base_ms: int, speed_rate: float) -> int:
 async def _type_chinese_with_ime(
     page: Page, text: str, speed_rate: float, default_delay: int
 ) -> None:
-    """模拟中文 IME 输入过程（拼音 → 选字），有效绕过直接赋值特征。"""
-    import random
+    """输入中文文本。"""
     
     pypinyin_mod = None
     try:
@@ -98,7 +97,7 @@ async def _type_chinese_with_ime(
                 await page.evaluate(
                     "() => document.activeElement && document.activeElement.dispatchEvent(new CompositionEvent('compositionstart', {bubbles:true}))"
                 )
-                await page.keyboard.type(pinyin, delay=random.randint(40, 90))
+                await page.keyboard.type(pinyin, delay=default_delay)
                 await page.evaluate(
                     f"() => document.activeElement && document.activeElement.dispatchEvent(new CompositionEvent('compositionend', {{bubbles:true, data:'{char}'}}))"
                 )
@@ -108,7 +107,7 @@ async def _type_chinese_with_ime(
         else:
             await page.keyboard.type(char, delay=default_delay)
             
-        await page.wait_for_timeout(random.randint(int(20 * speed_rate), int(80 * speed_rate)))
+        await page.wait_for_timeout(max(20, int(30 * speed_rate)))
 
 
 def _normalize_meta_tag_entries(tags: List[str]) -> List[str]:
@@ -694,23 +693,6 @@ class MetadataFillStep(BasePublishStep):
         wait_ms = lambda ms: int(ms * speed_rate)
         config = metadata.get("anti_risk_config") or {}
 
-        # ── 0. 随机视线扫视 ──
-        try:
-            import random
-            from src.infrastructure.browser.human_behavior import HumanBehavior
-            vp = await page.evaluate("() => ({ w: window.innerWidth, h: window.innerHeight })")
-            vw, vh = float(vp.get("w") or 800), float(vp.get("h") or 600)
-            
-            for _ in range(random.randint(1, 2)):
-                from_x = random.uniform(vw * 0.2, vw * 0.8)
-                from_y = random.uniform(vh * 0.6, vh * 0.9)
-                to_x = random.uniform(vw * 0.2, vw * 0.8)
-                to_y = random.uniform(vh * 0.2, vh * 0.5)
-                await HumanBehavior.mouse_move(page, from_x, from_y, to_x, to_y, steps=random.randint(20, 40))
-                await page.wait_for_timeout(random.randint(400, 1200))
-        except Exception as e:
-            logger.debug("随机视线扫视异常: %s", e)
-
         # ── 1. 标题 ──
         if title:
             title_text = title.strip()[:20]
@@ -723,13 +705,6 @@ class MetadataFillStep(BasePublishStep):
                         )
                         logger.info("已温和滚动标题输入区入视口（顶部留白）: %s", selector)
                         
-                        try:
-                            import random
-                            from src.infrastructure.browser.human_behavior import HumanBehavior
-                            await HumanBehavior.hover_and_jitter(page, title_input, duration=random.uniform(2.0, 4.0))
-                        except Exception:
-                            pass
-
                         try:
                             from src.infrastructure.anti_risk.human_like import human_type_text
 
@@ -768,13 +743,6 @@ class MetadataFillStep(BasePublishStep):
                     )
                     logger.info("已温和滚动描述编辑器入视口（顶部留白，约 %.0f%%）", _SCROLL_VIEWPORT_TOP_RATIO * 100)
                     
-                    try:
-                        import random
-                        from src.infrastructure.browser.human_behavior import HumanBehavior
-                        await HumanBehavior.hover_and_jitter(page, edit_box, duration=random.uniform(2.0, 5.0))
-                    except Exception:
-                        pass
-
                     try:
                         from src.infrastructure.anti_risk.human_like import human_click
 

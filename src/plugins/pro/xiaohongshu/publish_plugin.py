@@ -24,7 +24,6 @@ from typing import List, Dict, Any
 from src.infrastructure.browser.automation_api import Page
 
 from src.infrastructure.common.bundled_config import load_platform_bundle
-from src.infrastructure.common.config.app_config_keys import XIAOHONGSHU_AUTO_CLICK_SUBMIT_HIGH_RISK
 from src.plugins.core.interfaces.publish_plugin import (
     PublishPluginInterface,
     PublishResult,
@@ -157,7 +156,9 @@ class XiaohongshuPublishPlugin(PublishPluginInterface):
 
             platform_data = _platform_config()
             anti_risk_config = (
-                platform_data.get("anti_risk")
+                platform_data.get("publish_pacing")
+                if isinstance(platform_data.get("publish_pacing"), dict)
+                else platform_data.get("anti_risk")
                 if isinstance(platform_data.get("anti_risk"), dict)
                 else {}
             )
@@ -182,12 +183,7 @@ class XiaohongshuPublishPlugin(PublishPluginInterface):
                 app_cfg = get_app_config_for_read()
             except Exception:
                 app_cfg = {}
-            auto_click_submit = bool(
-                metadata.get(
-                    "xhs_auto_click_submit",
-                    app_cfg.get(XIAOHONGSHU_AUTO_CLICK_SUBMIT_HIGH_RISK, True),
-                )
-            )
+            auto_click_submit = True
             metadata_for_runner = {
                 **metadata,
                 "anti_risk_config": anti_risk_config,

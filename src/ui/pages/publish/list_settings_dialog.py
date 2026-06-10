@@ -7,7 +7,6 @@
 
 import logging
 import json
-import random
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -45,8 +44,6 @@ from src.infrastructure.common.config.app_config_keys import (
     PUBLISH_LIST_INTERVAL_SECONDS,
     PUBLISH_LIST_POST_PUBLISH_FILE_ACTION,
     PUBLISH_LIST_SHOW_BROWSER,
-    PUBLISH_LIST_COGNITIVE_PAUSE_ENABLED,
-    PUBLISH_LIST_COGNITIVE_PAUSE_SECONDS,
 )
 PUBLISH_LIST_QUEUE_RETRY_COUNT = "queue_retry_count"
 PUBLISH_LIST_PRECHECK_ACCOUNT_ONLINE = "precheck_account_online"
@@ -208,13 +205,9 @@ def get_effective_publish_interval_seconds(platform: str = "") -> int:
 
 
 def sample_publish_interval_delay_seconds(base: int) -> float:
-    """在 [max(0, base-3), base+3] 上均匀随机；调用方应在「下一任务与当前同平台」时才使用。"""
+    """Return the configured same-platform interval exactly."""
     b = max(MIN_PUBLISH_INTERVAL_SEC, min(int(base), MAX_PUBLISH_INTERVAL_SEC))
-    if b <= 0:
-        return 0.0
-    lo = max(0.0, float(b) - 3.0)
-    hi = float(b) + 3.0
-    return random.uniform(lo, hi)
+    return float(b)
 
 
 def get_first_platform() -> str:
@@ -255,19 +248,6 @@ def get_publish_show_browser() -> bool:
     if v is None:
         return True
     return bool(v)
-
-
-def get_cognitive_pause_enabled() -> bool:
-    pl = _publish_list_dict()
-    v = pl.get(PUBLISH_LIST_COGNITIVE_PAUSE_ENABLED)
-    if v is None:
-        return True
-    return bool(v)
-
-def get_cognitive_pause_seconds() -> int:
-    pl = _publish_list_dict()
-    v = _coerce_int(pl.get(PUBLISH_LIST_COGNITIVE_PAUSE_SECONDS, 15), 15)
-    return max(5, min(v, 600))
 
 
 def get_publish_queue_retry_count() -> int:
@@ -320,9 +300,6 @@ def format_publish_settings_summary() -> str:
     lines.append(f"失败重试：{'关闭' if retry_ct == 0 else f'{retry_ct}次'}")
 
     lines.append(f"浏览器：{'显示本机 Chrome' if get_publish_show_browser() else '后台运行'}")
-    pause_en = get_cognitive_pause_enabled()
-    pause_sec = get_cognitive_pause_seconds()
-    lines.append(f"认知暂停：{'开启' if pause_en else '关闭'} ({pause_sec}秒)")
     lines.append(f"发布前检测账号在线：{'开启' if get_precheck_account_online_enabled() else '关闭'}")
     action = get_post_publish_action()
     if action == POST_PUBLISH_ACTION_MOVE:
@@ -355,7 +332,6 @@ class ListSettingsDialog(AppMessageBoxBase):
         self._load_speed()
         self._load_interval()
         self._load_retry_count()
-        self._load_cognitive_pause()
         self._load_browser_and_shutdown()
         self._load_post_publish_action()
         self._apply_post_publish_policy_constraints()
@@ -528,34 +504,6 @@ class ListSettingsDialog(AppMessageBoxBase):
             _tip_retry, lab_retry, self.combo_retry
         )
         form_sched.addRow(lab_retry_row, self.combo_retry)
-
-        lab_pause = _form_label("认知暂停", card_sched)
-        self.check_cognitive_pause = CheckBox("开启（防风控）", card_sched)
-        _tip_pause = "开启后，会在操作间隙随机模拟人的停顿，防止被平台风控判定为机器人。"
-        lab_pause_row = QWidget(card_sched)
-        _lpr = QHBoxLayout(lab_pause_row)
-        _lpr.setContentsMargins(0, 0, 0, 0)
-        _lpr.setSpacing(4)
-        _lpr.addWidget(lab_pause)
-        _lpr.addStretch(1)
-        apply_instructional_tooltip(_tip_pause, lab_pause, self.check_cognitive_pause)
-        form_sched.addRow(lab_pause_row, self.check_cognitive_pause)
-
-        lab_pause_iv = _form_label("暂停时间（秒）", card_sched)
-        self.edit_pause_interval = LineEdit(card_sched)
-        self.edit_pause_interval.setMinimumWidth(120)
-        self.edit_pause_interval.setMaxLength(4)
-        self.edit_pause_interval.setPlaceholderText("5～600")
-        _tip_pause_interval = "触发认知暂停时的基准等待秒数。实际等待会在此基础上随机波动。"
-        lab_piv_row = QWidget(card_sched)
-        _lpir = QHBoxLayout(lab_piv_row)
-        _lpir.setContentsMargins(0, 0, 0, 0)
-        _lpir.setSpacing(4)
-        _lpir.addWidget(lab_pause_iv)
-        _lpir.addStretch(1)
-        apply_instructional_tooltip(_tip_pause_interval, lab_pause_iv, self.edit_pause_interval)
-        form_sched.addRow(lab_piv_row, self.edit_pause_interval)
-
 
         lay_s.addLayout(form_sched)
         lay_s.addStretch(1)
@@ -752,11 +700,6 @@ class ListSettingsDialog(AppMessageBoxBase):
         sec = get_publish_interval_seconds()
         self.edit_interval.setText(str(sec))
 
-
-    def _load_cognitive_pause(self):
-        self.check_cognitive_pause.setChecked(get_cognitive_pause_enabled())
-        self.edit_pause_interval.setText(str(get_cognitive_pause_seconds()))
-
     def _load_retry_count(self):
         count = get_publish_queue_retry_count()
         self.combo_retry.setCurrentIndex(count)
@@ -883,15 +826,6 @@ class ListSettingsDialog(AppMessageBoxBase):
         if interval_sec is None:
             return
 
-        pause_sec_raw = self.edit_pause_interval.text().strip()
-        try:
-            pause_sec = int(pause_sec_raw)
-            if pause_sec < 5 or pause_sec > 600:
-                raise ValueError
-        except ValueError:
-            InfoBar.warning("提示", "认知暂停时间需为 5-600 秒的整数。", parent=self.window() or self, duration=3000)
-            return
-
         self._publish_list_save_in_progress = True
         self.yesButton.setEnabled(False)
 
@@ -908,9 +842,6 @@ class ListSettingsDialog(AppMessageBoxBase):
             PUBLISH_LIST_FIRST_PLATFORM: first_platform,
             PUBLISH_LIST_POST_PUBLISH_FILE_ACTION: post_action,
             PUBLISH_LIST_QUEUE_RETRY_COUNT: self.combo_retry.currentIndex(),
-
-            PUBLISH_LIST_COGNITIVE_PAUSE_ENABLED: self.check_cognitive_pause.isChecked(),
-            PUBLISH_LIST_COGNITIVE_PAUSE_SECONDS: pause_sec,
             PUBLISH_LIST_SHOW_BROWSER: True if should_force_visible_publish_browser() else self.check_show_browser.isChecked(),
             PUBLISH_LIST_PRECHECK_ACCOUNT_ONLINE: self.check_precheck_online.isChecked(),
         }

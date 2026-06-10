@@ -33,6 +33,9 @@ class PlatformAccount(Model):
     login_status = fields.CharField(max_length=20, default="offline")
     last_login_at = fields.DatetimeField(null=True)
     profile_folder_name = fields.CharField(max_length=200, null=True)
+    publish_risk_state = fields.CharField(max_length=20, default="normal")
+    publish_risk_reason = fields.TextField(null=True)
+    publish_risk_at = fields.DatetimeField(null=True)
     group = fields.ForeignKeyField(
         "models.AccountGroup", related_name="accounts", on_delete=fields.SET_NULL, null=True
     )

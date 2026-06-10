@@ -39,6 +39,7 @@ class RecordSaveFilterAsync(BaseFilter):
         try:
             publish_url = getattr(context, 'publish_url', None)
             diagnostic_path = getattr(context, 'diagnostic_path', None)
+            failure_kind = getattr(context, 'failure_kind', None)
             diagnostic_update = {}
             if diagnostic_path is not None:
                 diagnostic_update["diagnostic_path"] = diagnostic_path
@@ -69,6 +70,7 @@ class RecordSaveFilterAsync(BaseFilter):
                         record_id=record_id,
                         status='failed',
                         error_message=error_message,
+                        failure_kind=failure_kind,
                         **diagnostic_update,
                     )
                 self.logger.info(f"发布记录已更新（待发布任务）: ID={record_id}")
@@ -99,6 +101,7 @@ class RecordSaveFilterAsync(BaseFilter):
                 description=context.description,
                 tags=context.tags if hasattr(context, 'tags') else None,
                 platform_account_id=platform_account_id,
+                failure_kind=failure_kind,
             )
             
             if publish_url:
@@ -115,6 +118,7 @@ class RecordSaveFilterAsync(BaseFilter):
                     record_id=record_id,
                     status='failed',
                     error_message=error_message,
+                    failure_kind=failure_kind,
                     **diagnostic_update,
                 )
             

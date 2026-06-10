@@ -52,16 +52,6 @@ def _resource_base() -> Path:
         return Path(sys.executable).parent if getattr(sys, "frozen", False) else Path.cwd()
 
 
-def _stealth_script_path(base: Path) -> Path:
-    try:
-        from src.infrastructure.common.path_manager import PathManager
-
-        PathManager._resource_dir = None
-        return PathManager.get_resource_path("src/resources/scripts/stealth/stealth.js")
-    except Exception:
-        return base / "src" / "resources" / "scripts" / "stealth" / "stealth.js"
-
-
 def run_smoke_test() -> int:
     print("=" * 60)
     print("  WeMediaBaby smoke test (--smoke-test)")
@@ -111,13 +101,6 @@ def run_smoke_test() -> int:
         else:
             missing_resources.append(str(path))
             print(f"  [MISSING] resource dir: {path}")
-
-    stealth = _stealth_script_path(base)
-    if stealth.exists():
-        print(f"  [OK] stealth script: {stealth}")
-    else:
-        missing_resources.append(str(stealth))
-        print(f"  [MISSING] stealth script: {stealth}")
 
     print()
     print("=" * 60)

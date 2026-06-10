@@ -60,6 +60,9 @@ def _load_limits() -> Dict[str, int]:
 def _load_platform_config() -> Dict[str, Any]:
     """从内置 wechat_video.json 读取 anti_risk。"""
     data = _wechat_video_bundle()
+    pacing = data.get("publish_pacing")
+    if isinstance(pacing, dict):
+        return pacing
     ar = data.get("anti_risk")
     return ar if isinstance(ar, dict) else {}
 

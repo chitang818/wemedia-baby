@@ -159,6 +159,43 @@ async def _migrate_publish_record_diagnostic_path(conn: MigrationConn) -> None:
     )
 
 
+async def _migrate_publish_risk_observability(conn: MigrationConn) -> None:
+    account_columns = [
+        ("publish_risk_state", "VARCHAR(20) DEFAULT 'normal'"),
+        ("publish_risk_reason", "TEXT"),
+        ("publish_risk_at", "DATETIME"),
+    ]
+    for column_name, column_type in account_columns:
+        await _add_column_if_missing(
+            conn,
+            "platform_accounts",
+            column_name,
+            column_type,
+        )
+
+    await _add_column_if_missing(
+        conn,
+        "publish_records",
+        "failure_kind",
+        "VARCHAR(40)",
+    )
+
+    if await table_exists(conn, "platform_accounts"):
+        await _create_index_if_missing(
+            conn,
+            "idx_platform_accounts_publish_risk_state",
+            "CREATE INDEX IF NOT EXISTS idx_platform_accounts_publish_risk_state "
+            "ON platform_accounts (publish_risk_state)",
+        )
+    if await table_exists(conn, "publish_records"):
+        await _create_index_if_missing(
+            conn,
+            "idx_publish_records_failure_kind_updated",
+            "CREATE INDEX IF NOT EXISTS idx_publish_records_failure_kind_updated "
+            "ON publish_records (failure_kind, updated_at DESC)",
+        )
+
+
 async def _migrate_location_promotion_items_table(conn: MigrationConn) -> None:
     if await table_exists(conn, "location_promotion_items"):
         return
@@ -251,6 +288,11 @@ MIGRATION_STEPS: tuple[MigrationStep, ...] = (
         "20260525_002_location_promotion_items_table",
         "Create location_promotion_items table",
         _migrate_location_promotion_items_table,
+    ),
+    MigrationStep(
+        "20260610_001_publish_risk_observability",
+        "Add account publish risk state and publish failure kind",
+        _migrate_publish_risk_observability,
     ),
 )
 

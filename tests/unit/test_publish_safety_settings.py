@@ -22,6 +22,10 @@ def test_publish_browser_is_forced_visible(monkeypatch) -> None:
     assert settings.get_publish_show_browser() is True
 
 
+def test_publish_interval_sampling_returns_configured_value() -> None:
+    assert settings.sample_publish_interval_delay_seconds(20) == 20.0
+
+
 def test_extreme_speed_option_is_not_exposed() -> None:
     labels = [label for label, _rate in settings.SPEED_OPTIONS]
 

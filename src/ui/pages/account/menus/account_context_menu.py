@@ -72,6 +72,7 @@ class AccountContextMenu(QObject):
             ("copy", "on_copy_name"),
             ("media_lib", "on_open_media_library"),
             ("refresh", "on_refresh_status"),
+            ("clear_publish_risk", "on_clear_publish_risk"),
             ("group", "on_set_group"),
             ("fingerprint", "on_fingerprint"),
             ("delete", "on_delete"),
@@ -113,6 +114,12 @@ class AccountContextMenu(QObject):
         self._actions['refresh'] = Action(FluentIcon.SYNC, "刷新登录状态", parent)
         self._actions['refresh'].triggered.connect(lambda: self._handle_action('on_refresh_status'))
         self._menu.addAction(self._actions['refresh'])
+
+        self._actions['clear_publish_risk'] = Action(FluentIcon.ACCEPT, "解除发布风险隔离", parent)
+        self._actions['clear_publish_risk'].triggered.connect(
+            lambda: self._handle_action('on_clear_publish_risk')
+        )
+        self._menu.addAction(self._actions['clear_publish_risk'])
         
         # 4. 设置分组
         self._actions['group'] = Action(FluentIcon.PEOPLE, "移动至分组", parent)
@@ -178,6 +185,8 @@ class AccountContextMenu(QObject):
                 callback(ctx['username'])
             elif callback_key == 'on_refresh_status':
                 callback(ctx['account_id'])
+            elif callback_key == 'on_clear_publish_risk':
+                callback(ctx['account_id'])
             elif callback_key == 'on_set_group':
                 callback(ctx['account_id'])
             elif callback_key == 'on_fingerprint':
@@ -206,6 +215,11 @@ class AccountContextMenu(QObject):
             )
         menu.addSeparator()
         menu.addAction("刷新登录状态", lambda: callbacks.get('on_refresh_status', lambda x: None)(ctx['account_id']))
+        if self._has_callable(callbacks, "on_clear_publish_risk"):
+            menu.addAction(
+                "解除发布风险隔离",
+                lambda: callbacks["on_clear_publish_risk"](ctx["account_id"]),
+            )
         menu.addAction("移动至分组", lambda: callbacks.get('on_set_group', lambda x: None)(ctx['account_id']))
         menu.addSeparator()
         menu.addAction("查看指纹", lambda: callbacks.get('on_fingerprint', lambda x: None)(ctx['account_id'], ctx['username'], ctx['platform']))

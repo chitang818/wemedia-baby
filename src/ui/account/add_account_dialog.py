@@ -547,25 +547,8 @@ class AddAccountDialog:
         self.parent = parent
 
     def _should_skip_fingerprint_config(self, platform_id: str) -> bool:
-        """小红书纯 Chrome 登录模式不配置 Playwright 浏览器指纹。"""
-        if (platform_id or "").strip().lower() != "xiaohongshu":
-            return False
-        try:
-            from src.infrastructure.common.config.app_config_keys import (
-                XIAOHONGSHU_LOGIN_BROWSER_MODE,
-                XIAOHONGSHU_LOGIN_BROWSER_MODE_DETACHED_CHROME,
-            )
-            from src.infrastructure.common.config.app_config_merge import get_app_config_for_read
-
-            mode = str(
-                get_app_config_for_read().get(
-                    XIAOHONGSHU_LOGIN_BROWSER_MODE,
-                    XIAOHONGSHU_LOGIN_BROWSER_MODE_DETACHED_CHROME,
-                )
-            ).strip()
-            return mode == XIAOHONGSHU_LOGIN_BROWSER_MODE_DETACHED_CHROME
-        except Exception:
-            return True
+        """浏览器指纹配置已迁移为历史配置，新增账号统一跳过。"""
+        return True
         
     def show(self) -> Optional[Dict[str, Any]]:
         """显示添加账号流程"""
@@ -586,7 +569,7 @@ class AddAccountDialog:
         
         fingerprint_config = None
         if self._should_skip_fingerprint_config(platform_id):
-            logger.info("小红书纯 Chrome 登录模式，跳过浏览器指纹配置")
+            logger.info("跳过浏览器指纹配置，使用账号 Chrome Profile")
         else:
             # 第二步：配置指纹
             from .fingerprint_config_dialog import FingerprintConfigMessageBox
