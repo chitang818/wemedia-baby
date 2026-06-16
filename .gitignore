@@ -87,6 +87,11 @@ nuitka-crash-report.xml
 .pytest-cache/
 .pytest-tmp/
 .pytest-codex-tmp/
+.pytest-codex-*/
+.pytest-codex-*
+
+# Playwright MCP
+.playwright-mcp/
 
 # pytest 运行产物（由 scripts/run_tests.py 生成，用于刷新 summary.html）
 test-reports/junit.xml
