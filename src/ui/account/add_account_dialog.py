@@ -138,7 +138,7 @@ def _colorize_pixmap(pixmap: QPixmap, hex_color: str) -> QPixmap:
         color = QColor(hex_color)
         if not color.isValid():
             return pixmap
-        img = pixmap.toImage().convertToFormat(QImage.Format_ARGB32)
+        img = pixmap.toImage().convertToFormat(QImage.Format.Format_ARGB32)
         r, g, b = color.red(), color.green(), color.blue()
         for y in range(img.height()):
             for x in range(img.width()):
@@ -180,7 +180,7 @@ class PlatformCard(QPushButton):
         """禁用平台：置灰且不可点击"""
         if disabled:
             self.setEnabled(False)
-            self.setCursor(Qt.ForbiddenCursor)
+            self.setCursor(Qt.CursorShape.ForbiddenCursor)
             self.setStyleSheet("""
                 QPushButton {
                     border: 1px solid #EDEDED;
@@ -193,7 +193,7 @@ class PlatformCard(QPushButton):
             """)
         else:
             self.setEnabled(True)
-            self.setCursor(Qt.PointingHandCursor)
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
             # 重新设置默认样式
             self._setup_ui()
     
@@ -201,12 +201,12 @@ class PlatformCard(QPushButton):
         """设置UI：优先使用 resources/icons/platform 下的真实图标，否则用 emoji"""
         # 横向比例接近工作台 QuickActionCard（固定高度约 100），便于一行 5 个、共 2 行排布
         self.setFixedSize(150, 100)
-        self.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 10, 8, 8)
         layout.setSpacing(6)
-        layout.setAlignment(Qt.AlignCenter)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         # 图标区域：固定高度容器内居中，使平台图片始终居中显示
         icon_container = QWidget(self)
@@ -214,16 +214,16 @@ class PlatformCard(QPushButton):
         icon_layout = QVBoxLayout(icon_container)
         icon_layout.setContentsMargins(0, 0, 0, 0)
         icon_layout.setSpacing(0)
-        icon_layout.setAlignment(Qt.AlignCenter)
+        icon_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon_label = QLabel(icon_container)
-        icon_label.setAlignment(Qt.AlignCenter)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon_path = _get_platform_icon_path(self.platform_id)
         if icon_path:
             pixmap = QPixmap(icon_path)
             if not pixmap.isNull():
                 pixmap = pixmap.scaled(
                     PLATFORM_ICON_SIZE, PLATFORM_ICON_SIZE,
-                    Qt.KeepAspectRatio, Qt.SmoothTransformation
+                    Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
                 )
                 if not self.config.get("precolored"):
                     brand_color = self.config.get("color")
@@ -241,7 +241,7 @@ class PlatformCard(QPushButton):
         layout.addWidget(icon_container)
         
         name_label = BodyLabel(self.config.get("name", ""), self)
-        name_label.setAlignment(Qt.AlignCenter)
+        name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(name_label)
         
         # Pro 平台在右下角显示小号 Pro 字样
@@ -284,7 +284,7 @@ class PlatformCard(QPushButton):
 
 
 
-class PlatformSelectMessageBox(AppMessageBoxBase):
+class PlatformSelectMessageBox(AppMessageBoxBase):  # type: ignore
     """平台选择对话框（Fluent UI）"""
     
     def __init__(self, parent=None):
@@ -339,7 +339,7 @@ class PlatformSelectMessageBox(AppMessageBoxBase):
         cards_layout = QGridLayout()
         cards_layout.setHorizontalSpacing(12)
         cards_layout.setVerticalSpacing(12)
-        cards_layout.setAlignment(Qt.AlignCenter)
+        cards_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         platforms = list(PLATFORM_CONFIG.items())
         cols = 5
@@ -413,7 +413,7 @@ class PlatformSelectMessageBox(AppMessageBoxBase):
         self.accept()
 
 
-class AccountNameMessageBox(AppMessageBoxBase):
+class AccountNameMessageBox(AppMessageBoxBase):  # type: ignore
     """账号名称输入对话框（Fluent UI）"""
     
     def __init__(self, platform_id: str, platform_config: Dict, parent=None):
@@ -566,6 +566,12 @@ class AddAccountDialog:
         config = PLATFORM_CONFIG.get(platform_id)
         if not config:
             return None
+        
+        if platform_id == "xiaohongshu":
+            from src.ui.utils.fluent_dialogs import show_confirm
+            msg = "小红书平台风控极其严格，使用自动化发布极易导致账号被封禁、限流或要求身份验证。\n\n您确定要接受此风险并继续添加小红书账号吗？"
+            if not show_confirm(self.parent, "高风控风险提示", msg):
+                return self.show()
         
         fingerprint_config = None
         if self._should_skip_fingerprint_config(platform_id):
