@@ -46,7 +46,7 @@ class NavigationConfig:
                     {
                         "route_key": "account_tag_page",
                         "icon": FluentIcon.TAG,
-                        "text": "账号(组)标签",
+                        "text": "账号标签",
                     }
                 ]
             },
@@ -198,6 +198,15 @@ class NavigationConfig:
                 "position": NavigationItemPosition.BOTTOM,
                 "selectable": True
             })
+
+        # 使用手册
+        items.append({
+            "route_key": "user_manual_action",
+            "icon": FluentIcon.HELP,
+            "text": "使用手册",
+            "position": NavigationItemPosition.BOTTOM,
+            "selectable": False
+        })
 
         # 设置
         items.append({

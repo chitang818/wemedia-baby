@@ -374,9 +374,122 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
 
     # ---------- Excel 导入（覆盖模式：同作品编号则更新）----------
 
+    def _export_template_excel(self, save_path: str) -> bool:
+        """生成标准文案库 Excel 模板文件并保存。"""
+        try:
+            import openpyxl
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "标准文案库模板"
+
+            # 写入表头（不包含独立的话题列，话题直接写在作品描述中）
+            headers = ["作品编号", "作品标题", "作品描述", "文案内容"]
+            ws.append(headers)
+
+            # 写入示例行
+            example1 = [
+                "A0001",
+                "示例短标题A",
+                "这是一个关于自媒体自动发布工具的介绍视频 #自媒体运营 #WeMediaBaby",
+                "大家好，今天给大家推荐 WeMediaBaby，这是一个超好用的自媒体自动发布工具！"
+            ]
+            example2 = [
+                "A0002",
+                "示例短标题B",
+                "自媒体运营干货分享 #运营干货 #工具推荐",
+                "哈罗大家下午好！今天又是阳光明媚的一天，给大家分享一下我的自媒体运营日常..."
+            ]
+            ws.append(example1)
+            ws.append(example2)
+
+            # 稍微调整一下列宽
+            ws.column_dimensions['A'].width = 15
+            ws.column_dimensions['B'].width = 25
+            ws.column_dimensions['C'].width = 50
+            ws.column_dimensions['D'].width = 60
+
+            wb.save(save_path)
+            return True
+        except Exception as e:
+            logger.error("生成 Excel 模板失败: %s", e, exc_info=True)
+            return False
+
     def _on_import_clicked(self):
-        """从 Excel 批量导入文案；同作品编号的记录会被覆盖更新。"""
+        """弹出导入与模板下载的选择窗口。"""
+        from src.ui.components.base_dialog import AppMessageBoxBase
+        from qfluentwidgets import BodyLabel, PushButton, FluentIcon
         from PySide6.QtWidgets import QFileDialog
+
+        dlg = AppMessageBoxBase(self, header_title="导入标准文案")
+        
+        # 说明正文
+        desc = BodyLabel(
+            "您可以从 Excel 模板批量导入标准文案，相同作品编号的记录将被自动覆盖更新。\n\n"
+            "如果您是首次使用，建议先下载并填写我们的标准 Excel 模板，然后再执行导入操作。", 
+            dlg
+        )
+        desc.setWordWrap(True)
+        dlg.viewLayout.addWidget(desc)
+
+        # 模板下载按钮
+        btn_download = PushButton("下载标准文案库模板", dlg, FluentIcon.DOWNLOAD)
+        
+        def _download_template():
+            try:
+                import openpyxl
+            except ImportError:
+                from qfluentwidgets import InfoBar, InfoBarPosition
+                InfoBar.error(
+                    title="环境依赖缺失",
+                    content="当前环境未安装 openpyxl。请在项目目录执行：pip install openpyxl",
+                    orient=Qt.Horizontal,
+                    isClosable=True,
+                    duration=8000,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+                return
+
+            save_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "保存标准文案库模板",
+                "标准文案库模板.xlsx",
+                "Excel 文件 (*.xlsx)"
+            )
+            if save_path:
+                success = self._export_template_excel(save_path)
+                if success:
+                    from qfluentwidgets import InfoBar, InfoBarPosition
+                    InfoBar.success(
+                        title="下载成功",
+                        content=f"已成功保存标准文案库模板至：{save_path}",
+                        orient=Qt.Horizontal,
+                        isClosable=True,
+                        duration=5000,
+                        position=InfoBarPosition.TOP,
+                        parent=self,
+                    )
+                else:
+                    from qfluentwidgets import InfoBar, InfoBarPosition
+                    InfoBar.error(
+                        title="下载失败",
+                        content="保存模板文件时发生错误，请检查是否有权限写入该目录。",
+                        orient=Qt.Horizontal,
+                        isClosable=True,
+                        duration=5000,
+                        position=InfoBarPosition.TOP,
+                        parent=self,
+                    )
+
+        btn_download.clicked.connect(_download_template)
+        dlg.viewLayout.addWidget(btn_download)
+
+        dlg.yesButton.setText("选择文件导入")
+        dlg.cancelButton.setText("取消")
+
+        # 弹窗交互
+        if not dlg.exec():
+            return
 
         file_path, _ = QFileDialog.getOpenFileName(
             self,

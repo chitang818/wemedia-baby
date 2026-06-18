@@ -67,12 +67,8 @@ def build_patchright_default_args_to_ignore(
     strict_real_browser: bool = False,
     wechat_video: bool = False,
 ) -> List[str]:
-    """Legacy compatibility hook.
-
-    Standard Chrome startup no longer suppresses or replaces automation-related
-    Patchright defaults.
-    """
-    return []
+    """忽略导致新版 Chrome 报错提示'不受支持的命令行标记'的参数。"""
+    return ["--disable-blink-features=AutomationControlled"]
 
 
 class UndetectedBrowserManager:
@@ -371,6 +367,10 @@ class UndetectedBrowserManager:
                 "channel": "chrome",
                 "no_viewport": True,
                 "chromium_sandbox": True,
+                "ignore_default_args": build_patchright_default_args_to_ignore(
+                    strict_real_browser=self.is_strict_real_browser_platform(),
+                    wechat_video=(self.platform == "wechat_video")
+                ),
             }
             if executable_path:
                 launch_options["executable_path"] = executable_path

@@ -368,7 +368,7 @@ class MainWindow(FluentWindow):
         reason = getattr(event, "reason", "您的账号已在其他设备登录，请重新登录。")
         # 此回调可能从非 UI 线程触发（qasync 工作线程），必须切换到 UI 线程操作 Qt 控件
         from PySide6.QtCore import QMetaObject, Q_ARG, Qt
-        QMetaObject.invokeMethod(self, "_show_session_evicted_bar", Qt.QueuedConnection,
+        QMetaObject.invokeMethod(self, b"_show_session_evicted_bar", Qt.ConnectionType.QueuedConnection,
                                  Q_ARG(str, reason))
 
     @Slot(str)
@@ -387,18 +387,18 @@ class MainWindow(FluentWindow):
     def show_status_message(self, message: str, duration: int = 3000, is_error: bool = False):
         """显示状态信息 (线程安全)"""
         from PySide6.QtCore import QMetaObject, Q_ARG, Qt
-        QMetaObject.invokeMethod(self, "_update_status_bar_impl", Qt.QueuedConnection,
+        QMetaObject.invokeMethod(self, b"_update_status_bar_impl", Qt.ConnectionType.QueuedConnection,
                                  Q_ARG(str, message), Q_ARG(int, duration))
         
         if is_error and FLUENT_WIDGETS_AVAILABLE:
-             QMetaObject.invokeMethod(self, "_show_error_bar", Qt.QueuedConnection,
+             QMetaObject.invokeMethod(self, b"_show_error_bar", Qt.ConnectionType.QueuedConnection,
                                       Q_ARG(str, message))
 
     # 定义为 Slot 供 invokeMethod 调用
     @Slot(str, int)
     def _update_status_bar_impl(self, message: str, duration: int):
         if hasattr(self, 'statusBar') and callable(self.statusBar) and self.statusBar():
-            self.statusBar().showMessage(message, duration)
+            self.statusBar().showMessage(message, duration)  # type: ignore
         
         # 用户要求移除顶部的蓝色消息状态弹窗功能
         # if self.window():
@@ -413,16 +413,16 @@ class MainWindow(FluentWindow):
         InfoBar.error(
             title='错误',
             content=message,
-            orient=Qt.Horizontal,
+            orient=Qt.Orientation.Horizontal,
             isClosable=True,
             position=InfoBarPosition.TOP,
             duration=5000,
             parent=self
         )
 
-    def showEvent(self, event):
+    def showEvent(self, e):
         """窗口显示事件"""
-        super().showEvent(event)
+        super().showEvent(e)
         try:
             from src.utils.startup_profiler import mark, log_summary
             mark("showEvent")
@@ -737,7 +737,7 @@ class MainWindow(FluentWindow):
                 merge_app_config_top_level_to_disk_sync,
             )
 
-            merge_app_config_top_level_to_disk_sync({START_IN_TRAY_NEXT_LAUNCH: bool(value)})
+            merge_app_config_top_level_to_disk_sync({START_IN_TRAY_NEXT_LAUNCH: value})
         except Exception as e:
             logger.debug("持久化 start_in_tray_next_launch 失败: %s", e)
 
@@ -771,10 +771,10 @@ class MainWindow(FluentWindow):
     def bring_to_foreground(self):
         """将主窗口置于桌面最前并聚焦（Windows 上避免仅任务栏高亮、窗口留在其它窗口后面）。"""
         current_state = self.windowState()
-        if current_state & Qt.WindowMinimized:
-            self.setWindowState(current_state & ~Qt.WindowMinimized | Qt.WindowActive)
+        if current_state & Qt.WindowState.WindowMinimized:
+            self.setWindowState(current_state & ~Qt.WindowState.WindowMinimized | Qt.WindowState.WindowActive)
         else:
-            self.setWindowState(current_state | Qt.WindowActive)
+            self.setWindowState(current_state | Qt.WindowState.WindowActive)
         self.raise_()
         self.activateWindow()
         if sys.platform == "win32":
@@ -829,8 +829,8 @@ class MainWindow(FluentWindow):
                 merge_app_config_top_level_to_disk_sync,
             )
             merge_app_config_top_level_to_disk_sync({
-                "main_window_close_remember_choice": bool(remember),
-                "main_window_close_action": str(action or "minimize_to_tray"),
+                "main_window_close_remember_choice": remember,
+                "main_window_close_action": action or "minimize_to_tray",
             })
         except Exception as e:
             logger.debug("保存主窗口关闭行为偏好失败: %s", e)
@@ -855,10 +855,10 @@ class MainWindow(FluentWindow):
         # 关闭弹窗正文：禁止自动换行，宽度不够时用省略号
         desc.setWordWrap(False)
         try:
-            desc.setTextElideMode(Qt.ElideRight)
+            desc.setTextElideMode(Qt.TextElideMode.ElideRight)  # type: ignore
         except Exception:
             pass
-        desc.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        desc.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         dlg.viewLayout.addWidget(desc)
 
         remember_check = CheckBox("记住我的选择", dlg)
@@ -870,7 +870,7 @@ class MainWindow(FluentWindow):
         def _choose_tray() -> None:
             nonlocal chosen_action, remembered
             chosen_action = "tray"
-            remembered = bool(remember_check.isChecked())
+            remembered = remember_check.isChecked()
             if remembered:
                 from src.infrastructure.common.config.app_config_merge import (
                     merge_app_config_top_level_to_disk_sync,
@@ -884,7 +884,7 @@ class MainWindow(FluentWindow):
         def _choose_exit() -> None:
             nonlocal chosen_action, remembered
             chosen_action = "exit"
-            remembered = bool(remember_check.isChecked())
+            remembered = remember_check.isChecked()
             if remembered:
                 from src.infrastructure.common.config.app_config_merge import (
                     merge_app_config_top_level_to_disk_sync,
@@ -918,10 +918,10 @@ class MainWindow(FluentWindow):
         # 关闭弹窗正文：禁止自动换行，宽度不够时用省略号
         desc.setWordWrap(False)
         try:
-            desc.setTextElideMode(Qt.ElideRight)
+            desc.setTextElideMode(Qt.TextElideMode.ElideRight)  # type: ignore
         except Exception:
             pass
-        desc.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        desc.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         dlg.viewLayout.addWidget(desc)
 
         dlg.yesButton.setText("确定")
@@ -1041,11 +1041,11 @@ class MainWindow(FluentWindow):
         # 2. 显式清理 NavigationInterface
         if hasattr(self, 'navigationInterface'):
             try:
-                self.navigationInterface.disconnect()
+                self.navigationInterface.disconnect()  # type: ignore
                 if hasattr(self, '_cleanup_flow_layouts'):
                     self._cleanup_flow_layouts(self.navigationInterface)
-                self.navigationInterface.setParent(None)
-                self.navigationInterface.deleteLater()
+                self.navigationInterface.setParent(None)  # type: ignore
+                self.navigationInterface.deleteLater()  # type: ignore
             except Exception as e:
                 logger.debug("关闭导航界面时异常: %s", e)
                 
@@ -1091,7 +1091,7 @@ class MainWindow(FluentWindow):
                 self.custom_status_bar.raise_()
             except Exception as e:
                 logger.error(f"自定义状态栏加载失败: {e}", exc_info=True)
-                self.statusBar().showMessage("系统就绪")
+                self.statusBar().showMessage("系统就绪")  # type: ignore
         elif FLUENT_WIDGETS_AVAILABLE:
             pass
         else:
@@ -1239,7 +1239,7 @@ class MainWindow(FluentWindow):
         except Exception as e:
             logger.warning(f"移除指示器失败: {e}")
 
-    def _add_nav_item(self, conf: dict, parent_key: str = None):
+    def _add_nav_item(self, conf: dict, parent_key: str | None = None):
         """递归添加导航项"""
         route_key = conf.get("route_key")
         text = conf.get("text")
@@ -1252,7 +1252,9 @@ class MainWindow(FluentWindow):
         
         # 决定 onClick
         on_click = None
-        if selectable and "children" not in conf: 
+        if route_key == "user_manual_action":
+             on_click = lambda: self._open_user_manual()
+        elif selectable and "children" not in conf: 
              on_click = lambda: self.navigate_to(route_key)
         elif "onClick" in conf:
              on_click = conf["onClick"]
@@ -1268,11 +1270,12 @@ class MainWindow(FluentWindow):
         # 注意 workspace 是 addSubInterface，比较特殊
         if route_key == "workspace_page":
              # workspace_page 已经在前面实例化了
-             item_widget = self.addSubInterface(
-                 self.workspace_page, icon, text, position
-             )
+             if self.workspace_page is not None:
+                 item_widget = self.addSubInterface(  # type: ignore
+                     self.workspace_page, icon, text, position
+                 )
         else:
-             item_widget = self.navigationInterface.addItem(
+             item_widget = self.navigationInterface.addItem(  # type: ignore
                  routeKey=route_key,
                  icon=icon,
                  text=text,
@@ -1294,6 +1297,30 @@ class MainWindow(FluentWindow):
             for child in conf["children"]:
                 self._add_nav_item(child, parent_key=route_key)
     
+    def _open_user_manual(self):
+        """打开本地使用说明教程"""
+        try:
+            from PySide6.QtGui import QDesktopServices
+            from PySide6.QtCore import QUrl
+            from src.infrastructure.common.path_manager import PathManager
+            
+            doc_path = str(PathManager.get_resource_path("resources/docs/index.html"))
+            
+            if os.path.exists(doc_path):
+                QDesktopServices.openUrl(QUrl.fromLocalFile(doc_path))
+            else:
+                logger.warning(f"未找到使用手册文档: {doc_path}")
+                from qfluentwidgets import InfoBar, InfoBarPosition
+                InfoBar.warning(
+                    title="文档缺失",
+                    content="未找到本地使用说明文档。",
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                    duration=3000
+                )
+        except Exception as e:
+            logger.error(f"打开使用手册失败: {e}")
+
     def _setup_accordion_behavior(self):
         """手风琴导航：接管 itemWidget.itemClicked，即时展开/收起 + 子项 opacity 渐入。"""
         from qfluentwidgets.components.navigation import NavigationTreeWidget
@@ -1357,7 +1384,7 @@ class MainWindow(FluentWindow):
             # clicked.emit 可能把选中态设到父容器（publish_container 是 selectable=True）
             container.clicked.emit(triggerByUser)
             # 在 emit 之后强制把选中态设到第一个子项，覆盖父级选中
-            self.navigationInterface.setCurrentItem(first_child_key)
+            self.navigationInterface.setCurrentItem(first_child_key)  # type: ignore
 
         except Exception as e:
             logger.warning(f"手风琴点击处理失败: {e}")
@@ -1384,7 +1411,7 @@ class MainWindow(FluentWindow):
             ani.setDuration(DURATION)
             ani.setStartValue(0.0)
             ani.setEndValue(1.0)
-            ani.setEasingCurve(QEasingCurve.OutQuad)
+            ani.setEasingCurve(QEasingCurve.Type.OutQuad)
             ani.finished.connect(lambda c=child: c.setGraphicsEffect(None))
             child._fade_ani = ani
 
@@ -1465,7 +1492,7 @@ class MainWindow(FluentWindow):
                         False,
                         True,
                         get_stack_transition_duration_ms(),
-                        QEasingCurve.OutCubic,
+                        QEasingCurve.Type.OutCubic,
                     )
                 else:
                     self.switchTo(page)
@@ -1512,7 +1539,7 @@ class MainWindow(FluentWindow):
                     logger.debug("导航栏收起，已折叠所有手风琴菜单")
 
             if hasattr(self, 'navigationInterface'):
-                self.navigationInterface.update()
+                self.navigationInterface.update()  # type: ignore
                 panel = getattr(self.navigationInterface, 'panel', None)
                 if panel:
                     panel.update()
@@ -1564,12 +1591,12 @@ class MainWindow(FluentWindow):
                     popOut,
                     True,
                     get_stack_transition_duration_ms(),
-                    QEasingCurve.OutCubic,
+                    QEasingCurve.Type.OutCubic,
                 )
             else:
                 self.stackedWidget.setCurrentWidget(interface, popOut)
         else:
-            super().switchTo(interface, popOut)
+            super().switchTo(interface, popOut)  # type: ignore
 
         if interface is not None:
             key = f"nav.deferred_records_load:{id(interface)}"
@@ -1719,9 +1746,9 @@ class MainWindow(FluentWindow):
         except Exception as e:
             logger.debug("_cleanup_flow_layouts 异常: %s", e)
 
-    def resizeEvent(self, event):
+    def resizeEvent(self, e):
         """窗口大小改变事件"""
-        super().resizeEvent(event)
+        super().resizeEvent(e)
         if hasattr(self, 'custom_status_bar') and self.custom_status_bar:
             self.custom_status_bar.resize(self.width(), 32)
             self.custom_status_bar.move(0, self.height() - 32)
