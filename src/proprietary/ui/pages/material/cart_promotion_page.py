@@ -363,9 +363,139 @@ class CartPromotionPage(TrackedTaskMixin, BasePage):
 
     # ---------- Excel 导入 ----------
 
+    def _export_template_excel(self, save_path: str) -> bool:
+        """生成购物车推广 Excel 模板文件并保存。"""
+        try:
+            import openpyxl
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "购物车推广模板"
+
+            # 写入表头
+            headers = [
+                "商品简称",
+                "商品短标题",
+                "抖音（链接）",
+                "快手（商品名称）",
+                "视频号（ID或链接）",
+                "小红书（链接）"
+            ]
+            ws.append(headers)
+
+            # 写入示例行
+            example1 = [
+                "三九感冒灵",
+                "999感冒灵颗粒",
+                "https://haodian.jinritemai.com/share/detail/12345",
+                "999感冒灵",
+                "https://shop.channels.weixin.qq.com/abc",
+                "https://xiaohongshu.com/shop/xyz"
+            ]
+            example2 = [
+                "保暖内衣",
+                "冬季加绒保暖内衣",
+                "https://haodian.jinritemai.com/share/detail/67890",
+                "冬季保暖套装",
+                "https://shop.channels.weixin.qq.com/def",
+                "https://xiaohongshu.com/shop/uvw"
+            ]
+            ws.append(example1)
+            ws.append(example2)
+
+            # 稍微调整一下列宽
+            ws.column_dimensions['A'].width = 15
+            ws.column_dimensions['B'].width = 20
+            ws.column_dimensions['C'].width = 40
+            ws.column_dimensions['D'].width = 20
+            ws.column_dimensions['E'].width = 40
+            ws.column_dimensions['F'].width = 40
+
+            wb.save(save_path)
+            return True
+        except Exception as e:
+            logger.error("生成 Excel 模板失败: %s", e, exc_info=True)
+            return False
+
     def _on_import_clicked(self):
-        """从 Excel 批量导入商品配置；同商品简称的记录会被覆盖更新。"""
+        """弹出导入与模板下载的选择窗口。"""
+        from src.ui.components.base_dialog import AppMessageBoxBase
+        from qfluentwidgets import BodyLabel, PushButton, FluentIcon
         from PySide6.QtWidgets import QFileDialog
+
+        dlg = AppMessageBoxBase(self, header_title="导入购物车推广")
+        
+        # 说明正文
+        desc = BodyLabel(
+            "您可以从 Excel 模板批量导入购物车推广商品库，相同商品简称的记录将被覆盖更新。\n\n"
+            "如果您是首次使用，建议先下载并填写我们的购物车推广模板，然后再执行导入操作。", 
+            dlg
+        )
+        desc.setWordWrap(True)
+        dlg.viewLayout.addWidget(desc)
+
+        # 模板下载按钮
+        btn_download = PushButton("下载购物车推广模板", dlg, FluentIcon.DOWNLOAD)
+        
+        def _download_template():
+            try:
+                import openpyxl
+            except ImportError:
+                from qfluentwidgets import InfoBar, InfoBarPosition
+                InfoBar.error(
+                    title="环境依赖缺失",
+                    content="当前环境未安装 openpyxl。请在项目目录执行：pip install openpyxl",
+                    orient=Qt.Horizontal,
+                    isClosable=True,
+                    duration=8000,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+                return
+
+            import os
+            desktop_dir = os.path.join(os.path.expanduser("~"), "Desktop")
+            default_path = os.path.join(desktop_dir, "购物车推广模板.xlsx") if os.path.exists(desktop_dir) else "购物车推广模板.xlsx"
+
+            save_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "保存购物车推广模板",
+                default_path,
+                "Excel 文件 (*.xlsx)"
+            )
+            if save_path:
+                success = self._export_template_excel(save_path)
+                if success:
+                    from qfluentwidgets import InfoBar, InfoBarPosition
+                    InfoBar.success(
+                        title="下载成功",
+                        content=f"已成功保存购物车推广模板至：{save_path}",
+                        orient=Qt.Horizontal,
+                        isClosable=True,
+                        duration=5000,
+                        position=InfoBarPosition.TOP,
+                        parent=self,
+                    )
+                else:
+                    from qfluentwidgets import InfoBar, InfoBarPosition
+                    InfoBar.error(
+                        title="下载失败",
+                        content="保存模板文件时发生错误，请检查是否有权限写入该目录。",
+                        orient=Qt.Horizontal,
+                        isClosable=True,
+                        duration=5000,
+                        position=InfoBarPosition.TOP,
+                        parent=self,
+                    )
+
+        btn_download.clicked.connect(_download_template)
+        dlg.viewLayout.addWidget(btn_download)
+
+        dlg.yesButton.setText("选择文件导入")
+        dlg.cancelButton.setText("取消")
+
+        # 弹窗交互
+        if not dlg.exec():
+            return
 
         file_path, _ = QFileDialog.getOpenFileName(
             self,

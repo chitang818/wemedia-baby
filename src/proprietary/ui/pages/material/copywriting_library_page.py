@@ -450,10 +450,14 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
                 )
                 return
 
+            import os
+            desktop_dir = os.path.join(os.path.expanduser("~"), "Desktop")
+            default_path = os.path.join(desktop_dir, "标准文案库模板.xlsx") if os.path.exists(desktop_dir) else "标准文案库模板.xlsx"
+
             save_path, _ = QFileDialog.getSaveFileName(
                 self,
                 "保存标准文案库模板",
-                "标准文案库模板.xlsx",
+                default_path,
                 "Excel 文件 (*.xlsx)"
             )
             if save_path:
