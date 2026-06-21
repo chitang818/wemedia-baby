@@ -1,0 +1,10 @@
+ERROR:root:Theme manager initialization failed: 
+ERROR:root:服务初始化失败: No module named '_cffi_backend'
+Traceback (most recent call last):
+  File "D:\003-AI_coding\wemedia-baby\WeMediaBaby\dist\secure\WeMediaBaby\src\infrastructure\common\service_bootstrap.py", line 23, in initialize_services_async
+  File "D:\003-AI_coding\wemedia-baby\WeMediaBaby\dist\secure\WeMediaBaby\src\infrastructure\common\security\__init__.py", line 7, in <module src.infrastructure.common.security>
+  File "D:\003-AI_coding\wemedia-baby\WeMediaBaby\dist\secure\WeMediaBaby\src\infrastructure\common\security\encryption.py", line 8, in <module src.infrastructure.common.security.encryption>
+  File "D:\003-AI_coding\wemedia-baby\WeMediaBaby\dist\secure\WeMediaBaby\cryptography\fernet.py", line 14, in <module cryptography.fernet>
+  File "D:\003-AI_coding\wemedia-baby\WeMediaBaby\dist\secure\WeMediaBaby\cryptography\exceptions.py", line 9, in <module cryptography.exceptions>
+ModuleNotFoundError: No module named '_cffi_backend'
+ERROR:root:Service initialization failed; exiting.
