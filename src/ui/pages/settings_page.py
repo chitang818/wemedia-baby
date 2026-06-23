@@ -108,7 +108,7 @@ def suggest_auto_media_library_base_dir() -> tuple[Path, str, str]:
     )
     doc_path = (
         Path(docs_loc)
-        if (docs_loc and str(docs_loc).strip())
+        if (docs_loc and str(docs_loc).strip())  # type: ignore
         else (Path.home() / "Documents")
     )
     try:
@@ -118,7 +118,7 @@ def suggest_auto_media_library_base_dir() -> tuple[Path, str, str]:
     return doc_path, "自动创建到我的文档（推荐）", str(doc_path)
 
 
-class MediaLibraryFirstRunDialog(AppMessageBoxBase):
+class MediaLibraryFirstRunDialog(AppMessageBoxBase):  # type: ignore
     """首次未配置媒体库：自动推荐路径或手动选择文件夹。"""
 
     def __init__(
@@ -235,7 +235,7 @@ class SettingsPage(BasePage):
         self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         
         # 添加控件到卡片布局
-        self.theme_card.hBoxLayout.addWidget(self.theme_combo, 0, Qt.AlignRight)
+        self.theme_card.hBoxLayout.addWidget(self.theme_combo, 0, Qt.AlignmentFlag.AlignRight)
         self.theme_card.hBoxLayout.addSpacing(16)
         
         self.theme_group.addSettingCard(self.theme_card)
@@ -246,7 +246,7 @@ class SettingsPage(BasePage):
         _cc = get_registered_config_center()
         if _cc is not None:
             _ui = _cc.get_app_config().get(KEY_UI) or {}
-            _pa_initial = bool(_ui.get(UI_PAGE_ANIMATION_REDUCED, False))
+            _pa_initial = bool(_ui.get(UI_PAGE_ANIMATION_REDUCED, False))  # type: ignore
 
         self.page_animation_reduced_card = SwitchSettingCard(
             FluentIcon.FIT_PAGE,
@@ -281,7 +281,7 @@ class SettingsPage(BasePage):
         self.startup_preloads_combo.setMinimumWidth(120)
         self.startup_preloads_combo.setCurrentIndex(_sp_index)
         self.startup_preloads_combo.currentIndexChanged.connect(self._on_startup_preloads_changed)
-        self.startup_preloads_card.hBoxLayout.addWidget(self.startup_preloads_combo, 0, Qt.AlignRight)
+        self.startup_preloads_card.hBoxLayout.addWidget(self.startup_preloads_combo, 0, Qt.AlignmentFlag.AlignRight)
         self.startup_preloads_card.hBoxLayout.addSpacing(16)
         self.theme_group.addSettingCard(self.startup_preloads_card)
 
@@ -305,7 +305,7 @@ class SettingsPage(BasePage):
         self.browser_scheme_combo.setEnabled(False)
         self.browser_scheme_combo.setCurrentIndex(0)
         
-        self.browser_scheme_card.hBoxLayout.addWidget(self.browser_scheme_combo, 0, Qt.AlignRight)
+        self.browser_scheme_card.hBoxLayout.addWidget(self.browser_scheme_combo, 0, Qt.AlignmentFlag.AlignRight)
         self.browser_scheme_card.hBoxLayout.addSpacing(16)
         
         self.browser_group.addSettingCard(self.browser_scheme_card)
@@ -448,7 +448,7 @@ class SettingsPage(BasePage):
             InfoBar.warning(
                 title='提示',
                 content='请至少选择一个备份模块',
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 position=InfoBarPosition.TOP_RIGHT,
                 duration=3000,
@@ -456,13 +456,19 @@ class SettingsPage(BasePage):
             )
             return
 
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        desktop_loc = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DesktopLocation)
+        default_dir = Path(desktop_loc) if desktop_loc else Path.home() / "Desktop"
+        default_path = str(default_dir / f"wemedia_baby_backup_{timestamp}.zip")
+
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "选择保存路径", "wemedia_baby_backup.zip", "ZIP 压缩文件 (*.zip)"
+            self, "选择保存路径", default_path, "ZIP 压缩文件 (*.zip)"
         )
         if not file_path:
             return
 
-        run_async_from_ui(self._do_backup_data_async(modules, file_path))
+        run_async_from_ui(self._do_backup_data_async(modules, file_path))  # type: ignore
 
     async def _do_backup_data_async(self, modules, file_path):
         self.data_backup_card.button.setEnabled(False)
@@ -474,7 +480,7 @@ class SettingsPage(BasePage):
                 InfoBar.success(
                     title='成功',
                     content=f'数据已成功导出至：\n{file_path}',
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     position=InfoBarPosition.TOP_RIGHT,
                     duration=5000,
@@ -484,7 +490,7 @@ class SettingsPage(BasePage):
                 InfoBar.error(
                     title='错误',
                     content='数据导出失败，详情请查看日志',
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     position=InfoBarPosition.TOP_RIGHT,
                     duration=5000,
@@ -496,32 +502,57 @@ class SettingsPage(BasePage):
 
     def _on_import_data(self):
         """处理数据导入逻辑"""
+        from PySide6.QtCore import QStandardPaths
+        from pathlib import Path
+        desktop_loc = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DesktopLocation)
+        default_dir = Path(desktop_loc) if desktop_loc else Path.home() / "Desktop"
+        default_path = str(default_dir)
+
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "选择备份文件", "", "ZIP 压缩文件 (*.zip)"
+            self, "选择备份文件", default_path, "ZIP 压缩文件 (*.zip)"
         )
         if not file_path:
             return
 
-        from src.ui.components.base_dialog import AppMessageBoxBase
-        from PySide6.QtWidgets import QLabel
-        confirm = AppMessageBoxBase(self.window(), header_title="确认导入")
-        confirm.viewLayout.addWidget(QLabel(f"将从 {file_path} 中导入数据。\n若存在同名数据将优先覆盖。\n确定要导入吗？", confirm.widget))
-        if not confirm.exec():
+        from PySide6.QtWidgets import QMessageBox
+        content = f"将从下方路径中导入数据：\n{file_path}\n\n注意：若存在同名数据将优先覆盖，并且正在运行的任务可能会受影响。\n\n确定要导入吗？"
+        reply = QMessageBox.question(
+            self.window(),
+            "确认导入",
+            content,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
-        run_async_from_ui(self._do_import_data_async(file_path))
+        run_async_from_ui(self._do_import_data_async(file_path))  # type: ignore
 
     async def _do_import_data_async(self, file_path):
         self.data_import_card.button.setEnabled(False)
         self.data_import_card.button.setText("导入中...")
         
+        from qfluentwidgets import StateToolTip
+        import asyncio
+        
+        state_tooltip = StateToolTip("正在恢复数据", "这可能需要一些时间，请耐心等待...", self.window())
+        state_tooltip.move(self.window().width() - state_tooltip.width() - 30, 60)
+        state_tooltip.show()
+        
+        # 主动让出事件循环，让 UI 线程有机会立即渲染出 StateToolTip
+        await asyncio.sleep(0.05)
+        
         try:
             success, msg = await DataBackupService.import_data(file_path)
+            state_tooltip.setContent("恢复完成" if success else "恢复失败")
+            state_tooltip.setState(True)
+            state_tooltip.close()
+            
             if success:
                 InfoBar.success(
                     title='成功',
                     content=msg,
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     position=InfoBarPosition.TOP_RIGHT,
                     duration=5000,
@@ -531,7 +562,7 @@ class SettingsPage(BasePage):
                 InfoBar.error(
                     title='失败',
                     content=msg,
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     position=InfoBarPosition.TOP_RIGHT,
                     duration=5000,
@@ -574,22 +605,22 @@ class SettingsPage(BasePage):
         try:
             if configured:
                 if btn is not None:
-                    btn.setStyleSheet("")
+                    btn.setStyleSheet("")  # type: ignore
                 if lbl is not None:
-                    lbl.setTextFormat(Qt.TextFormat.PlainText)
-                    lbl.setStyleSheet("")
-                    lbl.setText(display_path or "")
+                    lbl.setTextFormat(Qt.TextFormat.PlainText)  # type: ignore
+                    lbl.setStyleSheet("")  # type: ignore
+                    lbl.setText(display_path or "")  # type: ignore
                 else:
                     self.material_path_card.setContent(display_path or "")
             else:
                 if btn is not None:
-                    btn.setStyleSheet(_qss_alert_red_push_button())
+                    btn.setStyleSheet(_qss_alert_red_push_button())  # type: ignore
                 if lbl is not None:
-                    lbl.setTextFormat(Qt.TextFormat.RichText)
-                    lbl.setStyleSheet("")
+                    lbl.setTextFormat(Qt.TextFormat.RichText)  # type: ignore
+                    lbl.setStyleSheet("")  # type: ignore
                     c = FFMPEG_STATUS_COLOR_UNINSTALLED
                     hint = MEDIA_LIBRARY_UNCONFIGURED_HINT
-                    lbl.setText(
+                    lbl.setText(  # type: ignore
                         f"<span style='color:{c}; font-weight:700'>{hint}</span>"
                     )
                 else:
@@ -605,7 +636,7 @@ class SettingsPage(BasePage):
                 InfoBar.warning(
                     title="无法打开",
                     content="请先在右侧「选择目录」配置有效的媒体库存储位置。",
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=4000,
                     position=InfoBarPosition.TOP,
@@ -617,7 +648,7 @@ class SettingsPage(BasePage):
                 InfoBar.warning(
                     title="打开失败",
                     content="系统无法打开该文件夹，请手动在资源管理器中进入。",
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=4000,
                     position=InfoBarPosition.TOP,
@@ -628,7 +659,7 @@ class SettingsPage(BasePage):
             InfoBar.error(
                 title="错误",
                 content="打开文件夹时发生异常，请稍后重试。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=4000,
                 position=InfoBarPosition.TOP,
@@ -668,7 +699,7 @@ class SettingsPage(BasePage):
                     if callable(lbl):
                         lbl = lbl()
                 if lbl:
-                    lbl.setText(display_path)
+                    lbl.setText(display_path)  # type: ignore
                 else:
                     self.material_path_card.setContent(display_path)
             except Exception:
@@ -818,12 +849,12 @@ class SettingsPage(BasePage):
                     lbl = lbl()
                 if lbl:
                     if is_uninstalled:
-                        lbl.setTextFormat(Qt.TextFormat.RichText)
+                        lbl.setTextFormat(Qt.TextFormat.RichText)  # type: ignore
                         html = (content or "").replace("未安装", f"<span style='color:{FFMPEG_STATUS_COLOR_UNINSTALLED}'>未安装</span>")
-                        lbl.setText(html)
+                        lbl.setText(html)  # type: ignore
                     else:
-                        lbl.setTextFormat(Qt.TextFormat.PlainText)
-                        lbl.setText(content or "")
+                        lbl.setTextFormat(Qt.TextFormat.PlainText)  # type: ignore
+                        lbl.setText(content or "")  # type: ignore
         except Exception as e:
             logger.debug("通过 contentLabel 更新 FFmpeg 状态失败，回退 setContent: %s", e)
             self.ffmpeg_card.setContent(content)
@@ -834,9 +865,9 @@ class SettingsPage(BasePage):
                 btn = btn()
             if btn:
                 if is_uninstalled:
-                    btn.setStyleSheet(_qss_alert_red_push_button())
+                    btn.setStyleSheet(_qss_alert_red_push_button())  # type: ignore
                 else:
-                    btn.setStyleSheet("")
+                    btn.setStyleSheet("")  # type: ignore
         except Exception as e:
             logger.debug("设置 FFmpeg 按钮样式失败: %s", e)
 
@@ -880,15 +911,15 @@ class SettingsPage(BasePage):
                     lbl = lbl()
                 if lbl:
                     if is_uninstalled:
-                        lbl.setTextFormat(Qt.TextFormat.RichText)
+                        lbl.setTextFormat(Qt.TextFormat.RichText)  # type: ignore
                         html = (content or "").replace(
                             "未安装",
                             f"<span style='color:{CHROME_STATUS_COLOR_UNINSTALLED}'>未安装</span>"
                         )
-                        lbl.setText(html)
+                        lbl.setText(html)  # type: ignore
                     else:
-                        lbl.setTextFormat(Qt.TextFormat.PlainText)
-                        lbl.setText(content or "")
+                        lbl.setTextFormat(Qt.TextFormat.PlainText)  # type: ignore
+                        lbl.setText(content or "")  # type: ignore
         except Exception as e:
             logger.debug("通过 contentLabel 更新 Chrome 状态失败，回退 setContent: %s", e)
             self.chrome_card.setContent(content)
@@ -899,9 +930,9 @@ class SettingsPage(BasePage):
                 btn = btn()
             if btn:
                 if is_uninstalled:
-                    btn.setStyleSheet(_qss_alert_red_push_button())
+                    btn.setStyleSheet(_qss_alert_red_push_button())  # type: ignore
                 else:
-                    btn.setStyleSheet("")
+                    btn.setStyleSheet("")  # type: ignore
         except Exception as e:
             logger.debug("设置 Chrome 按钮样式失败: %s", e)
 
@@ -962,7 +993,7 @@ class SettingsPage(BasePage):
         self.auto_start_switch = SwitchButton(self.auto_start_card)
         self.auto_start_switch.setOnText("开")
         self.auto_start_switch.setOffText("关")
-        self.auto_start_card.hBoxLayout.addWidget(self.auto_start_switch, 0, Qt.AlignRight)
+        self.auto_start_card.hBoxLayout.addWidget(self.auto_start_switch, 0, Qt.AlignmentFlag.AlignRight)
         self.auto_start_card.hBoxLayout.addSpacing(16)
         
         # 窗口关闭行为（新版三选一：每次询问/最小化到托盘/退出应用）
@@ -976,7 +1007,7 @@ class SettingsPage(BasePage):
         self.close_behavior_combo.addItems(["每次询问", "最小化到托盘", "退出应用"])
         self.close_behavior_combo.setMinimumWidth(220)
         self.close_behavior_card.hBoxLayout.addWidget(
-            self.close_behavior_combo, 0, Qt.AlignRight
+            self.close_behavior_combo, 0, Qt.AlignmentFlag.AlignRight
         )
         self.close_behavior_card.hBoxLayout.addSpacing(16)
 
@@ -1037,7 +1068,7 @@ class SettingsPage(BasePage):
             config_center = ServiceLocator().get(ConfigCenter)
             await config_center.initialize()
             app_cfg = {**config_center.get_app_config()}
-            app_cfg["main_window_close_remind"] = bool(checked)
+            app_cfg["main_window_close_remind"] = checked
             await config_center.update("app_config", app_cfg)
 
         try:
@@ -1058,7 +1089,7 @@ class SettingsPage(BasePage):
                 MAIN_WINDOW_CLOSE_BEHAVIOR,
             )
 
-            app_cfg[MAIN_WINDOW_CLOSE_BEHAVIOR] = str(behavior)
+            app_cfg[MAIN_WINDOW_CLOSE_BEHAVIOR] = behavior
             await config_center.update("app_config", app_cfg)
 
         try:
@@ -1232,7 +1263,7 @@ class SettingsPage(BasePage):
             if cc is None:
                 return
             ui = dict(cc.get_app_config().get(KEY_UI) or {})
-            ui[UI_PAGE_ANIMATION_REDUCED] = bool(checked)
+            ui[UI_PAGE_ANIMATION_REDUCED] = checked
             await merge_app_config(cc, {KEY_UI: ui})
 
         try:
@@ -1250,7 +1281,7 @@ class SettingsPage(BasePage):
 
         labels = ("off", "minimal", "full")
         try:
-            index = int(self.startup_preloads_combo.currentIndex())
+            index = self.startup_preloads_combo.currentIndex()
         except Exception:
             index = 0
         mode = labels[min(max(index, 0), 2)]
@@ -1409,7 +1440,7 @@ class SettingsPage(BasePage):
             info_bar = InfoBar.info(
                 title="正在清理",
                 content="由于涉及日志和临时文件，清理可能需要几秒钟，请稍候...",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=False,
                 duration=-1, # 永不关闭直到手动移除
                 position=InfoBarPosition.TOP,
@@ -1440,13 +1471,13 @@ class SettingsPage(BasePage):
                     
                     self.show_success("清理成功", content)
                 except Exception as e:
-                    if info_bar: info_bar.close()
+                    if info_bar is not None: info_bar.close()
                     self.show_error("错误", f"清理缓存过程中发生异常: {e}")
             
             try:
                 run_async_from_ui(clear_task)
             except Exception as e:
-                if info_bar: info_bar.close()
+                if info_bar is not None: info_bar.close()
                 logger.error(f"启动清理任务失败: {e}")
                 self.show_error("启动失败", "无法启动异步清理任务")
 
@@ -1565,7 +1596,7 @@ class SettingsPage(BasePage):
             self.show_error("无法打开链接", "请手动在浏览器中访问：https://github.com/chitang818/wemedia-baby/issues")
 
 
-class _PluginsConfigDialog(AppMessageBoxBase):
+class _PluginsConfigDialog(AppMessageBoxBase):  # type: ignore
     """弹窗：配置平台插件启用/禁用"""
 
     def __init__(self, config_center: ConfigCenter, parent: Optional[QWidget] = None):
@@ -1655,7 +1686,7 @@ class _PluginsConfigDialog(AppMessageBoxBase):
             InfoBar.success(
                 title="已保存",
                 content="插件启用配置已保存。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=2000,
                 position=InfoBarPosition.TOP,
@@ -1666,7 +1697,7 @@ class _PluginsConfigDialog(AppMessageBoxBase):
             InfoBar.error(
                 title="保存失败",
                 content=str(e),
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=4000,
                 position=InfoBarPosition.TOP,

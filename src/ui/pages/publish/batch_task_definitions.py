@@ -180,6 +180,46 @@ def pick_strategy_from_display_name(name: str) -> BatchMediaPickStrategy:
 
 
 # =========================================================================
+# 4a. 排期模式 (Schedule Mode)
+# =========================================================================
+#
+# 产品需求：
+#   复用排期（默认）：每个选中的账号完整复用所有的排期时间。
+#   共用排期：生成的任务作为整体共同消耗排期时间池（单层轮询）。
+
+class BatchScheduleMode(Enum):
+    """批量发布排期的分发模式。"""
+    REUSE = "reuse"
+    """复用排期：不同账号复用排期时间（原有行为）。"""
+
+    SHARED = "shared"
+    """共用排期：所有选中账号共用排期时间池。"""
+
+    @classmethod
+    def from_str(cls, value: str) -> "BatchScheduleMode":
+        for member in cls:
+            if member.value == value:
+                return member
+        return cls.REUSE
+
+    def display_name(self) -> str:
+        return {
+            BatchScheduleMode.REUSE: "复用排期",
+            BatchScheduleMode.SHARED: "共用排期",
+        }[self]
+
+SCHEDULE_MODE_DISPLAY_NAMES: List[str] = [
+    s.display_name() for s in BatchScheduleMode
+]
+
+def schedule_mode_from_display_name(name: str) -> BatchScheduleMode:
+    for s in BatchScheduleMode:
+        if s.display_name() == name:
+            return s
+    return BatchScheduleMode.REUSE
+
+
+# =========================================================================
 # 5. video_list 排列契约
 # =========================================================================
 #

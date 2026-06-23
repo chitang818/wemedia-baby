@@ -15,6 +15,11 @@ from src.domain.publish.schedule.templates import (
     generate_daily_templates_random_minute_axis,
     generate_daily_templates_whole_hour_axis,
 )
+from src.ui.pages.publish.batch_task_definitions import (
+    BatchScheduleMode,
+    SCHEDULE_MODE_DISPLAY_NAMES,
+    schedule_mode_from_display_name,
+)
 
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QFormLayout, QHeaderView, QAbstractItemView,
@@ -192,7 +197,7 @@ class DailyPoolRandomHourDelegate(TableItemDelegate):
             return line_edit
         return super().createEditor(parent, option, index)
 
-    def setEditorData(self, editor: QWidget, index: QModelIndex) -> None:
+    def setEditorData(self, editor: QWidget, index) -> None:  # type: ignore
         if self._is_random_minute_time_col(index):
             table = self.parent()
             if not isinstance(table, QTableWidget):
@@ -203,11 +208,11 @@ class DailyPoolRandomHourDelegate(TableItemDelegate):
             canon = item.data(Qt.ItemDataRole.UserRole)
             base_t = QTime.fromString(canon, "HH:mm") if canon else QTime()
             h = base_t.hour() if base_t.isValid() else 0
-            editor.setText(f"{h:02d}")
+            if hasattr(editor, 'setText'): editor.setText(f"{h:02d}")
             return
         super().setEditorData(editor, index)
 
-    def setModelData(self, editor: QWidget, model, index: QModelIndex) -> None:
+    def setModelData(self, editor: QWidget, model, index) -> None:  # type: ignore
         if self._is_random_minute_time_col(index):
             table = self.parent()
             if not isinstance(table, QTableWidget) or not isinstance(editor, LineEdit):
@@ -256,19 +261,21 @@ class DailyPoolTimePicker(TimePicker):
             self.timeConfirmed.emit(t)
 
 
-class PublishTimeDialog(AppMessageBoxBase):
+class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
     """发布时间设置弹窗"""
 
     def __init__(
         self,
         initial_slots: Optional[List[Optional[str]]] = None,
         owner_count: int = 0,
+        initial_schedule_mode: str = "reuse",
         parent=None,
     ):
-        super().__init__(parent, header_title="设置发布时间排期")  # type: ignore
+        super().__init__(parent, header_title="设置发布时间排期")
         # 排期列表：str 为定时 "yyyy-MM-dd HH:mm"；None 表示该槽位「立即发布」（与任务层 scheduled_publish_time=None 一致）
         self.time_slots: List[Optional[str]] = list(initial_slots) if initial_slots else []
         self._owner_count = int(owner_count) if owner_count is not None else 0
+        self.schedule_mode = BatchScheduleMode.from_str(initial_schedule_mode)
         self._is_validating_time = False
         self._last_infobar_ms = 0
         self._last_infobar = None
@@ -418,6 +425,14 @@ class PublishTimeDialog(AppMessageBoxBase):
         _rht_lay = QHBoxLayout(_result_header_tools)
         _rht_lay.setContentsMargins(0, 0, 0, 0)
         _rht_lay.setSpacing(8)
+
+        self._combo_schedule_mode = ComboBox(_result_header_tools)
+        self._combo_schedule_mode.addItems(SCHEDULE_MODE_DISPLAY_NAMES)
+        self._combo_schedule_mode.setCurrentText(self.schedule_mode.display_name())
+        self._combo_schedule_mode.setToolTip("选择多账号排期复用或共用模式")
+        self._combo_schedule_mode.currentTextChanged.connect(self._on_schedule_mode_changed)
+        _rht_lay.addWidget(self._combo_schedule_mode, 0, Qt.AlignmentFlag.AlignVCenter)
+
         self._btn_clear_daily_templates = PrimaryPushButton(
             FluentIcon.BROOM, "清空", _result_header_tools)
         self._btn_clear_daily_templates.setFixedHeight(30)
@@ -437,9 +452,9 @@ class PublishTimeDialog(AppMessageBoxBase):
         self.time_table.setColumnCount(3)
         for col, title in enumerate(("序号", "时间", "操作")):
             header_item = QTableWidgetItem(title)
-            header_item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+            header_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
             self.time_table.setHorizontalHeaderItem(col, header_item)
-        self.time_table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+        self.time_table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         hh = self.time_table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -449,8 +464,8 @@ class PublishTimeDialog(AppMessageBoxBase):
         # 序号列需容纳中文表头与内边距，避免窄屏下被裁切。
         self.time_table.setColumnWidth(0, 56)
         self.time_table.setColumnWidth(2, 88)
-        self.time_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.time_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.time_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.time_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.time_table.verticalHeader().setVisible(False)
         self.time_table.setAlternatingRowColors(True)
         self.time_table.verticalHeader().setDefaultSectionSize(34)
@@ -1138,7 +1153,7 @@ class PublishTimeDialog(AppMessageBoxBase):
         self.daily_pool_table.setColumnCount(3)
         self.daily_pool_table.setHorizontalHeaderLabels(["序号", "时间", "操作"])
         self.daily_pool_table.horizontalHeader().setDefaultAlignment(
-            Qt.AlignCenter | Qt.AlignVCenter)
+            Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         dhh = self.daily_pool_table.horizontalHeader()
         dhh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         dhh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -1151,7 +1166,7 @@ class PublishTimeDialog(AppMessageBoxBase):
             | QAbstractItemView.EditTrigger.EditKeyPressed
         )
         # 与右侧「排期结果」表一致：不显示行选中高亮（仍可双击编辑时间格）
-        self.daily_pool_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.daily_pool_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.daily_pool_table.verticalHeader().setVisible(False)
         self.daily_pool_table.verticalHeader().setDefaultSectionSize(34)
         # 与右侧「③排期结果」一致：Fluent TableWidget 默认无网格线 + 斑马纹（圆角行底）
@@ -1326,6 +1341,15 @@ class PublishTimeDialog(AppMessageBoxBase):
         else:
             InfoBar.warning("提示", f"{time_str} 已在时间池中",
                             parent=self, position=InfoBarPosition.TOP, duration=2000)
+
+    def _on_schedule_mode_changed(self, text: str):
+        mode = schedule_mode_from_display_name(text)
+        if mode:
+            self.schedule_mode = mode
+            self._update_statistics_panel()
+
+    def get_schedule_mode(self) -> str:
+        return getattr(self, "schedule_mode", BatchScheduleMode.REUSE).value
 
     def _on_clear_daily_template(self):
         self.daily_time_templates.clear()
@@ -1723,7 +1747,7 @@ class PublishTimeDialog(AppMessageBoxBase):
         self._last_infobar_ms = now_ms
         if self._last_infobar is not None:
             try:
-                self._last_infobar.close()  # type: ignore
+                self._last_infobar.close()
             except Exception:
                 pass
         fn = {"warning": InfoBar.warning, "info": InfoBar.info,
@@ -1848,7 +1872,7 @@ class PublishTimeDialog(AppMessageBoxBase):
             tt.setRowCount(n_new)
             for row, ts in enumerate(new):
                 idx_it = QTableWidgetItem(str(row + 1))
-                idx_it.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+                idx_it.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                 idx_it.setFlags(Qt.ItemFlag.ItemIsEnabled)
                 tt.setItem(row, 0, idx_it)
                 cell_txt = "立即发布" if ts is None else str(ts)
@@ -1858,7 +1882,7 @@ class PublishTimeDialog(AppMessageBoxBase):
                     else str(ts)
                 )
                 item = QTableWidgetItem(cell_txt)
-                item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                 item.setToolTip(tip_txt)
                 tt.setItem(row, 1, item)
                 btn_del = PushButton("移除", None)
@@ -1895,12 +1919,19 @@ class PublishTimeDialog(AppMessageBoxBase):
         chip_range = getattr(self, "_stat_chip_range_value", None)
         if chip_owner is not None:
             chip_owner.setText(f"{owner_count} 个")
+
+        is_shared = getattr(self, "schedule_mode", BatchScheduleMode.REUSE) == BatchScheduleMode.SHARED
+        planned_total = total if is_shared else total * owner_count
+
         if chip_total_v is not None:
-            chip_total_v.setText(f"{total * owner_count} 个")
+            chip_total_v.setText(f"{planned_total} 个")
         if chip_total_h is not None:
             if total > 0 and owner_count > 0:
                 chip_total_h.setVisible(True)
-                chip_total_h.setText(f"= {total} 篇 × {owner_count} 个账号")
+                if is_shared:
+                    chip_total_h.setText(f"= {total} 篇任务（共用）")
+                else:
+                    chip_total_h.setText(f"= {total} 篇 × {owner_count} 个账号")
             else:
                 chip_total_h.setVisible(False)
         if chip_range is not None:

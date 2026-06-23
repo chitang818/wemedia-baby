@@ -35,6 +35,6 @@ setuptools==70.2.0
 tenacity==9.1.2
 tortoise-orm==0.25.4
 watchdog==6.0.0
-zstandard==0.23.0
+zstandard==0.25.0
 websockets==16.0
-PyExecJS==1.5.1.post0
+# PyExecJS 已停止维护（Python 3.13 无可用 wheel），已从强依赖改为可选导入

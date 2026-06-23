@@ -52,6 +52,8 @@ def generate_batch_tasks(
     videos: Optional[List[Dict[str, Any]]] = None,
     replicate_media_per_account: bool = False,
     immediate_publish: bool = False,
+    schedule_mode: str = "reuse",
+    global_time_state: Optional[List[int]] = None,
 ) -> List[Dict[str, Any]]:
     """根据账号、媒体文件、时间槽组合生成任务列表。
 
@@ -63,6 +65,10 @@ def generate_batch_tasks(
     当 replicate_media_per_account=True（发布目标曾含账号组、已展开为成员账号时）：
     - 与单条发布页选账号组一致：每个账号都分配全部媒体（每条素材绑定 time_slots[视频下标 % len(time_slots)]）；
     - 任务数为 len(accounts) * len(media_items)。
+
+    当 schedule_mode="shared"（共用排期）时：
+    - 不再为每个账号循环分配多个时间。而是从 accounts、media_items 和 time_slots 中单层轮询取值。
+    - 任务总数通常等同于媒体总数。
 
     Args:
         accounts:    已选真实平台账号列表（账号组须事先展开）。
@@ -77,6 +83,8 @@ def generate_batch_tasks(
         replicate_media_per_account: 为 True 时对每个账号复制整套媒体列表。
         immediate_publish: 为 True 时与单条「立即发布」一致：每条任务的 scheduled_publish_time 为 None，
             不按 time_slots 定时；分配规则与仅有一条「虚拟时间槽」时相同。
+        schedule_mode: "reuse" (复用，默认) 或 "shared" (共用)。
+        global_time_state: 用于在多次 generate_batch_tasks 调用间维持 shared 模式的全局时间游标。
 
     Returns:
         待写入的任务字典列表。
@@ -103,9 +111,29 @@ def generate_batch_tasks(
 
     tasks: List[Dict[str, Any]] = []
 
+    if schedule_mode == "shared":
+        if immediate_publish or n_time <= 0:
+            total_tasks = max(n_med, n_acc) if n_med > 0 else n_acc
+        else:
+            total_tasks = n_time
+        for i in range(total_tasks):
+            med = media_items[i] if i < n_med else {"file_path": "待配置"}
+            acc = accounts[i % n_acc]
+            if immediate_publish:
+                t_slot = None
+            else:
+                ti = global_time_state[0] if global_time_state is not None else i
+                t_slot = slot_cycle[ti % n_cycle]
+                if global_time_state is not None:
+                    global_time_state[0] += 1
+            tasks.append(_build_task(acc, med, t_slot, common_fields, file_type))
+        return tasks
+
     if replicate_media_per_account:
+        count = max(n_med, n_cycle)
         for acc in accounts:
-            for vi, med in enumerate(media_items):
+            for vi in range(count):
+                med = media_items[vi] if vi < n_med else {"file_path": "待配置"}
                 t_slot = slot_cycle[vi % n_cycle]
                 tasks.append(_build_task(acc, med, t_slot, common_fields, file_type))
         return tasks
@@ -113,9 +141,7 @@ def generate_batch_tasks(
     m_idx = 0
     for acc in accounts:
         for ti in range(n_cycle):
-            if m_idx >= n_med:
-                break
-            med = media_items[m_idx]
+            med = media_items[m_idx] if m_idx < n_med else {"file_path": "待配置"}
             m_idx += 1
             t_slot = slot_cycle[ti % n_cycle]
             tasks.append(_build_task(acc, med, t_slot, common_fields, file_type))
@@ -191,6 +217,7 @@ def generate_batch_tasks_isolated(
     *,
     expanded_accounts: Optional[List[Dict[str, Any]]] = None,
     immediate_publish: bool = False,
+    schedule_mode: str = "reuse",
 ) -> List[Dict[str, Any]]:
     """隔离分配模式下生成任务列表（账号组和独立账号均支持）。
 
@@ -223,9 +250,11 @@ def generate_batch_tasks_isolated(
         return generate_batch_tasks(
             accs, video_list, time_slots, common_fields, file_type,
             immediate_publish=immediate_publish,
+            schedule_mode=schedule_mode,
         )
 
     seen_account_ids: set = set()
+    global_time_state = [0] if schedule_mode == "shared" else None
 
     # ---- 账号组部分：每组只用带自己 _group_id 的视频 ----
     for grp in group_placeholders:
@@ -265,6 +294,8 @@ def generate_batch_tasks_isolated(
             file_type,
             replicate_media_per_account=(expanded_accounts is not None),
             immediate_publish=immediate_publish,
+            schedule_mode=schedule_mode,
+            global_time_state=global_time_state,
         )
         tasks.extend(grp_tasks)
 
@@ -288,6 +319,8 @@ def generate_batch_tasks_isolated(
                     file_type,
                     replicate_media_per_account=False,
                     immediate_publish=immediate_publish,
+                    schedule_mode=schedule_mode,
+                    global_time_state=global_time_state,
                 )
                 tasks.extend(acc_tasks)
 
@@ -309,6 +342,8 @@ def generate_batch_tasks_isolated(
                         accs_for_shared, shared_videos, time_slots, common_fields, file_type,
                         replicate_media_per_account=False,
                         immediate_publish=immediate_publish,
+                        schedule_mode=schedule_mode,
+                        global_time_state=global_time_state,
                     )
                     tasks.extend(shared_tasks)
         else:
@@ -325,6 +360,8 @@ def generate_batch_tasks_isolated(
                         accs, shared_videos, time_slots, common_fields, file_type,
                         replicate_media_per_account=False,
                         immediate_publish=immediate_publish,
+                        schedule_mode=schedule_mode,
+                        global_time_state=global_time_state,
                     )
                     tasks.extend(plain_tasks)
 

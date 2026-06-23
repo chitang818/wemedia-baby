@@ -78,6 +78,7 @@ def _norm_video_path(task_or_item: Dict[str, Any]) -> Optional[str]:
 def _no_video_mock_media_items(
     selected_accounts: List[Dict[str, Any]],
     n_time: int,
+    schedule_mode: str = "reuse",
 ) -> List[Dict[str, Any]]:
     """无视频时供 generate_batch_tasks_isolated 使用的占位媒体列表。
 
@@ -86,6 +87,9 @@ def _no_video_mock_media_items(
     """
     if n_time <= 0:
         return [{"file_path": "待配置"}]
+    if schedule_mode == "shared":
+        return [{"file_path": "待配置"} for _ in range(n_time)]
+
     groups = [a for a in selected_accounts if a.get("_type") == "group"]
     plains = [a for a in selected_accounts if a.get("_type") != "group"]
     out: List[Dict[str, Any]] = []
@@ -111,6 +115,7 @@ def build_preview_tasks(
     *,
     file_type: str = "video",
     media_label: str = "视频",
+    schedule_mode: str = "reuse",
 ) -> PreviewBuildResult:
     """根据当前选择状态生成预览数据（纯函数，不涉及 UI）。
 
@@ -139,7 +144,7 @@ def build_preview_tasks(
     result.n_time = n_time
     has_imm_slot = any(s is None for s in time_slots) if time_slots else False
     has_sched_slot = any(
-        isinstance(s, str) and str(s).strip() for s in time_slots
+        isinstance(s, str) and s.strip() for s in time_slots
     ) if time_slots else False
     if imm:
         result.time_pill_text = "立即发布"
@@ -210,7 +215,9 @@ def build_preview_tasks(
         result.branch = "no_video"
         result.status_text = f"请③添加{media_label}"
 
-        mock_videos = _no_video_mock_media_items(selected_accounts, n_time)
+        mock_videos = _no_video_mock_media_items(
+            selected_accounts, n_time, schedule_mode=schedule_mode
+        )
         mock_time = (
             time_slots
             if n_time > 0
@@ -218,9 +225,10 @@ def build_preview_tasks(
         )
 
         raw = generate_batch_tasks_isolated(
-            selected_accounts, mock_videos, mock_time, common_fields, file_type,
+            selected_accounts, mock_videos, mock_time, common_fields, file_type,  # type: ignore
             expanded_accounts=None,
             immediate_publish=imm,
+            schedule_mode=schedule_mode,
         )
 
         # 确保每个账号至少出现一行
@@ -279,6 +287,7 @@ def build_preview_tasks(
         selected_accounts, video_list, time_slots, common_fields, file_type,
         expanded_accounts=None,
         immediate_publish=imm,
+        schedule_mode=schedule_mode,
     )
 
     # 确保每个账号至少出现一行（视频不足时补占位）

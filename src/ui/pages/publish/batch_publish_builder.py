@@ -80,6 +80,7 @@ async def build_publish_tasks_for_batch(
     group_service: Optional[Any] = None,
     publish_record_repo: Optional[Any] = None,
     file_type: str = "video",
+    schedule_mode: str = "reuse",
 ) -> PublishBuildResult:
     """执行批量发布任务的完整构建流水线。
 
@@ -129,10 +130,15 @@ async def build_publish_tasks_for_batch(
         file_type,
         expanded_accounts=expanded,
         immediate_publish=immediate_publish,
+        schedule_mode=schedule_mode,
     )
 
-    # Step 3: 排除过滤
-    tasks = [t for t in raw if not exclusion.is_task_excluded(t)]
+    # Step 3: 排除过滤与空壳拦截
+    tasks = [
+        t for t in raw 
+        if not exclusion.is_task_excluded(t) 
+        and t.get("file_path") not in ("", "待配置")
+    ]
     if not tasks:
         return result
 

@@ -835,6 +835,18 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         from src.pro_features.batch.services.batch_unpublished_sync import auto_match_for_accounts
 
         n_time = max(1, len(self.time_slots))
+        schedule_mode = getattr(self, "schedule_mode", "reuse")
+        n_acc = len(self.selected_accounts)
+        
+        acc_target_counts = []
+        if schedule_mode == "shared":
+            acc_target_counts = [0] * n_acc
+            if n_acc > 0:
+                for i in range(n_time):
+                    acc_target_counts[i % n_acc] += 1
+        else:
+            acc_target_counts = [n_time] * n_acc
+
         self.video_list = [v for v in self.video_list if not v.get("_auto_matched")]
         self._get_video_auto_matcher().reset()
 
@@ -843,18 +855,26 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
 
         existing_paths = {v["file_path"] for v in self.video_list}
         all_shortage_messages: list = []
+        
+        matched_videos_per_account = []
 
-        for acc in self.selected_accounts:
+        for acc_idx, acc in enumerate(self.selected_accounts):
+            target_count = acc_target_counts[acc_idx] if acc_idx < len(acc_target_counts) else 0
+            if target_count == 0:
+                matched_videos_per_account.append([])
+                continue
+
             outcome = auto_match_for_accounts(
                 [acc],
                 self._get_video_auto_matcher(),
                 existing_paths,
-                n_time,
+                target_count,
                 self._cached_groups,
             )
             if outcome.shortage_messages:
                 all_shortage_messages.extend(outcome.shortage_messages)
 
+            current_acc_matched = []
             for m in outcome.new_items:
                 fp = m["file_path"]
                 title, desc = await self._resolve_title_desc_async(fp)
@@ -869,7 +889,22 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                 }
                 if acc.get("_type") == "group":
                     entry["_group_id"] = acc.get("group_id")
-                self.video_list.append(entry)
+                current_acc_matched.append(entry)
+            matched_videos_per_account.append(current_acc_matched)
+            
+        if schedule_mode == "shared" and n_acc > 0:
+            interleaved = []
+            cursors = [0] * n_acc
+            for i in range(n_time):
+                acc_idx = i % n_acc
+                lst = matched_videos_per_account[acc_idx]
+                if cursors[acc_idx] < len(lst):
+                    interleaved.append(lst[cursors[acc_idx]])
+                    cursors[acc_idx] += 1
+            self.video_list.extend(interleaved)
+        else:
+            for lst in matched_videos_per_account:
+                self.video_list.extend(lst)
 
         if all_shortage_messages:
             self._show_material_shortage_dialog("\n".join(all_shortage_messages))
@@ -937,10 +972,12 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         dialog = PublishTimeDialog(
             self.time_slots,
             owner_count=len(getattr(self, "selected_accounts", []) or []),
+            initial_schedule_mode=getattr(self, "schedule_mode", "reuse"),
             parent=self.window() or self,
         )
         if dialog.exec() == int(QDialog.DialogCode.Accepted):
             self.time_slots = dialog.get_schedule_slots()
+            self.schedule_mode = dialog.get_schedule_mode()
             run_async_from_ui(self._after_publish_time_dialog_accepted)
 
     async def _after_publish_time_dialog_accepted(self) -> None:
@@ -2841,6 +2878,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
             self._preview_exclusion,
             file_type=self._file_type,
             media_label=self._media_label,
+            schedule_mode=getattr(self, "schedule_mode", "reuse"),
         )
         # 预览已无行但草稿里仍有账号等数据时，步骤②③④会误判为可点；与「删除全部任务」一致回到①
         if (
@@ -3437,6 +3475,7 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
                 group_service=self.group_service,
                 publish_record_repo=repo,
                 file_type=self._file_type,
+                schedule_mode=getattr(self, "schedule_mode", "reuse"),
             )
 
             for gname in br.empty_group_names:
