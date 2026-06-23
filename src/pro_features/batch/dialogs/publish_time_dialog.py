@@ -256,7 +256,7 @@ class DailyPoolTimePicker(TimePicker):
 
     def _onConfirmed(self, value: list):
         super()._onConfirmed(value)
-        t = self.time
+        t = self.getTime()
         if t.isValid():
             self.timeConfirmed.emit(t)
 
@@ -274,7 +274,7 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
         super().__init__(parent, header_title="设置发布时间排期")
         # 排期列表：str 为定时 "yyyy-MM-dd HH:mm"；None 表示该槽位「立即发布」（与任务层 scheduled_publish_time=None 一致）
         self.time_slots: List[Optional[str]] = list(initial_slots) if initial_slots else []
-        self._owner_count = int(owner_count) if owner_count is not None else 0
+        self._owner_count = owner_count if owner_count is not None else 0
         self.schedule_mode = BatchScheduleMode.from_str(initial_schedule_mode)
         self._is_validating_time = False
         self._last_infobar_ms = 0
@@ -442,7 +442,7 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
         _rht_lay.addWidget(self._btn_clear_daily_templates, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.schedule_result_card, _result_host, result_lay = self._create_module_card(
-            top_row, "排期结果", _result_header_tools)
+            top_row, "排期时间池", _result_header_tools)
         # Ignored 横向：使排期结果卡片宽度严格按 stretch 派分，便于底部「任务 X 篇」对齐。
         self.schedule_result_card.setSizePolicy(
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
@@ -980,7 +980,7 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
         # EditableComboBox：下拉预设 1～6；可手输 1～99
         self.quick_schedule_combo = EditableComboBox(ch)
         for _n in range(QUICK_UI_TIMES_PER_DAY_MIN, QUICK_UI_PRESET_TIMES_PER_DAY_MAX + 1):
-            self.quick_schedule_combo.addItem(str(_n), None, _n)
+            self.quick_schedule_combo.addItem(str(_n), userData=_n)
         self.quick_schedule_combo.setFixedWidth(76)
         self.quick_schedule_combo.setToolTip(
             f"下拉为 1～{QUICK_UI_PRESET_TIMES_PER_DAY_MAX} 快捷项；"
@@ -1328,7 +1328,7 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
         self._template_custom_flags = [p[1] for p in pairs]
 
     def _on_add_daily_template(self):
-        t = self.daily_time_picker.time
+        t = self.daily_time_picker.getTime()
         if not t.isValid():
             return
         time_str = t.toString("HH:mm")
@@ -1344,7 +1344,7 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
 
     def _on_schedule_mode_changed(self, text: str):
         mode = schedule_mode_from_display_name(text)
-        if mode:
+        if mode is not None:
             self.schedule_mode = mode
             self._update_statistics_panel()
 
@@ -1379,7 +1379,7 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
         elif raw:
             self._quick_schedule_summary_label.setText("—")
         else:
-            self._quick_schedule_summary_label.setText("选择次数")
+            self._quick_schedule_summary_label.setText("选择或输入次数")
 
     def _on_quick_schedule_index_changed(self, index: int) -> None:
         if index < 0:
@@ -1434,11 +1434,11 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
             self._apply_quick_templates(n)
 
     def _apply_quick_templates(self, times_per_day: int):
-        start = self.batch_schedule_start_time_picker.time
+        start = self.batch_schedule_start_time_picker.getTime()
         if not start.isValid():
             start = QTime(0, 0)
         h, m = start.hour(), start.minute()
-        end = self.batch_schedule_end_time_picker.time
+        end = self.batch_schedule_end_time_picker.getTime()
         if not end.isValid():
             end = QTime(22, 0)
         eh, em = end.hour(), end.minute()
@@ -1469,7 +1469,7 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
         now = QDateTime.currentDateTime()
         min_dt = now.addSecs(9000)
         max_dt = now.addDays(15)
-        base_date = self.batch_combo_start_date_picker.date
+        base_date = self.batch_combo_start_date_picker.getDate()
         if not base_date.isValid():
             base_date = now.date().addDays(1)
         random_minutes = self.radio_batch_time_random.isChecked()
@@ -1487,7 +1487,7 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
         return slots
 
     def _sync_batch_slots(self):
-        self.time_slots = self._compute_batch_slots()
+        self.time_slots = self._compute_batch_slots()  # type: ignore
         self._refresh_time_table()
         self._maybe_hint_batch_schedule_shortfall()
 
@@ -1758,8 +1758,8 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
     def _validate_schedule_time(self):
         if getattr(self, '_is_validating_time', False):
             return
-        current_date = self.batch_date_picker.date
-        current_time = self.batch_time_picker.time
+        current_date = self.batch_date_picker.getDate()
+        current_time = self.batch_time_picker.getTime()
         if not current_date.isValid() or not current_time.isValid():
             return
         selected_dt = QDateTime(current_date, current_time)
@@ -1780,8 +1780,8 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
             self._is_validating_time = False
 
     def _on_add_time(self):
-        d = self.batch_date_picker.date
-        t = self.batch_time_picker.time
+        d = self.batch_date_picker.getDate()
+        t = self.batch_time_picker.getTime()
         if not d.isValid() or not t.isValid():
             InfoBar.warning("提示", "请先选择有效的日期和时间",
                             parent=self, position=InfoBarPosition.TOP, duration=2000)
@@ -1805,7 +1805,7 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
             return
         self.time_slots.append(time_str)
         if not any(s is None for s in self.time_slots):
-            self.time_slots.sort()
+            self.time_slots.sort()  # type: ignore
         self._refresh_time_table()
         next_dt = selected_dt.addSecs(3 * 3600)
         if next_dt <= max_dt:
@@ -1850,11 +1850,11 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
                         if it1 is None:
                             can_patch = False
                             break
-                        cell_txt = "立即发布" if new[i] is None else str(new[i])
+                        cell_txt = "立即发布" if new[i] is None else (new[i] or "")
                         tip_txt = (
                             "立即发布（写入发布列表时不指定定时时间）"
                             if new[i] is None
-                            else str(new[i])
+                            else (new[i] or "")
                         )
                         if it1.text() != cell_txt:
                             it1.setText(cell_txt)
@@ -1875,11 +1875,11 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
                 idx_it.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                 idx_it.setFlags(Qt.ItemFlag.ItemIsEnabled)
                 tt.setItem(row, 0, idx_it)
-                cell_txt = "立即发布" if ts is None else str(ts)
+                cell_txt = "立即发布" if ts is None else (ts or "")
                 tip_txt = (
                     "立即发布（写入发布列表时不指定定时时间）"
                     if ts is None
-                    else str(ts)
+                    else (ts or "")
                 )
                 item = QTableWidgetItem(cell_txt)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
@@ -1940,7 +1940,7 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
             else:
                 timed_only = [
                     ts for ts in self.time_slots
-                    if isinstance(ts, str) and str(ts).strip()
+                    if isinstance(ts, str) and ts.strip()
                 ]
                 if not timed_only:
                     n_imm = sum(1 for ts in self.time_slots if ts is None)
@@ -1972,7 +1972,7 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
             return
         timed_only = [
             ts for ts in self.time_slots
-            if isinstance(ts, str) and str(ts).strip()
+            if isinstance(ts, str) and ts.strip()
         ]
         n_imm = sum(1 for ts in self.time_slots if ts is None)
         dates_sorted = sorted({ts.split(" ")[0] for ts in timed_only})
