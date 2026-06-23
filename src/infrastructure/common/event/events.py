@@ -163,3 +163,8 @@ class CurrentUserChangedEvent(DomainEvent):
     source: str = ""
 
 
+@dataclass(kw_only=True)
+class ImNewMessageEvent(DomainEvent):
+    """即时通讯收到新消息事件"""
+    account_id: str
+    message: dict

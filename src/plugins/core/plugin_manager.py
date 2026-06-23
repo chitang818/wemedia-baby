@@ -16,6 +16,7 @@ from typing import Dict, Optional, List, Tuple, Callable, Any
 
 from .interfaces.login_plugin import LoginPluginInterface
 from .interfaces.publish_plugin import PublishPluginInterface
+from .interfaces.message_plugin import MessagePluginInterface
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ class PluginManager:
 
     _login_plugins: Dict[str, LoginPluginInterface] = {}
     _publish_plugins: Dict[str, PublishPluginInterface] = {}
+    _message_plugins: Dict[str, MessagePluginInterface] = {}
     _plugin_factories: Optional[Dict[str, Tuple[Callable[[], LoginPluginInterface], Callable[[], PublishPluginInterface]]]] = None
     _initialized = False
 
@@ -273,6 +275,32 @@ class PluginManager:
             except Exception as e:
                 logger.warning("按需加载发布插件 %s 失败: %s", platform_id, e)
         return cls._publish_plugins.get(platform_id)
+
+    @classmethod
+    def get_message_plugin(cls, platform_id: str) -> Optional[MessagePluginInterface]:
+        """获取私信/互动插件；按惯例按需加载。"""
+        cls.initialize()
+        if platform_id not in cls._message_plugins:
+            try:
+                # 尝试从 community 或 pro 加载
+                mod_path = ""
+                try:
+                    mod_path = f"src.plugins.community.{platform_id}.message_plugin"
+                    mod = importlib.import_module(mod_path)
+                except ImportError:
+                    mod_path = f"src.plugins.pro.{platform_id}.message_plugin"
+                    mod = importlib.import_module(mod_path)
+                
+                # 寻找形如 DouyinMessagePlugin 的类名
+                class_name = platform_id.capitalize() + "MessagePlugin"
+                plugin_cls = getattr(mod, class_name)
+                cls._message_plugins[platform_id] = plugin_cls()
+                logger.debug(f"已加载私信插件: {class_name} ({platform_id})")
+            except Exception as e:
+                logger.warning(f"未能加载 {platform_id} 的 message_plugin (该平台可能暂不支持私信功能): {e}")
+                cls._message_plugins[platform_id] = None  # type: ignore
+
+        return cls._message_plugins.get(platform_id)
 
     @classmethod
     def get_available_platforms(cls) -> List[str]:

@@ -53,7 +53,7 @@ def _register_optional_pages() -> None:
         ),
         ("data_center_page", "src.pro_features.data_center.pages.data_center_page", "DataCenterPage"),
         ("comment_page", "src.pro_features.interaction.pages.comment_page", "CommentPage"),
-        ("private_message_page", "src.pro_features.interaction.pages.private_message_page", "PrivateMessagePage"),
+        ("private_message_page", "src.ui.pages.interaction.message_page", "MessagePage"),
         ("personal_center_page", "src.ui.pages.subscription_page", "PersonalCenterPage"),
     ]
     for name, mod_path, class_name in optional:

@@ -11,7 +11,9 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtWidgets import QWidget, QLabel, QApplication, QDialog
+from PySide6.QtWidgets import QWidget, QLabel, QApplication, QDialog, QFileDialog
+from src.services.data.backup_service import DataBackupService
+from src.ui.dialogs.data_backup_dialog import DataBackupDialog
 from PySide6.QtCore import Qt, QUrl, QStandardPaths, QTimer
 from qasync import asyncSlot
 from PySide6.QtGui import QDesktopServices, QShowEvent
@@ -407,7 +409,137 @@ class SettingsPage(BasePage):
         self.data_group.addSettingCard(self.material_path_card)
         self.data_group.addSettingCard(self.data_dir_card)
         self.data_group.addSettingCard(self.clear_cache_card)
+
+        # 数据备份
+        self.data_backup_card = PushSettingCard(
+            "备份数据",
+            FluentIcon.SAVE,
+            "数据备份",
+            "将已登录账号、文案库、带货推广等数据打包导出",
+            self.data_group
+        )
+        self.data_backup_card.clicked.connect(self._on_backup_data)
+
+        # 数据恢复
+        self.data_import_card = PushSettingCard(
+            "恢复数据",
+            FluentIcon.SYNC,
+            "数据恢复",
+            "从导出的 ZIP 压缩包中恢复数据和账号登录状态",
+            self.data_group
+        )
+        self.data_import_card.clicked.connect(self._on_import_data)
+
+        self.data_group.addSettingCard(self.data_backup_card)
+        self.data_group.addSettingCard(self.data_import_card)
+
         self.expand_layout.addWidget(self.data_group)
+
+        self._apply_material_library_reminder_style()
+
+    def _on_backup_data(self):
+        """处理数据备份逻辑"""
+        dialog = DataBackupDialog(self.window())
+        if not dialog.exec():
+            return
+            
+        modules = dialog.get_selected_modules()
+        if not modules:
+            InfoBar.warning(
+                title='提示',
+                content='请至少选择一个备份模块',
+                orient=Qt.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP_RIGHT,
+                duration=3000,
+                parent=self.window()
+            )
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "选择保存路径", "wemedia_baby_backup.zip", "ZIP 压缩文件 (*.zip)"
+        )
+        if not file_path:
+            return
+
+        run_async_from_ui(self._do_backup_data_async(modules, file_path))
+
+    async def _do_backup_data_async(self, modules, file_path):
+        self.data_backup_card.button.setEnabled(False)
+        self.data_backup_card.button.setText("备份中...")
+        
+        try:
+            success = await DataBackupService.export_data(modules, file_path)
+            if success:
+                InfoBar.success(
+                    title='成功',
+                    content=f'数据已成功导出至：\n{file_path}',
+                    orient=Qt.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP_RIGHT,
+                    duration=5000,
+                    parent=self.window()
+                )
+            else:
+                InfoBar.error(
+                    title='错误',
+                    content='数据导出失败，详情请查看日志',
+                    orient=Qt.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP_RIGHT,
+                    duration=5000,
+                    parent=self.window()
+                )
+        finally:
+            self.data_backup_card.button.setEnabled(True)
+            self.data_backup_card.button.setText("备份数据")
+
+    def _on_import_data(self):
+        """处理数据导入逻辑"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择备份文件", "", "ZIP 压缩文件 (*.zip)"
+        )
+        if not file_path:
+            return
+
+        from src.ui.components.base_dialog import AppMessageBoxBase
+        from PySide6.QtWidgets import QLabel
+        confirm = AppMessageBoxBase(self.window(), header_title="确认导入")
+        confirm.viewLayout.addWidget(QLabel(f"将从 {file_path} 中导入数据。\n若存在同名数据将优先覆盖。\n确定要导入吗？", confirm.widget))
+        if not confirm.exec():
+            return
+
+        run_async_from_ui(self._do_import_data_async(file_path))
+
+    async def _do_import_data_async(self, file_path):
+        self.data_import_card.button.setEnabled(False)
+        self.data_import_card.button.setText("导入中...")
+        
+        try:
+            success, msg = await DataBackupService.import_data(file_path)
+            if success:
+                InfoBar.success(
+                    title='成功',
+                    content=msg,
+                    orient=Qt.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP_RIGHT,
+                    duration=5000,
+                    parent=self.window()
+                )
+            else:
+                InfoBar.error(
+                    title='失败',
+                    content=msg,
+                    orient=Qt.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP_RIGHT,
+                    duration=5000,
+                    parent=self.window()
+                )
+        finally:
+            self.data_import_card.button.setEnabled(True)
+            self.data_import_card.button.setText("恢复数据")
 
         self._apply_material_library_reminder_style()
 

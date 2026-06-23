@@ -36,3 +36,5 @@ tenacity==9.1.2
 tortoise-orm==0.25.4
 watchdog==6.0.0
 zstandard==0.23.0
+websockets==16.0
+PyExecJS==1.5.1.post0

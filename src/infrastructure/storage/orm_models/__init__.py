@@ -23,6 +23,10 @@ from src.infrastructure.storage.orm_models.random_copywriting import (
     RandomCopywritingCategory,
     RandomCopywritingItem,
 )
+from src.infrastructure.storage.orm_models.interaction import (
+    MessageSessionModel,
+    ChatMessageModel,
+)
 
 __all__ = [
     "User",
@@ -40,4 +44,6 @@ __all__ = [
     "LocationPromotionItem",
     "RandomCopywritingCategory",
     "RandomCopywritingItem",
+    "MessageSessionModel",
+    "ChatMessageModel",
 ]
