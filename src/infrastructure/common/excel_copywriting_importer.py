@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 
 
 # 必须存在的列
-REQUIRED_HEADERS = ["作品编号", "文案内容"]
+REQUIRED_HEADERS = ["作品编号", "作品描述"]
 # 可选列（新模板）
-OPTIONAL_HEADERS = ["作品标题", "作品描述", "作品简介", "话题"]
+OPTIONAL_HEADERS = ["作品标题", "作品简介", "话题", "文案内容"]
 
 
 @dataclass
@@ -90,9 +90,9 @@ def parse_excel(path: str, strict: bool = True) -> Dict[str, Any]:
 
             # 校验逻辑
             if strict:
-                # 严格模式：编号和内容必填，且编号格式必须正确
-                if not work_id or not content:
-                    errors.append(f"Sheet「{sheet.title}」第 {i} 行：作品编号或文案内容为空，已跳过。")
+                # 严格模式：编号和描述必填，且编号格式必须正确
+                if not work_id or not description:
+                    errors.append(f"Sheet「{sheet.title}」第 {i} 行：作品编号或作品描述为空，已跳过。")
                     continue
                 if not is_valid_copywriting_work_id(work_id):
                     errors.append(

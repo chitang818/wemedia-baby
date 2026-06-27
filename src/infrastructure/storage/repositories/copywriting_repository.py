@@ -149,8 +149,8 @@ class CopywritingRepository:
         async with in_transaction("default"):
             for idx, data in enumerate(items, start=1):
                 work_id = (data.get("work_id") or "").strip()
-                if not work_id or not (data.get("content") or "").strip():
-                    errors.append(f"第 {idx} 行：作品编号或文案内容为空，已跳过。")
+                if not work_id or not (data.get("description") or "").strip():
+                    errors.append(f"第 {idx} 行：作品编号或作品描述为空，已跳过。")
                     continue
                 if not is_valid_copywriting_work_id(work_id):
                     errors.append(
