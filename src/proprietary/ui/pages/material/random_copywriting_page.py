@@ -9,7 +9,7 @@ import asyncio
 import logging
 import uuid
 from typing import Optional, List, Dict, Any
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer, QSettings
 from PySide6.QtWidgets import (
     QWidget, 
     QVBoxLayout, 
@@ -138,7 +138,7 @@ class RandomCopywritingSummaryWidget(QWidget):
         card = CardWidget(self)
         card.setMinimumSize(260, 110)
         card.setMaximumWidth(320)
-        card.setCursor(Qt.PointingHandCursor)
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
         
         # 主布局
         cl = QVBoxLayout(card)
@@ -277,6 +277,9 @@ class RandomCopywritingSubLibraryWidget(TrackedTaskMixin, QWidget):
         self.btn_import = PushButton("导入 Excel", toolbar_card)
         self.btn_import.clicked.connect(self._on_import_clicked)
 
+        self.btn_sync = PushButton("手动同步", toolbar_card)
+        self.btn_sync.clicked.connect(self._on_sync_clicked)
+
         self.btn_delete = PushButton("删除选中", toolbar_card)
         self.btn_delete.clicked.connect(self._on_delete_clicked)
 
@@ -286,9 +289,21 @@ class RandomCopywritingSubLibraryWidget(TrackedTaskMixin, QWidget):
         toolbar_layout.addWidget(self.btn_new)
         toolbar_layout.addWidget(self.btn_edit)
         toolbar_layout.addWidget(self.btn_import)
+        toolbar_layout.addWidget(self.btn_sync)
         toolbar_layout.addWidget(self.btn_delete)
         toolbar_layout.addWidget(self.btn_reload)
         toolbar_layout.addStretch()
+        
+        self.lbl_sync_path = CaptionLabel(toolbar_card)
+        
+        def _on_lbl_click(event):
+            CaptionLabel.mousePressEvent(self.lbl_sync_path, event)
+            self._open_sync_file_folder()
+            
+        self.lbl_sync_path.mousePressEvent = _on_lbl_click
+
+        toolbar_layout.addWidget(self.lbl_sync_path)
+        self._update_sync_path_label()
         
         layout.addWidget(toolbar_card)
 
@@ -327,6 +342,32 @@ class RandomCopywritingSubLibraryWidget(TrackedTaskMixin, QWidget):
             )
         )
         self._initial_reload_timer.start(100)
+
+    def _open_sync_file_folder(self):
+        import os
+        import subprocess
+        from PySide6.QtCore import QSettings
+        path = QSettings("WeMediaBaby", "媒小宝").value(f"app/random_copywriting_last_import_path_{self.category_id}")
+        if path and os.path.exists(str(path)):
+            try:
+                subprocess.run(['explorer', '/select,', os.path.normpath(str(path))])
+            except Exception as e:
+                logger.error("打开文件夹失败: %s", e, exc_info=True)
+
+    def _update_sync_path_label(self):
+        import os
+        from PySide6.QtCore import QSettings
+        path = QSettings("WeMediaBaby", "媒小宝").value(f"app/random_copywriting_last_import_path_{self.category_id}")
+        if path and os.path.exists(str(path)):
+            self.lbl_sync_path.setText(f"同步文件: {os.path.basename(str(path))}")
+            self.lbl_sync_path.setToolTip(str(path))
+            self.lbl_sync_path.setStyleSheet("color: #0066cc;")
+            self.lbl_sync_path.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.lbl_sync_path.setText("未绑定同步文件")
+            self.lbl_sync_path.setToolTip("请先点击“导入 Excel”选择文件")
+            self.lbl_sync_path.setStyleSheet("color: #888888;")
+            self.lbl_sync_path.setCursor(Qt.CursorShape.ArrowCursor)
 
     def _setup_table_style(self, table):
         """参考 BasePage 中的表格样式设置"""
@@ -530,7 +571,7 @@ class RandomCopywritingSubLibraryWidget(TrackedTaskMixin, QWidget):
                 InfoBar.error(
                     title="环境依赖缺失",
                     content="当前环境未安装 openpyxl。请在项目目录执行：pip install openpyxl",
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=8000,
                     position=InfoBarPosition.TOP,
@@ -555,7 +596,7 @@ class RandomCopywritingSubLibraryWidget(TrackedTaskMixin, QWidget):
                     InfoBar.success(
                         title="下载成功",
                         content=f"已成功保存随机文案库模板至：{save_path}",
-                        orient=Qt.Horizontal,
+                        orient=Qt.Orientation.Horizontal,
                         isClosable=True,
                         duration=5000,
                         position=InfoBarPosition.TOP,
@@ -566,7 +607,7 @@ class RandomCopywritingSubLibraryWidget(TrackedTaskMixin, QWidget):
                     InfoBar.error(
                         title="下载失败",
                         content="保存模板文件时发生错误，请检查是否有权限写入该目录。",
-                        orient=Qt.Horizontal,
+                        orient=Qt.Orientation.Horizontal,
                         isClosable=True,
                         duration=5000,
                         position=InfoBarPosition.TOP,
@@ -587,9 +628,37 @@ class RandomCopywritingSubLibraryWidget(TrackedTaskMixin, QWidget):
         if not file_path: 
             return
             
+        QSettings("WeMediaBaby", "媒小宝").setValue(f"app/random_copywriting_last_import_path_{self.category_id}", file_path)
+        self._update_sync_path_label()
+            
         self._create_tracked_task(
             self._import_excel(file_path),
             name="random_copywriting.sub_library.import_excel",
+        )
+
+    def _on_sync_clicked(self):
+        """执行手动同步：读取上次导入的路径并静默导入。"""
+        import os
+        from qfluentwidgets import InfoBar, InfoBarPosition
+        
+        path = QSettings("WeMediaBaby", "媒小宝").value(f"app/random_copywriting_last_import_path_{self.category_id}")
+        if not path or not os.path.exists(str(path)):
+            self._on_import_clicked()
+            return
+
+        InfoBar.info(
+            title="开始同步",
+            content=f"正在同步【{self.category_name}】...\n文件：{os.path.basename(str(path))}",
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            duration=3000,
+            position=InfoBarPosition.TOP,
+            parent=self.window(),
+        )
+
+        self._create_tracked_task(
+            self._import_excel(str(path)),
+            name="random_copywriting.sub_library.import_excel_sync",
         )
 
     async def _import_excel(self, file_path: str):

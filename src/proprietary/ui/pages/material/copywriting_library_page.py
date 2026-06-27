@@ -11,7 +11,7 @@ import asyncio
 import logging
 from typing import Optional, List, Dict, Any
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QSettings
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -26,6 +26,7 @@ from qfluentwidgets import (
     PushButton,
     InfoBar,
     InfoBarPosition,
+    CaptionLabel,
 )
 
 from src.ui.pages.base_page import BasePage
@@ -78,6 +79,9 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
         self.btn_import = PushButton("导入 Excel", toolbar_card)
         self.btn_import.clicked.connect(self._on_import_clicked)
 
+        self.btn_sync = PushButton("手动同步", toolbar_card)
+        self.btn_sync.clicked.connect(self._on_sync_clicked)
+
         self.btn_delete = PushButton("删除选中", toolbar_card)
         self.btn_delete.clicked.connect(self._on_delete_clicked)
 
@@ -101,10 +105,22 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
         toolbar_layout.addWidget(self.btn_new)
         toolbar_layout.addWidget(self.btn_edit)
         toolbar_layout.addWidget(self.btn_import)
+        toolbar_layout.addWidget(self.btn_sync)
         toolbar_layout.addWidget(self.btn_delete)
         toolbar_layout.addWidget(self.btn_reload)
         toolbar_layout.addWidget(_feishu_row)
         toolbar_layout.addStretch()
+
+        self.lbl_sync_path = CaptionLabel(toolbar_card)
+        
+        def _on_lbl_click(event):
+            CaptionLabel.mousePressEvent(self.lbl_sync_path, event)
+            self._open_sync_file_folder()
+            
+        self.lbl_sync_path.mousePressEvent = _on_lbl_click
+
+        toolbar_layout.addWidget(self.lbl_sync_path)
+        self._update_sync_path_label()
 
         # 表格卡片（Fluent TableWidget，与视频库风格一致）
         table_card = CardWidget(self)
@@ -146,10 +162,39 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
 
         self._create_tracked_task(self._reload(), name="copywriting_library.initial_reload")
 
+
+
+    def _open_sync_file_folder(self):
+        import os
+        import subprocess
+        from PySide6.QtCore import QSettings
+        path = QSettings("WeMediaBaby", "媒小宝").value("app/copywriting_last_import_path")
+        if path and os.path.exists(str(path)):
+            try:
+                subprocess.run(['explorer', '/select,', os.path.normpath(str(path))])
+            except Exception as e:
+                logger.error("打开文件夹失败: %s", e, exc_info=True)
+
+    def _update_sync_path_label(self):
+        import os
+        from PySide6.QtCore import QSettings
+        path = QSettings("WeMediaBaby", "媒小宝").value("app/copywriting_last_import_path")
+        if path and os.path.exists(str(path)):
+            self.lbl_sync_path.setText(f"同步文件: {os.path.basename(str(path))}")
+            self.lbl_sync_path.setToolTip(str(path))
+            self.lbl_sync_path.setStyleSheet("color: #0066cc;")
+            self.lbl_sync_path.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.lbl_sync_path.setText("未绑定同步文件")
+            self.lbl_sync_path.setToolTip("请先点击“导入 Excel”选择文件")
+            self.lbl_sync_path.setStyleSheet("color: #888888;")
+            self.lbl_sync_path.setCursor(Qt.CursorShape.ArrowCursor)
+
     # ---------- 表格填充 ----------
 
     def _populate_table(self, rows: List[Dict[str, Any]]) -> None:
         """将数据库查询结果渲染到 TableWidget。"""
+        assert self._table is not None
         self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
         self._table.setRowCount(len(rows))
@@ -207,10 +252,13 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
     def _on_reload_clicked(self):
         self._create_tracked_task(self._reload(), name="copywriting_library.reload")
 
-    async def _reload(self):
-        """从数据库异步加载文案列表并刷新表格。"""
+    async def _reload(self) -> None:
+        """重载整个文案列表"""
         try:
-            rows = await CopywritingRepository.list_items(page=1, page_size=500)
+            rows = await CopywritingRepository.list_items(
+                page=1,
+                page_size=1000
+            )
             if self._table:
                 self._populate_table(rows)
         except Exception as e:
@@ -218,7 +266,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.error(
                 title="错误",
                 content="加载文案库列表时发生异常，请稍后重试。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,
@@ -247,7 +295,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.info(
                 title="提示",
                 content="请先在列表中选择一条文案记录再点击编辑。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=3000,
                 position=InfoBarPosition.TOP,
@@ -258,6 +306,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
 
     def _on_table_double_clicked(self, index):
         """双击表格行时打开编辑弹窗。"""
+        assert self._table is not None
         if not index.isValid():
             return
         no_cell = self._table.item(index.row(), _COL_NO)
@@ -289,7 +338,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.success(
                 title=action,
                 content=f"{action}文案，作品编号：{result.get('work_id')}",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=4000,
                 position=InfoBarPosition.TOP,
@@ -301,7 +350,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.error(
                 title="错误",
                 content=f"保存文案时发生异常：{e}",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,
@@ -317,7 +366,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.info(
                 title="提示",
                 content="请先选择要删除的文案记录。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=3000,
                 position=InfoBarPosition.TOP,
@@ -343,7 +392,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.success(
                     title="已删除",
                     content=f"成功删除 {deleted} 条文案记录。",
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=4000,
                     position=InfoBarPosition.TOP,
@@ -354,7 +403,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.info(
                     title="提示",
                     content="未删除任何记录，请稍后重试。",
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=4000,
                     position=InfoBarPosition.TOP,
@@ -365,7 +414,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.error(
                 title="错误",
                 content=f"删除文案记录时发生异常：{e}",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=5000,
                 position=InfoBarPosition.TOP,
@@ -380,6 +429,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
             import openpyxl
             wb = openpyxl.Workbook()
             ws = wb.active
+            assert ws is not None
             ws.title = "标准文案库模板"
 
             # 写入表头（不包含独立的话题列，话题直接写在作品描述中）
@@ -442,7 +492,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
                 InfoBar.error(
                     title="环境依赖缺失",
                     content="当前环境未安装 openpyxl。请在项目目录执行：pip install openpyxl",
-                    orient=Qt.Horizontal,
+                    orient=Qt.Orientation.Horizontal,
                     isClosable=True,
                     duration=8000,
                     position=InfoBarPosition.TOP,
@@ -467,7 +517,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
                     InfoBar.success(
                         title="下载成功",
                         content=f"已成功保存标准文案库模板至：{save_path}",
-                        orient=Qt.Horizontal,
+                        orient=Qt.Orientation.Horizontal,
                         isClosable=True,
                         duration=5000,
                         position=InfoBarPosition.TOP,
@@ -478,7 +528,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
                     InfoBar.error(
                         title="下载失败",
                         content="保存模板文件时发生错误，请检查是否有权限写入该目录。",
-                        orient=Qt.Horizontal,
+                        orient=Qt.Orientation.Horizontal,
                         isClosable=True,
                         duration=5000,
                         position=InfoBarPosition.TOP,
@@ -504,9 +554,38 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
         if not file_path:
             return
 
+        QSettings("WeMediaBaby", "媒小宝").setValue("app/copywriting_last_import_path", file_path)
+        self._update_sync_path_label()
+
         self._create_tracked_task(
             self._import_excel(file_path),
             name="copywriting_library.import_excel",
+        )
+
+    def _on_sync_clicked(self):
+        """执行手动同步：读取上次导入的路径并静默导入。"""
+        import os
+        from qfluentwidgets import InfoBar, InfoBarPosition
+        
+        path = QSettings("WeMediaBaby", "媒小宝").value("app/copywriting_last_import_path")
+        if not path or not os.path.exists(str(path)):
+            # 未找到记录或文件丢失时，直接打开导入对话框
+            self._on_import_clicked()
+            return
+
+        InfoBar.info(
+            title="开始同步",
+            content=f"正在同步文案库...\n文件：{os.path.basename(str(path))}",
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            duration=3000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+
+        self._create_tracked_task(
+            self._import_excel(str(path)),
+            name="copywriting_library.import_excel_sync",
         )
 
     async def _import_excel(self, file_path: str):
@@ -520,7 +599,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.error(
                 title="无法导入 Excel",
                 content="当前环境未安装 openpyxl。请在项目目录执行：pip install openpyxl",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=8000,
                 position=InfoBarPosition.TOP,
@@ -529,15 +608,13 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
             return
         try:
             # parse_excel 是同步函数，在事件循环线程中直接调用（文件读取速度快）
-            result = await asyncio.get_event_loop().run_in_executor(
-                None, parse_excel, file_path
-            )
+            result = await asyncio.to_thread(parse_excel, file_path)
         except Exception as e:
             logger.error("解析文案 Excel 失败: %s", e, exc_info=True)
             InfoBar.error(
                 title="导入失败",
                 content=f"解析 Excel 文件失败，请确认文件是否为标准模板。错误：{e}",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=7000,
                 position=InfoBarPosition.TOP,
@@ -556,7 +633,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.warning(
                 title="导入失败",
                 content=msg,
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=7000,
                 position=InfoBarPosition.TOP,
@@ -572,7 +649,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
             InfoBar.error(
                 title="导入失败",
                 content="写入数据库时发生错误，请稍后重试。",
-                orient=Qt.Horizontal,
+                orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 duration=6000,
                 position=InfoBarPosition.TOP,
@@ -600,7 +677,7 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
         InfoBar.success(
             title="导入完成",
             content=summary,
-            orient=Qt.Horizontal,
+            orient=Qt.Orientation.Horizontal,
             isClosable=True,
             duration=8000,
             position=InfoBarPosition.TOP,

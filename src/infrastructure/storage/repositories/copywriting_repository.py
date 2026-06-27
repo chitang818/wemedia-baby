@@ -33,6 +33,7 @@ class CopywritingRepository:
     async def list_items(
         page: int = 1,
         page_size: int = 50,
+        category: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """分页获取文案列表（按作品编号升序，A0001 在前）。
 
@@ -43,7 +44,10 @@ class CopywritingRepository:
         if page_size <= 0:
             page_size = 50
         offset = (page - 1) * page_size
-        all_rows = await CopywritingItem.all().order_by("work_id")
+        query = CopywritingItem.all()
+        if category:
+            query = query.filter(category=category)
+        all_rows = await query.order_by("work_id")
         valid = [it for it in all_rows if is_valid_copywriting_work_id(it.work_id)]
         page_slice = valid[offset : offset + page_size]
         return [CopywritingRepository._to_dict(it) for it in page_slice]
@@ -92,6 +96,7 @@ class CopywritingRepository:
             "short_title": data.get("short_title"),
             "description": data.get("description"),
             "topics": data.get("topics"),
+            "category": data.get("category") or "全部",
             "content": data.get("content") or "",
         }
 
@@ -177,10 +182,23 @@ class CopywritingRepository:
         }
 
     @staticmethod
-    async def count_valid_items() -> int:
+    async def get_all_categories() -> List[str]:
+        """获取所有存在的类别标签（去重）。"""
+        rows = await CopywritingItem.all().values_list("category", flat=True)
+        categories: list[str] = list(set(str(r) for r in rows if r))
+        if "全部" in categories:
+            categories.remove("全部")
+            categories.insert(0, "全部")
+        return categories
+
+    @staticmethod
+    async def count_valid_items(category: Optional[str] = None) -> int:
         """获取有效的文案总数（符合新格式作品编号）。"""
-        all_wid = await CopywritingItem.all().values_list("work_id", flat=True)
-        return sum(1 for wid in all_wid if is_valid_copywriting_work_id(wid))
+        query = CopywritingItem.all()
+        if category:
+            query = query.filter(category=category)
+        all_wid = await query.values_list("work_id", flat=True)
+        return sum(1 for wid in all_wid if wid and is_valid_copywriting_work_id(str(wid)))
 
     # ---------- 内部工具 ----------
 
@@ -193,6 +211,7 @@ class CopywritingRepository:
             "short_title": item.short_title,
             "description": item.description,
             "topics": item.topics,
+            "category": item.category,
             "content": item.content,
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,

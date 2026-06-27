@@ -10,11 +10,11 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Awaitable, Callable, Sequence
+from typing import Any, Awaitable, Callable, Sequence
 
 logger = logging.getLogger(__name__)
 
-MigrationConn = object
+MigrationConn = Any
 MigrationFunc = Callable[[MigrationConn], Awaitable[None]]
 
 
@@ -253,6 +253,15 @@ async def _migrate_publish_record_indexes(conn: MigrationConn) -> None:
     )
 
 
+async def _migrate_copywriting_items_category(conn: MigrationConn) -> None:
+    await _add_column_if_missing(
+        conn,
+        "copywriting_items",
+        "category",
+        "VARCHAR(100) DEFAULT '全部'",
+    )
+
+
 MIGRATION_STEPS: tuple[MigrationStep, ...] = (
     MigrationStep(
         "20260522_001_account_tags_tag_type",
@@ -293,6 +302,11 @@ MIGRATION_STEPS: tuple[MigrationStep, ...] = (
         "20260610_001_publish_risk_observability",
         "Add account publish risk state and publish failure kind",
         _migrate_publish_risk_observability,
+    ),
+    MigrationStep(
+        "20260627_001_copywriting_items_category",
+        "Add copywriting_items.category",
+        _migrate_copywriting_items_category,
     ),
 )
 

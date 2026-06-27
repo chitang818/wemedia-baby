@@ -17,6 +17,7 @@ class CopywritingItem(Model):
         description: 作品简介
         topics: 话题（以字符串形式存储，可为逗号分隔或原样）
         content: 文案内容
+        category: 类别标签（通常为 Excel 中的 Sheet Name）
         created_at: 创建时间
         updated_at: 更新时间
     """
@@ -26,13 +27,13 @@ class CopywritingItem(Model):
     short_title = fields.CharField(max_length=500, null=True)
     description = fields.TextField(null=True)
     topics = fields.TextField(null=True)
+    category = fields.CharField(max_length=100, null=True, default="全部")
     content = fields.TextField()
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(null=True)
 
-    class Meta:
+    class Meta:  # type: ignore
         table = "copywriting_items"
 
     def __str__(self):
         return f"CopywritingItem(id={self.id}, work_id={self.work_id})"
-
