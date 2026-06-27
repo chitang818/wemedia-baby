@@ -60,13 +60,20 @@ def parse_excel(path: str, strict: bool = True) -> Dict[str, Any]:
     success = 0
     
     valid_sheet_found = False
+    
+    required_headers = REQUIRED_HEADERS if strict else ["作品描述"]
 
     for sheet in wb.worksheets:
         headers = []
         for i, row in enumerate(sheet.iter_rows(values_only=True), start=1):
             if i == 1:
                 headers = [str(c or "").strip() for c in row]
-                missing = [h for h in REQUIRED_HEADERS if h not in headers]
+                # 兼容“作品简介”作为“作品描述”的替代
+                check_headers = headers.copy()
+                if "作品简介" in check_headers and "作品描述" not in check_headers:
+                    check_headers.append("作品描述")
+                    
+                missing = [h for h in required_headers if h not in check_headers]
                 if missing:
                     errors.append(f"Sheet「{sheet.title}」表头缺失或不匹配，已跳过该工作表。")
                     break
@@ -100,9 +107,9 @@ def parse_excel(path: str, strict: bool = True) -> Dict[str, Any]:
                     )
                     continue
             else:
-                # 非严格模式（随机文案库）：只要有一列有内容即可
-                if not any([work_id, short_title, description, topics, content]):
-                    errors.append(f"Sheet「{sheet.title}」第 {i} 行：所有列均为空，已跳过。")
+                # 非严格模式（随机文案库）：只要有作品描述即可
+                if not description:
+                    errors.append(f"Sheet「{sheet.title}」第 {i} 行：作品描述为空，已跳过。")
                     continue
                 # 编号格式不规范仅记录警告，不阻断
                 if work_id and not is_valid_copywriting_work_id(work_id):
@@ -120,7 +127,7 @@ def parse_excel(path: str, strict: bool = True) -> Dict[str, Any]:
             success += 1
 
     if not valid_sheet_found:
-        raise ValueError(f"Excel 中未找到符合文案库模板表头的工作表，必须包含列：{', '.join(REQUIRED_HEADERS)}。")
+        raise ValueError(f"Excel 中未找到符合文案库模板表头的工作表，必须包含列：{', '.join(required_headers)}。")
 
     failed = total - success
     return {

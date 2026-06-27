@@ -76,26 +76,63 @@ class CoverVideoStep(BasePublishStep):
             return PublishResult(success=False, error_message="未找到竖封面「选择封面」入口")
 
         modal_opened = False
-        for attempt in range(2):
+        # 策略说明：封面入口元素带有 filter-k_CjvJ CSS 遮罩类，会持续拦截指针事件。
+        # Playwright 原生 click/human_click 在遇到指针拦截时会陷入长达 30s 的滚动重试死循环。
+        # 经实测：第2轮（JS遍历查找「选择封面」文字节点并点击）成功率最高，已提升为首选方案。
+        for attempt in range(3):
             try:
-                await btn.scroll_into_view_if_needed()
                 if attempt == 0:
+                    # 【首选】JS 遍历 div.cover-Jg3T4p 内所有子节点，找到包含「选择封面」文字的叶节点直接点击
+                    # 该方案完全绕过 Playwright 的指针拦截检查，经实测稳定成功
+                    parent_clicked = False
                     try:
-                        from src.infrastructure.anti_risk.human_like import human_click
-                        await human_click(page, btn, metadata, config, use_operation_delay=False)
+                        parent_clicked = await page.evaluate("""() => {
+                            // 查找包含「选择封面」文字的叶节点（无子元素），直接原生 click
+                            const all = document.querySelectorAll('div.cover-Jg3T4p *');
+                            for (const el of all) {
+                                const text = el.innerText || el.textContent || '';
+                                if (text.trim().includes('选择封面') && el.children.length === 0) {
+                                    el.click();
+                                    return true;
+                                }
+                            }
+                            // 次级兜底：直接点击封面容器根节点
+                            const entry = document.querySelector('div.cover-Jg3T4p');
+                            if (entry) { entry.click(); return true; }
+                            return false;
+                        }""")
                     except Exception:
-                        await btn.click()
+                        pass
+                    logger.info("已用 JS 文字节点查找触发封面入口点击（第1次，首选方案）")
+                elif attempt == 1:
+                    # 【备选】JS dispatchEvent 模拟完整鼠标事件序列派发给目标节点
+                    await btn.evaluate("""node => {
+                        const rect = node.getBoundingClientRect();
+                        const cx = rect.left + rect.width / 2;
+                        const cy = rect.top + rect.height / 2;
+                        const opts = {bubbles: true, cancelable: true, clientX: cx, clientY: cy};
+                        node.dispatchEvent(new MouseEvent('mouseenter', opts));
+                        node.dispatchEvent(new MouseEvent('mousedown', opts));
+                        node.dispatchEvent(new MouseEvent('mouseup', opts));
+                        node.dispatchEvent(new MouseEvent('click', opts));
+                    }""")
+                    logger.info("已用 JS dispatchEvent 触发封面入口点击（第2次，备选）")
                 else:
-                    await btn.click(force=True)
-                logger.info("已点击竖封面「选择封面」入口（第 %d 次）", attempt + 1)
+                    # 【兜底】滚到顶部消除 Header 遮挡，再用 force=True 强制点击
+                    await page.evaluate("window.scrollTo(0, 0)")
+                    await btn.click(force=True, timeout=3000)
+                    logger.info("已触发封面入口点击（第3次，滚顶+force兜底）")
             except Exception as e:
-                logger.warning("点击封面入口异常: %s", e)
+                logger.warning("点击封面入口异常（第%d次）: %s", attempt + 1, e)
 
+            # 每次点击后等待弹窗出现
             if await self._wait_cover_modal_visible(page, timeout_ms=3000):
                 USER_LOG.info("[步骤5/9 视频封面] ▶ 已成功激活封面弹窗")
                 modal_opened = True
                 break
-            logger.info("弹窗未就绪，准备第 %d 次重试", attempt + 2)
+            if attempt < 2:
+                logger.info("弹窗未就绪，准备第 %d 次重试", attempt + 2)
+
 
         if modal_opened:
             result = await self._handle_cover_modal(page, metadata, cover_type, cover_path)

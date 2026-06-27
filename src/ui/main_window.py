@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QIcon, QDesktopServices, QAction
 from PySide6.QtCore import QTimer, QUrl, Qt
-from PySide6.QtCore import Slot
+from PySide6.QtCore import Slot, Signal
 
 import logging
 
@@ -117,10 +117,20 @@ else:
 class MainWindow(FluentWindow):
     """主窗口 - 继承 FluentWindow 实现现代化 Fluent Design 风格"""
     
+    # 跨线程 UI 更新信号
+    statusMessageRequested = Signal(str, int)
+    errorMessageRequested = Signal(str)
+    sessionEvictedRequested = Signal(str)
+    
     def __init__(self):
         """初始化主窗口"""
         super().__init__()
         
+        # 绑定跨线程信号
+        self.statusMessageRequested.connect(self._update_status_bar_impl)
+        self.errorMessageRequested.connect(self._show_error_bar)
+        self.sessionEvictedRequested.connect(self._show_session_evicted_bar)
+
         # 初始化页面工厂
         self.page_factory = PageFactory()
         self._scheduled_timers: dict[str, QTimer] = {}
@@ -367,9 +377,7 @@ class MainWindow(FluentWindow):
         """账号在其他设备登录，当前会话被顶下线"""
         reason = getattr(event, "reason", "您的账号已在其他设备登录，请重新登录。")
         # 此回调可能从非 UI 线程触发（qasync 工作线程），必须切换到 UI 线程操作 Qt 控件
-        from PySide6.QtCore import QMetaObject, Q_ARG, Qt
-        QMetaObject.invokeMethod(self, b"_show_session_evicted_bar", Qt.ConnectionType.QueuedConnection,
-                                 Q_ARG(str, reason))
+        self.sessionEvictedRequested.emit(reason)
 
     @Slot(str)
     def _show_session_evicted_bar(self, reason: str):
@@ -386,13 +394,10 @@ class MainWindow(FluentWindow):
 
     def show_status_message(self, message: str, duration: int = 3000, is_error: bool = False):
         """显示状态信息 (线程安全)"""
-        from PySide6.QtCore import QMetaObject, Q_ARG, Qt
-        QMetaObject.invokeMethod(self, b"_update_status_bar_impl", Qt.ConnectionType.QueuedConnection,
-                                 Q_ARG(str, message), Q_ARG(int, duration))
+        self.statusMessageRequested.emit(message, duration)
         
         if is_error and FLUENT_WIDGETS_AVAILABLE:
-             QMetaObject.invokeMethod(self, b"_show_error_bar", Qt.ConnectionType.QueuedConnection,
-                                      Q_ARG(str, message))
+             self.errorMessageRequested.emit(message)
 
     # 定义为 Slot 供 invokeMethod 调用
     @Slot(str, int)
