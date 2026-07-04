@@ -1,6 +1,6 @@
 [project]
 name = "wemedia-baby"
-version = "1.5.3"
+version = "1.5.4"
 description = "一款面向自媒体创作者的专业批量发布工具"
 authors = [
     {name = "媒小宝团队", email = "185034202@qq.com"}

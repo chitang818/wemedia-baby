@@ -110,56 +110,7 @@ class AccountSelectionDialog(AppMessageBoxBase):
 
         # 左侧筛选控件：放入“筛选胶囊”内，视觉更统一
         self._filter_box = QWidget(self._toolbar)
-        self._filter_box.setStyleSheet("""
-            QWidget {
-                background: rgba(255, 255, 255, 0.92);
-                border: none;
-                border-radius: 12px;
-            }
-            /* 胶囊内部控件不再单独画边框，避免出现“多层边框” */
-            QCheckBox, CheckBox {
-                background: transparent;
-                border: none;
-                padding: 0px;
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border-radius: 4px;
-                border: 1px solid rgba(0, 0, 0, 0.22);
-                background: rgba(255, 255, 255, 0.90);
-            }
-            QCheckBox::indicator:hover {
-                border: 1px solid rgba(0, 120, 212, 0.40);
-                background: rgba(0, 120, 212, 0.06);
-            }
-            QCheckBox::indicator:checked {
-                border: 1px solid rgba(0, 120, 212, 0.55);
-                background: rgba(0, 120, 212, 0.18);
-            }
-            QComboBox, ComboBox {
-                background: transparent;
-                border: none;
-                padding: 2px 18px 2px 6px; /* 给右侧箭头留空间 */
-                min-height: 22px;
-            }
-            QComboBox::drop-down {
-                border: none;
-                background: transparent;
-                width: 18px;
-            }
-            QComboBox::down-arrow {
-                background: transparent;
-            }
-            QComboBox:hover {
-                background: rgba(0, 0, 0, 0.03);
-                border-radius: 8px;
-            }
-            QComboBox:focus {
-                background: rgba(0, 120, 212, 0.06);
-                border-radius: 8px;
-            }
-        """)
+        # 样式移至 _apply_theme
         fl = QHBoxLayout(self._filter_box)
         fl.setContentsMargins(12, 8, 12, 8)
         fl.setSpacing(10)
@@ -173,26 +124,18 @@ class AccountSelectionDialog(AppMessageBoxBase):
 
         sep = QWidget(self._center_controls)
         sep.setFixedSize(1, 18)
-        # 分隔线更轻，避免与外框叠加显脏
-        sep.setStyleSheet("background: rgba(0,0,0,0.08);")
+        self._filter_sep = sep
         center.addWidget(sep)
 
-        label = BodyLabel("平台", self._toolbar)
-        label.setStyleSheet("color: rgba(0,0,0,0.55); font-weight: 600;")
-        center.addWidget(label)
+        self._platform_label = BodyLabel("平台", self._toolbar)
+        center.addWidget(self._platform_label)
         center.addWidget(self._platform_filter)
 
         fl.addWidget(self._center_controls, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         
         # --- 右侧内容区域 (StackedWidget) ---
         self.content_stack = QStackedWidget(self)
-        self.content_stack.setStyleSheet("""
-             QStackedWidget {
-                border: 1px solid rgba(0, 0, 0, 0.1);
-                border-radius: 6px;
-                background-color: rgba(255, 255, 255, 0.5);
-            }
-        """)
+        # 样式移至 _apply_theme
         
         # 页面1: 账号列表（表格样式，支持排序）
         self.account_table = TableWidget(self)
@@ -205,16 +148,7 @@ class AccountSelectionDialog(AppMessageBoxBase):
 
         # 工具条放在红框区域（表格下方、按钮上方）
         self._multi_select_hint = QLabel("")
-        self._multi_select_hint.setStyleSheet("""
-            QLabel {
-                color: #0B4A7A;
-                background-color: #D6ECFF;
-                border-radius: 14px;
-                padding: 6px 12px;
-                font-size: 12px;
-                font-weight: 650;
-            }
-        """)
+        # 样式移至 _apply_theme
         tb.addWidget(self._filter_box, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         tb.addStretch(1)
         tb.addWidget(self._multi_select_hint, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -232,50 +166,12 @@ class AccountSelectionDialog(AppMessageBoxBase):
         self._tags_panel.setObjectName("AccountTagsPanel")
         # 左侧面板保留足够宽度，避免标签按钮右侧边框被裁切。
         self._tags_panel.setFixedWidth(170)
-        self._tags_panel.setStyleSheet("""
-            QFrame#AccountTagsPanel {
-                border: 1px solid rgba(0, 0, 0, 0.10);
-                border-radius: 8px;
-                background-color: rgba(255, 255, 255, 0.55);
-            }
-            /* 胶囊标签（左侧单列） */
-            TogglePushButton#AccountTagPill {
-                border: 1px solid rgba(0, 0, 0, 0.12);
-                border-radius: 8px;
-                padding: 7px 10px;
-                background: rgba(255, 255, 255, 0.85);
-                color: #333;
-                font-weight: 600;
-                text-align: left;
-            }
-            /* 账号标签 / 账号组标签：轻量区分（不额外占文案空间） */
-            TogglePushButton#AccountTagPill[tagKind="account"] {
-                border: 1px solid rgba(0, 120, 212, 0.22);
-            }
-            TogglePushButton#AccountTagPill[tagKind="group"] {
-                border: 1px solid rgba(107, 97, 214, 0.22);
-            }
-            TogglePushButton#AccountTagPill:hover {
-                background: rgba(0, 120, 212, 0.08);
-                border: 1px solid rgba(0, 120, 212, 0.28);
-            }
-            TogglePushButton#AccountTagPill:checked {
-                background: rgba(0, 120, 212, 0.14);
-                border: 1px solid rgba(0, 120, 212, 0.38);
-                color: #0B4A7A;
-            }
-            TogglePushButton#AccountTagPill[tagKind="group"]:checked {
-                background: rgba(107, 97, 214, 0.14);
-                border: 1px solid rgba(107, 97, 214, 0.38);
-                color: #3D36A8;
-            }
-        """)
+        # 样式移至 _apply_theme
         tags_outer = QVBoxLayout(self._tags_panel)
         tags_outer.setContentsMargins(10, 10, 10, 10)
         tags_outer.setSpacing(10)
-        tags_title = BodyLabel("标签（账号/账号组）", self._tags_panel)
-        tags_title.setStyleSheet("font-weight: 650; color: #333; font-size: 13px;")
-        tags_outer.addWidget(tags_title)
+        self._tags_title = BodyLabel("标签（账号/账号组）", self._tags_panel)
+        tags_outer.addWidget(self._tags_title)
 
         self._tags_scroll = QScrollArea(self._tags_panel)
         self._tags_scroll.setWidgetResizable(True)
@@ -356,6 +252,144 @@ class AccountSelectionDialog(AppMessageBoxBase):
             lay.removeWidget(self.yesButton)
             lay.addWidget(self.cancelButton)
             lay.addWidget(self.yesButton)
+            
+        self._apply_theme()
+        from qfluentwidgets import qconfig
+        try:
+            qconfig.themeChanged.connect(self._apply_theme)
+        except Exception:
+            pass
+
+    def _apply_theme(self) -> None:
+        from qfluentwidgets import isDarkTheme
+        dark = isDarkTheme()
+        
+        bg_filter = "rgba(255, 255, 255, 0.05)" if dark else "rgba(255, 255, 255, 0.92)"
+        self._filter_box.setStyleSheet(f"""
+            QWidget {{
+                background: {bg_filter};
+                border: none;
+                border-radius: 12px;
+            }}
+            QCheckBox, CheckBox {{
+                background: transparent;
+                border: none;
+                padding: 0px;
+            }}
+            QCheckBox::indicator {{
+                width: 16px;
+                height: 16px;
+                border-radius: 4px;
+                border: 1px solid rgba(0, 0, 0, 0.22);
+                background: rgba(255, 255, 255, 0.90);
+            }}
+            QCheckBox::indicator:hover {{
+                border: 1px solid rgba(0, 120, 212, 0.40);
+                background: rgba(0, 120, 212, 0.06);
+            }}
+            QCheckBox::indicator:checked {{
+                border: 1px solid rgba(0, 120, 212, 0.55);
+                background: rgba(0, 120, 212, 0.18);
+            }}
+            QComboBox, ComboBox {{
+                background: transparent;
+                border: none;
+                padding: 2px 18px 2px 6px;
+                min-height: 22px;
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                background: transparent;
+                width: 18px;
+            }}
+            QComboBox::down-arrow {{
+                background: transparent;
+            }}
+            QComboBox:hover {{
+                background: rgba(0, 0, 0, 0.03);
+                border-radius: 8px;
+            }}
+            QComboBox:focus {{
+                background: rgba(0, 120, 212, 0.06);
+                border-radius: 8px;
+            }}
+        """)
+        
+        bg_stack = "rgba(255, 255, 255, 0.05)" if dark else "rgba(255, 255, 255, 0.5)"
+        border_stack = "rgba(255, 255, 255, 0.1)" if dark else "rgba(0, 0, 0, 0.1)"
+        self.content_stack.setStyleSheet(f"""
+             QStackedWidget {{
+                border: 1px solid {border_stack};
+                border-radius: 6px;
+                background-color: {bg_stack};
+            }}
+        """)
+        
+        bg_tags = "rgba(255, 255, 255, 0.05)" if dark else "rgba(255, 255, 255, 0.55)"
+        pill_bg = "rgba(255, 255, 255, 0.1)" if dark else "rgba(255, 255, 255, 0.85)"
+        pill_color = "#E0E0E0" if dark else "#333333"
+        self._tags_panel.setStyleSheet(f"""
+            QFrame#AccountTagsPanel {{
+                border: 1px solid {border_stack};
+                border-radius: 8px;
+                background-color: {bg_tags};
+            }}
+            TogglePushButton#AccountTagPill {{
+                border: 1px solid {border_stack};
+                border-radius: 8px;
+                padding: 7px 10px;
+                background: {pill_bg};
+                color: {pill_color};
+                font-weight: 600;
+                text-align: left;
+            }}
+            TogglePushButton#AccountTagPill[tagKind="account"] {{
+                border: 1px solid rgba(0, 120, 212, 0.22);
+            }}
+            TogglePushButton#AccountTagPill[tagKind="group"] {{
+                border: 1px solid rgba(107, 97, 214, 0.22);
+            }}
+            TogglePushButton#AccountTagPill:hover {{
+                background: rgba(0, 120, 212, 0.08);
+                border: 1px solid rgba(0, 120, 212, 0.28);
+            }}
+            TogglePushButton#AccountTagPill:checked {{
+                background: rgba(0, 120, 212, 0.14);
+                border: 1px solid rgba(0, 120, 212, 0.38);
+                color: #4CC2FF;
+            }}
+            TogglePushButton#AccountTagPill[tagKind="group"]:checked {{
+                background: rgba(107, 97, 214, 0.14);
+                border: 1px solid rgba(107, 97, 214, 0.38);
+                color: #8C78F0;
+            }}
+        """)
+        
+        if hasattr(self, '_platform_label'):
+            color_platform = "#CCCCCC" if dark else "rgba(0,0,0,0.55)"
+            self._platform_label.setStyleSheet(f"color: {color_platform}; font-weight: 600;")
+            
+        if hasattr(self, '_tags_title'):
+            color_tags_title = "#E0E0E0" if dark else "#333333"
+            self._tags_title.setStyleSheet(f"font-weight: 650; color: {color_tags_title}; font-size: 13px;")
+
+        if hasattr(self, '_multi_select_hint'):
+            bg_hint = "rgba(76, 194, 255, 0.15)" if dark else "#D6ECFF"
+            color_hint = "#4CC2FF" if dark else "#0B4A7A"
+            self._multi_select_hint.setStyleSheet(f"""
+                QLabel {{
+                    color: {color_hint};
+                    background-color: {bg_hint};
+                    border-radius: 14px;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                    font-weight: 650;
+                }}
+            """)
+            
+        if hasattr(self, '_filter_sep'):
+            bg_sep = "rgba(255,255,255,0.08)" if dark else "rgba(0,0,0,0.08)"
+            self._filter_sep.setStyleSheet(f"background: {bg_sep};")
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:

@@ -368,6 +368,9 @@ class AccountPlatformOverviewCard(CardWidget):
 
         self._skeleton_host: Optional[QWidget] = None
         self._apply_theme()
+        
+        from qfluentwidgets import qconfig
+        qconfig.themeChanged.connect(self._apply_theme)
 
     @property
     def is_loading(self) -> bool:

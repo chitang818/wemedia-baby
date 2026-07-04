@@ -220,11 +220,26 @@ class AnnouncementWidget(CardWidget):
         self._show_header = show_header
         self._compact = compact
         self._item_widgets: List[AnnouncementItem] = []
+        self._current_announcements = []
         self._init_ui()
         from config.feature_flags import FeatureFlags
 
         announcements = _52POJIE_ANNOUNCEMENTS if FeatureFlags.is_52pojie() else DEFAULT_ANNOUNCEMENTS
         self.set_announcements(announcements)
+        
+        from qfluentwidgets import qconfig
+        qconfig.themeChanged.connect(self._on_theme_changed)
+
+    def _on_theme_changed(self):
+        """响应主题切换"""
+        if self._show_header and hasattr(self, 'title_label'):
+            dark = isDarkTheme()
+            title_color = "#FFFFFF" if dark else "#1A1A1A"
+            self.title_label.setStyleSheet(
+                f"font-weight: 600; font-size: 16px; color: {title_color};"
+            )
+        if self._current_announcements:
+            self.set_announcements(self._current_announcements)
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -272,6 +287,7 @@ class AnnouncementWidget(CardWidget):
         return min(200, count * 72)
 
     def set_announcements(self, items: List[Dict]) -> None:
+        self._current_announcements = items
         dark = isDarkTheme()
         self._item_widgets.clear()
 

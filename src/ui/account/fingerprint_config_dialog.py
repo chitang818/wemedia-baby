@@ -110,21 +110,37 @@ class FingerprintConfigMessageBox(AppMessageBoxBase):
                 color: #666666;
             }
         """)
-        self.cancelButton.setStyleSheet("""
-            QPushButton {
-                border: 1px solid #EDEDED;
+        self._apply_theme()
+        from qfluentwidgets import qconfig
+        try:
+            qconfig.themeChanged.connect(self._apply_theme)
+        except Exception:
+            pass
+
+    def _apply_theme(self):
+        from qfluentwidgets import isDarkTheme
+        dark = isDarkTheme()
+        border = "rgba(255,255,255,0.08)" if dark else "#EDEDED"
+        bg = "rgba(255,255,255,0.05)" if dark else "#FFFFFF"
+        text_c = "#E0E0E0" if dark else "#333333"
+        hover_bg = "rgba(255,255,255,0.08)" if dark else "#F5F5F5"
+        pressed_bg = "rgba(255,255,255,0.03)" if dark else "#EEEEEE"
+        
+        self.cancelButton.setStyleSheet(f"""
+            QPushButton {{
+                border: 1px solid {border};
                 border-radius: 5px;
-                background-color: #FFFFFF;
+                background-color: {bg};
                 padding: 6px 12px;
                 font-size: 14px;
-                color: #333333;
-            }
-            QPushButton:hover {
-                background-color: #F5F5F5;
-            }
-            QPushButton:pressed {
-                background-color: #EEEEEE;
-            }
+                color: {text_c};
+            }}
+            QPushButton:hover {{
+                background-color: {hover_bg};
+            }}
+            QPushButton:pressed {{
+                background-color: {pressed_bg};
+            }}
         """)
     
     def keyPressEvent(self, event):

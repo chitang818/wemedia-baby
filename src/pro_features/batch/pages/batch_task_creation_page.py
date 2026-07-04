@@ -1549,8 +1549,13 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         self._material_account_row_counter += 1
         _rn = f"MatAccRow_{self._material_account_row_counter}"
         row.setObjectName(_rn)
+        from qfluentwidgets import isDarkTheme
+        dark = isDarkTheme()
+        
+        row_bg = "rgba(255,255,255,0.03)" if dark else "#fafafa"
+        row_bd = "rgba(255,255,255,0.08)" if dark else "#ececec"
         row.setStyleSheet(
-            f"#{_rn} {{ background-color: #fafafa; border: 1px solid #ececec; border-radius: 8px; }}"
+            f"#{_rn} {{ background-color: {row_bg}; border: 1px solid {row_bd}; border-radius: 8px; }}"
         )
         outer = QHBoxLayout(row)
         outer.setContentsMargins(10, 6, 10, 6)
@@ -1562,8 +1567,9 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         # 名称占必要宽度即可，过长省略；不与右侧统计块之间插 stretch，避免宽卡片时出现大块空白
         _name_elide_px = 300
         name_lbl.setMaximumWidth(_name_elide_px + 8)
+        name_color = "#E0E0E0" if dark else "#333"
         name_lbl.setStyleSheet(
-            "font-size: 12px; font-weight: 600; color: #333; border: none; background: transparent;"
+            f"font-size: 12px; font-weight: 600; color: {name_color}; border: none; background: transparent;"
         )
         name_lbl.setText(
             QFontMetrics(name_lbl.font()).elidedText(
@@ -1576,20 +1582,32 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         pill_row = QHBoxLayout()
         pill_row.setSpacing(6)
         pill_row.setContentsMargins(0, 0, 0, 0)
+        c_tot = "#DDDDDD" if dark else "#444444"
+        bg_tot = "rgba(255,255,255,0.06)" if dark else "#f5f5f5"
+        bd_tot = "rgba(255,255,255,0.12)" if dark else "#ddd"
+        
+        c_occ = "#FFB347" if dark else "#e65100"
+        bg_occ = "rgba(230, 81, 0, 0.15)" if dark else "#fff3e0"
+        bd_occ = "rgba(230, 81, 0, 0.3)" if dark else "#ffcc80"
+        
+        c_ava = "#81C784" if dark else "#2e7d32"
+        bg_ava = "rgba(46, 125, 50, 0.15)" if dark else "#e8f5e9"
+        bd_ava = "rgba(46, 125, 50, 0.3)" if dark else "#a5d6a7"
+
         b1, v1 = self._stat_chip(
             "总数",
             f"{self._task_label}总数：该账号/账号组媒体库「{self._task_label} → 未发布」目录中的素材数",
-            "#444444", "#f5f5f5", "#ddd", row,
+            c_tot, bg_tot, bd_tot, row,
         )
         b2, v2 = self._stat_chip(
             "已用",
             "已占用：发布列表中待发布/失败/执行中任务引用的占用",
-            "#e65100", "#fff3e0", "#ffcc80", row,
+            c_occ, bg_occ, bd_occ, row,
         )
         b3, v3 = self._stat_chip(
             "可配",
             "未占用：扣除占用后仍可参与自动匹配的数量",
-            "#2e7d32", "#e8f5e9", "#a5d6a7", row,
+            c_ava, bg_ava, bd_ava, row,
         )
         v1.setText(str(total))
         v2.setText(str(occupied))
@@ -1653,6 +1671,12 @@ class BatchTaskCreationPage(TrackedTaskMixin, BasePage):
         scroll.setWidget(self._material_stats_rows_host)
         # 与同行卡片对齐高度时由列表区吃满纵向空间，避免视口过矮把色块裁掉
         layout.addWidget(scroll, stretch=1)
+
+        try:
+            from qfluentwidgets import qconfig
+            qconfig.themeChanged.connect(self._update_task_status_from_cache)
+        except Exception:
+            pass
 
         return card
 

@@ -228,6 +228,10 @@ class RecentActivityWidget(CardWidget):
         self._compact_layout_timer.timeout.connect(self._sync_compact_layout)
         self._init_ui()
         self._apply_card_theme()
+        
+        from qfluentwidgets import qconfig
+        qconfig.themeChanged.connect(self._apply_card_theme)
+        
         self.show_loading()
 
     @property

@@ -483,6 +483,70 @@ class PublishDescriptionDialog(AppMessageBoxBase):
         self._restore_state()
         self._bind_events()
         self._maybe_trigger_library_fetch_on_restore()
+        
+        self._apply_theme()
+        from qfluentwidgets import qconfig
+        try:
+            qconfig.themeChanged.connect(self._apply_theme)
+        except Exception:
+            pass
+
+    def _apply_theme(self) -> None:
+        from qfluentwidgets import isDarkTheme
+        dark = isDarkTheme()
+        
+        if hasattr(self, 'library_count_label'):
+            color_count = "#4CC2FF" if dark else "rgba(0, 159, 170, 0.95)"
+            bg_count = "rgba(76, 194, 255, 0.15)" if dark else "rgba(0, 159, 170, 0.10)"
+            self.library_count_label.setStyleSheet(f"""
+                color: {color_count}; font-weight: 600; font-size: 12px;
+                background-color: {bg_count};
+                padding: 2px 10px; border-radius: 10px;
+            """)
+            
+        if hasattr(self, '_sep_line'):
+            bg_sep = "rgba(255,255,255,0.08)" if dark else "rgba(0,0,0,0.06)"
+            self._sep_line.setStyleSheet(f"background-color: {bg_sep};")
+            
+        color_label = "#E0E0E0" if dark else "rgba(0,0,0,0.6)"
+        qss_label = f"color: {color_label}; font-weight: 600; font-size: 13px;"
+        if hasattr(self, 'label_mode'): self.label_mode.setStyleSheet(qss_label)
+        if hasattr(self, 'label_apply'): self.label_apply.setStyleSheet(qss_label)
+        if hasattr(self, 'label_as'): self.label_as.setStyleSheet(qss_label)
+        
+        if hasattr(self, 'advanced_settings_card'):
+            bg_adv = "rgba(255,255,255,0.03)" if dark else "rgba(0, 0, 0, 0.025)"
+            border_adv = "rgba(255,255,255,0.1)" if dark else "rgba(0, 0, 0, 0.12)"
+            self.advanced_settings_card.setStyleSheet(f"""
+                QFrame#AutoMatchAdvancedCard {{
+                    background-color: {bg_adv};
+                    border: 1px dashed {border_adv};
+                    border-radius: 8px;
+                }}
+            """)
+            
+        if hasattr(self, 'adv_label'):
+            color_adv_label = "#B0B0B0" if dark else "rgba(0,0,0,0.55)"
+            self.adv_label.setStyleSheet(f"color: {color_adv_label}; font-size: 11px; font-weight: 600;")
+            
+        if hasattr(self, 'rules_tip_card'):
+            bg_tip = "rgba(76, 194, 255, 0.05)" if dark else "rgba(0, 159, 170, 0.05)"
+            border_tip = "rgba(76, 194, 255, 0.18)" if dark else "rgba(0, 159, 170, 0.18)"
+            self.rules_tip_card.setStyleSheet(f"""
+                QFrame#AutoMatchRulesTip {{
+                    background-color: {bg_tip};
+                    border: 1px solid {border_tip};
+                    border-radius: 10px;
+                }}
+            """)
+            
+        if hasattr(self, 'tip_header_label'):
+            color_tip_header = "#4CC2FF" if dark else "rgba(0, 159, 170, 0.95)"
+            self.tip_header_label.setStyleSheet(f"color: {color_tip_header}; font-weight: 600; font-size: 13px;")
+            
+        if hasattr(self, '_rules_tip_text'):
+            color_tip_text = "#CCCCCC" if dark else "rgba(0,0,0,0.72)"
+            self._rules_tip_text.setStyleSheet(f"color: {color_tip_text}; font-size: 12px;")
 
     def _apply_pivot_style(self) -> None:
         """顶部 Tab 样式：与账号选择/排期弹窗保持一致。"""
@@ -653,11 +717,6 @@ class PublishDescriptionDialog(AppMessageBoxBase):
         _ahr.addWidget(sub_auto)
 
         self.library_count_label = CaptionLabel("库内文案: --", card_auto)
-        self.library_count_label.setStyleSheet(
-            "color: rgba(0, 159, 170, 0.95); font-weight: 600; font-size: 12px;"
-            "background-color: rgba(0, 159, 170, 0.10);"
-            "padding: 2px 10px; border-radius: 10px;"
-        )
         _ahr.addWidget(self.library_count_label)
 
         _ahr.addStretch(1)
@@ -678,22 +737,20 @@ class PublishDescriptionDialog(AppMessageBoxBase):
         sep = QFrame(card_auto)
         sep.setFrameShape(QFrame.Shape.NoFrame)
         sep.setFixedHeight(1)
-        sep.setStyleSheet("background-color: rgba(0,0,0,0.06);")
+        self._sep_line = sep
         lay_auto.addWidget(sep)
 
         # 标签统一宽度，使各行右侧控件起点对齐
         _LABEL_W = 64
-        _LABEL_QSS = "color: rgba(0,0,0,0.6); font-weight: 600; font-size: 13px;"
 
         # 匹配模式行
         mode_row = QWidget(card_auto)
         _mr = QHBoxLayout(mode_row)
         _mr.setContentsMargins(0, 0, 0, 0)
         _mr.setSpacing(10)
-        label_mode = BodyLabel("匹配模式", mode_row)
-        label_mode.setFixedWidth(_LABEL_W)
-        label_mode.setStyleSheet(_LABEL_QSS)
-        _mr.addWidget(label_mode)
+        self.label_mode = BodyLabel("匹配模式", mode_row)
+        self.label_mode.setFixedWidth(_LABEL_W)
+        _mr.addWidget(self.label_mode)
 
         self.match_mode_combo = ComboBox(mode_row)
         self.match_mode_combo.addItem("标准文案库 (按作品编号)", userData=CopywritingMatchMode.STANDARD)
@@ -716,10 +773,9 @@ class PublishDescriptionDialog(AppMessageBoxBase):
         _sor = QHBoxLayout(self.standard_options_widget)
         _sor.setContentsMargins(0, 0, 0, 0)
         _sor.setSpacing(18)
-        label_apply = BodyLabel("应用字段", self.standard_options_widget)
-        label_apply.setFixedWidth(_LABEL_W)
-        label_apply.setStyleSheet(_LABEL_QSS)
-        _sor.addWidget(label_apply)
+        self.label_apply = BodyLabel("应用字段", self.standard_options_widget)
+        self.label_apply.setFixedWidth(_LABEL_W)
+        _sor.addWidget(self.label_apply)
         self.use_library_title_checkbox = CheckBox("使用文案标题", self.standard_options_widget)
         self.use_library_desc_checkbox = CheckBox("使用文案描述", self.standard_options_widget)
         _sor.addWidget(self.use_library_title_checkbox)
@@ -730,13 +786,6 @@ class PublishDescriptionDialog(AppMessageBoxBase):
         # 高级设置子卡：仅随机模式下出现，承载「分配策略」等不常用配置
         self.advanced_settings_card = QFrame(card_auto)
         self.advanced_settings_card.setObjectName("AutoMatchAdvancedCard")
-        self.advanced_settings_card.setStyleSheet(
-            "QFrame#AutoMatchAdvancedCard {"
-            " background-color: rgba(0, 0, 0, 0.025);"
-            " border: 1px dashed rgba(0, 0, 0, 0.12);"
-            " border-radius: 8px;"
-            "}"
-        )
         asc_lay = QVBoxLayout(self.advanced_settings_card)
         asc_lay.setContentsMargins(12, 8, 12, 10)
         asc_lay.setSpacing(6)
@@ -747,11 +796,8 @@ class PublishDescriptionDialog(AppMessageBoxBase):
         adv_icon = IconWidget(FluentIcon.SETTING, self.advanced_settings_card)
         adv_icon.setFixedSize(12, 12)
         adv_header.addWidget(adv_icon, 0, Qt.AlignmentFlag.AlignVCenter)
-        adv_label = CaptionLabel("高级设置 · 随机模式", self.advanced_settings_card)
-        adv_label.setStyleSheet(
-            "color: rgba(0,0,0,0.55); font-size: 11px; font-weight: 600;"
-        )
-        adv_header.addWidget(adv_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.adv_label = CaptionLabel("高级设置 · 随机模式", self.advanced_settings_card)
+        adv_header.addWidget(self.adv_label, 0, Qt.AlignmentFlag.AlignVCenter)
         adv_header.addStretch(1)
         asc_lay.addLayout(adv_header)
 
@@ -759,10 +805,9 @@ class PublishDescriptionDialog(AppMessageBoxBase):
         _asr = QHBoxLayout(self.assign_strategy_row)
         _asr.setContentsMargins(0, 0, 0, 0)
         _asr.setSpacing(10)
-        label_as = BodyLabel("分配策略", self.assign_strategy_row)
-        label_as.setFixedWidth(_LABEL_W)
-        label_as.setStyleSheet(_LABEL_QSS)
-        _asr.addWidget(label_as)
+        self.label_as = BodyLabel("分配策略", self.assign_strategy_row)
+        self.label_as.setFixedWidth(_LABEL_W)
+        _asr.addWidget(self.label_as)
 
         self.assign_strategy_combo = ComboBox(self.assign_strategy_row)
         for s in AssignStrategy:
@@ -785,13 +830,6 @@ class PublishDescriptionDialog(AppMessageBoxBase):
         # 匹配规则说明：根据当前模式给出详细说明，充分利用卡片底部空间
         self.rules_tip_card = QFrame(card_auto)
         self.rules_tip_card.setObjectName("AutoMatchRulesTip")
-        self.rules_tip_card.setStyleSheet(
-            "QFrame#AutoMatchRulesTip {"
-            " background-color: rgba(0, 159, 170, 0.05);"
-            " border: 1px solid rgba(0, 159, 170, 0.18);"
-            " border-radius: 10px;"
-            "}"
-        )
         rt_lay = QVBoxLayout(self.rules_tip_card)
         rt_lay.setContentsMargins(14, 12, 14, 12)
         rt_lay.setSpacing(8)
@@ -802,11 +840,8 @@ class PublishDescriptionDialog(AppMessageBoxBase):
         tip_icon = IconWidget(FluentIcon.INFO, self.rules_tip_card)
         tip_icon.setFixedSize(14, 14)
         tip_header.addWidget(tip_icon, 0, Qt.AlignmentFlag.AlignVCenter)
-        tip_header_label = BodyLabel("当前匹配规则说明", self.rules_tip_card)
-        tip_header_label.setStyleSheet(
-            "color: rgba(0, 159, 170, 0.95); font-weight: 600; font-size: 13px;"
-        )
-        tip_header.addWidget(tip_header_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.tip_header_label = BodyLabel("当前匹配规则说明", self.rules_tip_card)
+        tip_header.addWidget(self.tip_header_label, 0, Qt.AlignmentFlag.AlignVCenter)
         tip_header.addStretch(1)
         rt_lay.addLayout(tip_header)
 
@@ -814,9 +849,6 @@ class PublishDescriptionDialog(AppMessageBoxBase):
         self._rules_tip_text.setWordWrap(True)
         self._rules_tip_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._rules_tip_text.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        self._rules_tip_text.setStyleSheet(
-            "color: rgba(0,0,0,0.72); font-size: 12px;"
-        )
         rt_lay.addWidget(self._rules_tip_text, 1)
 
         # stretch=1：让规则说明卡片占满主卡剩余的纵向空间

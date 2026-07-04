@@ -517,6 +517,16 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
 
         esc_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         esc_shortcut.activated.connect(self.reject)
+        
+        from qfluentwidgets import qconfig
+        try:
+            qconfig.themeChanged.connect(self._apply_all_styles)
+        except Exception:
+            pass
+            
+    def _apply_all_styles(self) -> None:
+        self._apply_publish_time_dialog_chrome()
+        self._apply_pivot_style()
 
     def is_publish_immediately(self) -> bool:
         """兼容旧调用：当排期全部为立即发布槽（仅含 None）时为 True。"""
@@ -572,18 +582,24 @@ class PublishTimeDialog(AppMessageBoxBase):  # type: ignore
         """)
 
     def _palette_publish_dialog(self) -> dict:
-        try:
-            from src.ui.styles.theme_manager import ThemeManager
-            return ThemeManager()._get_current_palette()
-        except Exception:
+        from qfluentwidgets import isDarkTheme
+        if isDarkTheme():
             return {
-                "BG_MAIN": "#F3F3F3",
-                "BG_HOVER": "rgba(0,0,0,0.06)",
-                "BORDER_DEFAULT": "#E5E5E5",
-                "TEXT_PRIMARY": "#1A1A1A",
-                "TEXT_SECONDARY": "#666666",
-                "BG_CARD": "#FFFFFF",
+                "BG_MAIN": "#202020",
+                "BG_HOVER": "rgba(255,255,255,0.06)",
+                "BORDER_DEFAULT": "#3E3E3E",
+                "TEXT_PRIMARY": "#FFFFFF",
+                "TEXT_SECONDARY": "#D0D0D0",
+                "BG_CARD": "#2D2D2D",
             }
+        return {
+            "BG_MAIN": "#F3F3F3",
+            "BG_HOVER": "rgba(0,0,0,0.06)",
+            "BORDER_DEFAULT": "#E5E5E5",
+            "TEXT_PRIMARY": "#1A1A1A",
+            "TEXT_SECONDARY": "#666666",
+            "BG_CARD": "#FFFFFF",
+        }
 
     def _create_stat_info_chip(
         self,

@@ -52,20 +52,26 @@ class TagCard(CardWidget):
             has_accounts = bool((self.tag_data or {}).get("accounts"))
             tag_type = "group" if (has_groups and not has_accounts) else "account"
 
-        is_group_tag = bool(tag_type == "group")
+        is_group_tag = (tag_type == "group")
 
         # 容器基础配置
         self.setMinimumSize(320, 200)
         self.setMaximumWidth(400)
 
+        is_dark = isDarkTheme()
+
         # 视觉策略：整体保持“轻”，类型用小色条+小胶囊区分（避免大面积底色/粗边框显得廉价）
         header_bg = "transparent"
         accent = "#6B61D6" if is_group_tag else "#0078D4"
+        
+        card_bg = "rgba(255, 255, 255, 0.05)" if is_dark else "rgba(255, 255, 255, 0.92)"
+        card_border = "rgba(255, 255, 255, 0.10)" if is_dark else "rgba(0, 0, 0, 0.10)"
+        
         self.setStyleSheet(f"""
             CardWidget {{
-                border: 1px solid rgba(0, 0, 0, 0.10);
+                border: 1px solid {card_border};
                 border-radius: 12px;
-                background-color: rgba(255, 255, 255, 0.92);
+                background-color: {card_bg};
             }}
         """)
         
@@ -103,15 +109,21 @@ class TagCard(CardWidget):
         header_layout.addWidget(title_label)
 
         # 类型胶囊：实色浅底（不透明），文字用默认颜色，只用底色做区分
+        # 类型胶囊：实色浅底（不透明），文字用默认颜色，只用底色做区分
         type_pill = CaptionLabel("账号组标签" if is_group_tag else "账号标签", header_wrap)
         # 轻量实色（避免半透明“脏”感）
-        # 加深一档：更明显但仍保持柔和
-        chip_bg = "#E1D9FF" if is_group_tag else "#D6ECFF"
+        if is_dark:
+            chip_bg = "rgba(107, 97, 214, 0.3)" if is_group_tag else "rgba(0, 120, 212, 0.3)"
+            chip_color = "#E1D9FF" if is_group_tag else "#D6ECFF"
+        else:
+            chip_bg = "#E1D9FF" if is_group_tag else "#D6ECFF"
+            chip_color = "inherit"
+
         type_pill.setStyleSheet(
             f"""
             QLabel {{
                 background: {chip_bg};
-                color: inherit;
+                color: {chip_color};
                 border: none;
                 border-radius: 11px;
                 padding: 2px 10px;
@@ -145,12 +157,13 @@ class TagCard(CardWidget):
         # 2. 数据统计
         acc_cnt = self.tag_data.get('account_count', 0)
         grp_cnt = self.tag_data.get('group_count', 0)
+        stats_color = "rgba(255, 255, 255, 0.55)" if is_dark else "rgba(0, 0, 0, 0.55)"
         if is_group_tag:
             stats_label = CaptionLabel(f"已关联 {grp_cnt} 个账号组", self)
-            stats_label.setStyleSheet("color: rgba(0,0,0,0.55);")
+            stats_label.setStyleSheet(f"color: {stats_color};")
         else:
             stats_label = CaptionLabel(f"已关联 {acc_cnt} 个账号", self)
-            stats_label.setStyleSheet("color: rgba(0,0,0,0.55);")
+            stats_label.setStyleSheet(f"color: {stats_color};")
         main_layout.addWidget(stats_label)
         
         # 3. 关联对象流式展示区
@@ -181,7 +194,8 @@ class TagCard(CardWidget):
             
         if not self.tag_data.get('groups') and not self.tag_data.get('accounts'):
             empty_lbl = BodyLabel("暂无关联对象", self)
-            empty_lbl.setStyleSheet("color: #999; font-style: italic;")
+            empty_color = "#666" if is_dark else "#999"
+            empty_lbl.setStyleSheet(f"color: {empty_color}; font-style: italic;")
             targets_layout.addWidget(empty_lbl)
             
         main_layout.addWidget(targets_widget, 1) # stretch=1 填充底部
@@ -189,15 +203,26 @@ class TagCard(CardWidget):
     def _create_target_badge(self, text: str, icon: FluentIcon, target_id: int, target_type: str) -> QWidget:
         """创建可移除的胶囊组件"""
         badge = QWidget(self)
-        badge.setStyleSheet("""
-            QWidget {
-                background-color: #EEF1F4;
-                border: 1px solid #E2E6EA;
+        is_dark = isDarkTheme()
+        
+        if is_dark:
+            bg_color = "rgba(255, 255, 255, 0.06)"
+            border_color = "rgba(255, 255, 255, 0.10)"
+            hover_color = "rgba(255, 255, 255, 0.10)"
+        else:
+            bg_color = "#EEF1F4"
+            border_color = "#E2E6EA"
+            hover_color = "#E7EBEF"
+
+        badge.setStyleSheet(f"""
+            QWidget {{
+                background-color: {bg_color};
+                border: 1px solid {border_color};
                 border-radius: 12px;
-            }
-            QWidget:hover {
-                background-color: #E7EBEF;
-            }
+            }}
+            QWidget:hover {{
+                background-color: {hover_color};
+            }}
         """)
         h_layout = QHBoxLayout(badge)
         h_layout.setContentsMargins(8, 2, 4, 2)
@@ -214,7 +239,8 @@ class TagCard(CardWidget):
         font.setPointSize(10)
         lbl.setFont(font)
         # 关联对象文案保持“默认颜色”，避免与标签类型（蓝/紫）抢色冲突
-        lbl.setStyleSheet("color: inherit; border: none; background: transparent;")
+        text_color = "white" if is_dark else "black"
+        lbl.setStyleSheet(f"color: {text_color}; border: none; background: transparent;")
         h_layout.addWidget(lbl)
         
         # 移除按钮
@@ -438,11 +464,14 @@ class AccountTagPage(BasePage):
                 grp_svc = AccountGroupService(event_bus=bus)
                 
                 import inspect
+                from typing import cast
                 accounts_ret = acc_mgr.get_accounts()
                 if inspect.iscoroutine(accounts_ret):
-                    accounts = await accounts_ret
+                    accounts_raw = await accounts_ret
                 else:
-                    accounts = accounts_ret
+                    accounts_raw = accounts_ret
+                
+                accounts = cast(List[Dict[str, Any]], accounts_raw)
                     
                 groups = await grp_svc.get_groups(self.user_id)
                 

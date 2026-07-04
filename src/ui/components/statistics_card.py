@@ -80,6 +80,9 @@ class StatisticsCard(CardWidget):
 
         self._init_ui(title, value, desc)
         self._apply_theme()
+        
+        from qfluentwidgets import qconfig
+        qconfig.themeChanged.connect(self._apply_theme)
 
     @property
     def is_value_loading(self) -> bool:

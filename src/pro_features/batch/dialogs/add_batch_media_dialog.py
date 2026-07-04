@@ -201,14 +201,9 @@ class LibraryMediaSelectDialog(AppMessageBoxBase):
             self.list_widget.SelectionMode.NoSelection  # type: ignore
         )
         self.list_widget.setSpacing(2)
-        self.list_widget.setStyleSheet(
-            "QListWidget{border:1px solid rgba(0,0,0,0.08); border-radius:6px;"
-            " background: rgba(255,255,255,0.5);} QListWidget::item{height:44px;}"
-        )
         self.viewLayout.addWidget(self.list_widget)
 
         hint = BodyLabel("", self)
-        hint.setStyleSheet("color:#666; font-size:12px;")
         self._hint_label = hint
         self.viewLayout.addWidget(self._hint_label)
 
@@ -221,6 +216,24 @@ class LibraryMediaSelectDialog(AppMessageBoxBase):
         self._reorder_buttons()
 
         self._render()
+
+        self._apply_theme()
+        from qfluentwidgets import qconfig
+        try:
+            qconfig.themeChanged.connect(self._apply_theme)
+        except Exception:
+            pass
+
+    def _apply_theme(self):
+        from qfluentwidgets import isDarkTheme
+        dark = isDarkTheme()
+        bg_list = "rgba(0,0,0,0.2)" if dark else "rgba(255,255,255,0.5)"
+        border = "rgba(255,255,255,0.1)" if dark else "rgba(0,0,0,0.08)"
+        self.list_widget.setStyleSheet(f"QListWidget{{border:1px solid {border}; border-radius:6px; background: {bg_list};}} QListWidget::item{{height:44px;}}")
+        
+        hint_color = "#AAAAAA" if dark else "#666666"
+        if hasattr(self, '_hint_label'):
+            self._hint_label.setStyleSheet(f"color:{hint_color}; font-size:12px;")
 
     def _reorder_buttons(self) -> None:
         button_layout = getattr(self, "buttonLayout", None)

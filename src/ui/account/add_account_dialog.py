@@ -262,20 +262,34 @@ class PlatformCard(QPushButton):
             pass
         
         # 设置样式 - 更加美观的卡片样式
+        self._apply_theme()
+        from qfluentwidgets import qconfig
+        try:
+            qconfig.themeChanged.connect(self._apply_theme)
+        except Exception:
+            pass
+
+    def _apply_theme(self):
+        from qfluentwidgets import isDarkTheme
+        dark = isDarkTheme()
+        bg = "#2D2D2D" if dark else "#FFFFFF"
+        border_c = "rgba(255,255,255,0.08)" if dark else "#EDEDED"
+        hover_bg = "rgba(255,255,255,0.06)" if dark else "#FAFAFA"
+        pressed_bg = "rgba(255,255,255,0.04)" if dark else "#F5F5F5"
         self.setStyleSheet(f"""
             QPushButton {{
-                border: 1px solid #EDEDED;
+                border: 1px solid {border_c};
                 border-radius: 10px;
-                background-color: #FFFFFF;
+                background-color: {bg};
                 text-align: center;
                 padding: 10px;
             }}
             QPushButton:hover {{
                 border: 1px solid {self.config.get("color", "#0078D4")};
-                background-color: #FAFAFA;
+                background-color: {hover_bg};
             }}
             QPushButton:pressed {{
-                background-color: #F5F5F5;
+                background-color: {pressed_bg};
                 border: 1px solid {self.config.get("color", "#0078D4")};
             }}
         """)
@@ -308,23 +322,41 @@ class PlatformSelectMessageBox(AppMessageBoxBase):  # type: ignore
         self.widget.setContentsMargins(0, 0, 0, 0)
         
         # 统一底部背景颜色
-        self.buttonGroup.setStyleSheet("background-color: transparent; border-top: 1px solid #EDEDED;")
-        self.cancelButton.setStyleSheet("""
-            QPushButton {
-                border: 1px solid #EDEDED;
+        self._apply_theme()
+        from qfluentwidgets import qconfig
+        try:
+            qconfig.themeChanged.connect(self._apply_theme)
+        except Exception:
+            pass
+
+    def _apply_theme(self):
+        from qfluentwidgets import isDarkTheme
+        dark = isDarkTheme()
+        border = "rgba(255,255,255,0.08)" if dark else "#EDEDED"
+        bg = "rgba(255,255,255,0.05)" if dark else "#FFFFFF"
+        text_c = "#E0E0E0" if dark else "#333333"
+        hover_bg = "rgba(255,255,255,0.08)" if dark else "#F5F5F5"
+        pressed_bg = "rgba(255,255,255,0.03)" if dark else "#EEEEEE"
+        
+        self.cancelButton.setStyleSheet(f"""
+            QPushButton {{
+                border: 1px solid {border};
                 border-radius: 5px;
-                background-color: #FFFFFF;
+                background-color: {bg};
                 padding: 6px 12px;
                 font-size: 14px;
-                color: #333333;
-            }
-            QPushButton:hover {
-                background-color: #F5F5F5;
-            }
-            QPushButton:pressed {
-                background-color: #EEEEEE;
-            }
+                color: {text_c};
+            }}
+            QPushButton:hover {{
+                background-color: {hover_bg};
+            }}
+            QPushButton:pressed {{
+                background-color: {pressed_bg};
+            }}
         """)
+        
+        btn_grp_border = "rgba(255,255,255,0.08)" if dark else "#EDEDED"
+        self.buttonGroup.setStyleSheet(f"background-color: transparent; border-top: 1px solid {{btn_grp_border}};")
 
         
     def keyPressEvent(self, event):
@@ -434,11 +466,7 @@ class AccountNameMessageBox(AppMessageBoxBase):  # type: ignore
         self.cancelButton.clicked.disconnect()
         self.cancelButton.clicked.connect(self.reject)
 
-        # 统一底部背景颜色
-        self.buttonGroup.setStyleSheet("background-color: transparent; border-top: 1px solid #EDEDED;")
-        
         # 调整按钮顺序：上一步(cancel)在左，确定(yes)在右
-        # 获取 buttonGroup 的布局（通常是 QHBoxLayout）
         button_layout = self.buttonGroup.layout()
         if button_layout:
              button_layout.removeWidget(self.yesButton)
@@ -446,6 +474,40 @@ class AccountNameMessageBox(AppMessageBoxBase):  # type: ignore
              button_layout.addWidget(self.cancelButton)
              button_layout.addWidget(self.yesButton)
 
+        # 统一底部背景颜色
+        self._apply_theme()
+        from qfluentwidgets import qconfig
+        try:
+            qconfig.themeChanged.connect(self._apply_theme)
+        except Exception:
+            pass
+
+    def _apply_theme(self):
+        from qfluentwidgets import isDarkTheme
+        dark = isDarkTheme()
+        border = "rgba(255,255,255,0.08)" if dark else "#EDEDED"
+        bg = "rgba(255,255,255,0.05)" if dark else "#FFFFFF"
+        text_c = "#E0E0E0" if dark else "#333333"
+        hover_bg = "rgba(255,255,255,0.08)" if dark else "#F5F5F5"
+        pressed_bg = "rgba(255,255,255,0.03)" if dark else "#EEEEEE"
+        
+        self.cancelButton.setStyleSheet(f"""
+            QPushButton {{
+                border: 1px solid {border};
+                border-radius: 5px;
+                background-color: {bg};
+                padding: 6px 12px;
+                font-size: 14px;
+                color: {text_c};
+            }}
+            QPushButton:hover {{
+                background-color: {hover_bg};
+            }}
+            QPushButton:pressed {{
+                background-color: {pressed_bg};
+            }}
+        """)
+        
         self.yesButton.setStyleSheet("""
             QPushButton {
                 border-radius: 5px;
@@ -453,22 +515,9 @@ class AccountNameMessageBox(AppMessageBoxBase):  # type: ignore
                 font-size: 14px;
             }
         """)
-        self.cancelButton.setStyleSheet("""
-            QPushButton {
-                border: 1px solid #EDEDED;
-                border-radius: 5px;
-                background-color: #FFFFFF;
-                padding: 6px 12px;
-                font-size: 14px;
-                color: #333333;
-            }
-            QPushButton:hover {
-                background-color: #F5F5F5;
-            }
-            QPushButton:pressed {
-                background-color: #EEEEEE;
-            }
-        """)
+        
+        btn_grp_border = "rgba(255,255,255,0.08)" if dark else "#EDEDED"
+        self.buttonGroup.setStyleSheet(f"background-color: transparent; border-top: 1px solid {{btn_grp_border}};")
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:

@@ -17,6 +17,7 @@ from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
     isDarkTheme,
+    qconfig,
 )
 
 
@@ -73,6 +74,7 @@ class QuickActionCard(CardWidget):
         self.setGraphicsEffect(self._shadow)
 
         self._apply_theme()
+        qconfig.themeChanged.connect(self._apply_theme)
 
     def _apply_theme(self) -> None:
         dark = isDarkTheme()

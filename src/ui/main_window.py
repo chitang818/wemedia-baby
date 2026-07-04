@@ -578,9 +578,11 @@ class MainWindow(FluentWindow):
                 result.notes or "",
             ):
                 QDesktopServices.openUrl(QUrl(result.download_url))
+            self._force_quit = True
             QApplication.quit()
         except Exception as e:
             logger.warning("显示强制更新对话框失败: %s", e)
+            self._force_quit = True
             QApplication.quit()
     
     def _navigation_expand_width(self) -> int:
