@@ -20,10 +20,8 @@ from src.infrastructure.common.copywriting_work_id import (
 logger = logging.getLogger(__name__)
 
 
-# 必须存在的列
-REQUIRED_HEADERS = ["作品编号", "作品描述"]
-# 可选列（新模板）
-OPTIONAL_HEADERS = ["作品标题", "作品简介", "话题", "文案内容"]
+# 严格模式要求的 4 列
+EXACT_HEADERS = {"作品编号", "作品标题", "作品描述", "作品文案"}
 
 
 @dataclass
@@ -58,25 +56,28 @@ def parse_excel(path: str, strict: bool = True) -> Dict[str, Any]:
     errors: List[str] = []
     total = 0
     success = 0
+    total_sheets = 0
+    valid_sheets = 0
     
     valid_sheet_found = False
     
     required_headers = REQUIRED_HEADERS if strict else ["作品描述"]
 
     for sheet in wb.worksheets:
+        total_sheets += 1
+        sheet_has_items = False
         headers = []
         for i, row in enumerate(sheet.iter_rows(values_only=True), start=1):
             if i == 1:
-                headers = [str(c or "").strip() for c in row]
-                # 兼容“作品简介”作为“作品描述”的替代
-                check_headers = headers.copy()
-                if "作品简介" in check_headers and "作品描述" not in check_headers:
-                    check_headers.append("作品描述")
-                    
-                missing = [h for h in required_headers if h not in check_headers]
-                if missing:
-                    errors.append(f"Sheet「{sheet.title}」表头缺失或不匹配，已跳过该工作表。")
-                    break
+                headers = [str(c or "").strip() for c in row if str(c or "").strip()]
+                
+                if not EXACT_HEADERS.issubset(set(headers)):
+                    missing = EXACT_HEADERS - set(headers)
+                    err_msg = f"导入失败！工作表「{sheet.title}」表头缺失。\n"
+                    err_msg += f"缺少必需列: {', '.join(missing)}。\n"
+                    err_msg += "请确保表格必须包含【作品编号】、【作品标题】、【作品描述】、【作品文案】这4列（可包含其他无关备注列）。"
+                    raise ValueError(err_msg)
+                
                 valid_sheet_found = True
                 continue
 
@@ -86,12 +87,12 @@ def parse_excel(path: str, strict: bool = True) -> Dict[str, Any]:
             # 构造列名 -> 值的映射
             row_map = {headers[idx]: (cell if cell is not None else "") for idx, cell in enumerate(row) if idx < len(headers)}
 
-            # 获取各字段值，兼容作品简介和作品描述
+            # 获取各字段值，严格对应4列
             work_id = str(row_map.get("作品编号") or "").strip()
             short_title = str(row_map.get("作品标题") or "").strip()
-            description = str(row_map.get("作品描述") or row_map.get("作品简介") or "").strip()
-            topics = str(row_map.get("话题") or "").strip()
-            content = str(row_map.get("文案内容") or "").strip()
+            description = str(row_map.get("作品描述") or "").strip()
+            content = str(row_map.get("作品文案") or "").strip()
+            topics = ""
 
             total += 1
 
@@ -125,9 +126,13 @@ def parse_excel(path: str, strict: bool = True) -> Dict[str, Any]:
             }
             items.append(dto)
             success += 1
+            sheet_has_items = True
+
+        if sheet_has_items:
+            valid_sheets += 1
 
     if not valid_sheet_found:
-        raise ValueError(f"Excel 中未找到符合文案库模板表头的工作表，必须包含列：{', '.join(required_headers)}。")
+        raise ValueError("Excel 中未找到任何包含有效表头的工作表。")
 
     failed = total - success
     return {
@@ -136,4 +141,6 @@ def parse_excel(path: str, strict: bool = True) -> Dict[str, Any]:
         "success": success,
         "failed": failed,
         "errors": errors,
+        "total_sheets": total_sheets,
+        "valid_sheets": valid_sheets,
     }

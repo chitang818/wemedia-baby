@@ -1,0 +1,5 @@
+{
+  "_comment": "飞书应用配置示例 - 复制为 feishu_config.json 后填入实际值",
+  "app_id": "cli_xxxxxxxxxxxxxx",
+  "app_secret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+}

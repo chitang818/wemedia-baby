@@ -109,13 +109,23 @@ class RandomCopywritingRepository:
         return deleted or 0
 
     @staticmethod
+    async def clear_all() -> int:
+        """清空随机文案库（分类及文案）。"""
+        items_deleted = await RandomCopywritingItem.all().delete()
+        cats_deleted = await RandomCopywritingCategory.all().delete()
+        return (items_deleted or 0) + (cats_deleted or 0)
+
+    @staticmethod
     @retry_on_locked()
     async def bulk_import(
-        category_id: int,
         items: List[Dict[str, Any]],
         overwrite_by_work_id: bool = True,
+        clear_first: bool = False,
     ) -> Dict[str, Any]:
-        """批量导入随机文案库。"""
+        """批量导入随机文案库（支持多分类自动创建）。"""
+        if clear_first:
+            await RandomCopywritingRepository.clear_all()
+
         total = len(items)
         success = 0
         errors: List[str] = []
@@ -123,9 +133,20 @@ class RandomCopywritingRepository:
         if not items:
             return {"total": 0, "success": 0, "failed": 0, "errors": []}
 
+        # 缓存分类名到 category_id 的映射
+        cat_records = await RandomCopywritingCategory.all()
+        cat_map = {c.name: c.id for c in cat_records}
+
         async with in_transaction("default"):
             for idx, data in enumerate(items, start=1):
                 try:
+                    cat_name = data.get("category") or "默认分类"
+                    if cat_name not in cat_map:
+                        new_cat = await RandomCopywritingCategory.create(name=cat_name)
+                        cat_map[cat_name] = new_cat.id
+                    
+                    category_id = cat_map[cat_name]
+
                     work_id = (data.get("work_id") or "").strip()
                     if overwrite_by_work_id and work_id:
                         # 如果提供了 work_id 且开启了覆盖模式，尝试查找并更新
@@ -204,6 +225,38 @@ class RandomCopywritingRepository:
             cat_ids = await RandomCopywritingCategory.all().values_list('id', flat=True)
             query = query.filter(category_id__in=cat_ids)
         return await query.count()
+
+    # ---------- 兼容工具（供 UI 使用） ----------
+
+    @staticmethod
+    async def get_all_categories() -> List[str]:
+        """获取所有分类的名称列表，与 CopywritingRepository 兼容。"""
+        cats = await RandomCopywritingRepository.list_categories()
+        return [c["name"] for c in cats]
+
+    @staticmethod
+    async def list_items(
+        category: Optional[str] = None,
+        paginate: bool = False,
+        page: int = 1,
+        page_size: int = 20
+    ) -> List[Dict[str, Any]]:
+        """与 CopywritingRepository 兼容的通用查询方法。"""
+        from src.infrastructure.storage.orm_models.random_copywriting import RandomCopywritingCategory
+        query = RandomCopywritingItem.all().order_by("id")
+        
+        if category and category != "全部":
+            cat_obj = await RandomCopywritingCategory.get_or_none(name=category)
+            if cat_obj:
+                query = query.filter(category_id=cat_obj.id)
+            else:
+                return []
+                
+        if paginate:
+            query = query.offset((page - 1) * page_size).limit(page_size)
+            
+        items = await query.all()
+        return [RandomCopywritingRepository._to_dict(it) for it in items]
 
     # ---------- 内部工具 ----------
 
