@@ -22,7 +22,7 @@ class FeishuCopywritingSyncConfig:
     spreadsheet_name: str = ""
     sheet_id: str = ""
     sheet_name: str = ""
-    field_mapping: Dict[str, str] = None  # 飞书列名 -> 文案库字段名
+    field_mapping: Optional[Dict[str, str]] = None  # 飞书列名 -> 文案库字段名
     last_sync_time: str = ""  # ISO 格式时间
     auto_sync_on_startup: bool = False
 
@@ -102,7 +102,7 @@ class FeishuConfig:
         return cfg
 
     @classmethod
-    def get_sync_config(cls) -> FeishuCopywritingSyncConfig:
+    def get_sync_config(cls, config_key: str = "feishu_copywriting") -> FeishuCopywritingSyncConfig:
         """从 app_config 读取文案库同步配置"""
         try:
             from src.infrastructure.common.config.config_center import (
@@ -112,7 +112,7 @@ class FeishuConfig:
             center = get_registered_config_center()
             if center:
                 app_cfg = center.get_app_config()
-                feishu_cfg = app_cfg.get("feishu_copywriting")
+                feishu_cfg = app_cfg.get(config_key)
                 return FeishuCopywritingSyncConfig.from_dict(feishu_cfg)
         except Exception as e:
             logger.debug("读取飞书同步配置失败: %s", e)
@@ -120,7 +120,7 @@ class FeishuConfig:
         return FeishuCopywritingSyncConfig()
 
     @classmethod
-    async def save_sync_config(cls, config: FeishuCopywritingSyncConfig) -> bool:
+    async def save_sync_config(cls, config: FeishuCopywritingSyncConfig, config_key: str = "feishu_copywriting") -> bool:
         """保存文案库同步配置到 app_config"""
         try:
             from src.infrastructure.common.config.config_center import (
@@ -134,7 +134,7 @@ class FeishuConfig:
 
             app_cfg = center.get_app_config()
             new_cfg = copy.deepcopy(app_cfg)
-            new_cfg["feishu_copywriting"] = config.to_dict()
+            new_cfg[config_key] = config.to_dict()
             await center.update("app_config", new_cfg)
             return True
         except Exception as e:

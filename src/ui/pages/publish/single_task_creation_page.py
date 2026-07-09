@@ -937,6 +937,20 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
             cw_l.addWidget(self._copywriting_auto_switch, 0, Qt.AlignmentFlag.AlignVCenter)
             cw_l.addWidget(self._copywriting_mode_combo, 0, Qt.AlignmentFlag.AlignVCenter)
             cw_l.addWidget(self._copywriting_category_combo, 0, Qt.AlignmentFlag.AlignVCenter)
+            
+            from qfluentwidgets import IconWidget, FluentIcon
+            self._copywriting_category_help_icon = IconWidget(FluentIcon.HELP, card)
+            self._copywriting_category_help_icon.setFixedSize(16, 16)
+            self._copywriting_category_help_icon.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._copywriting_category_help_icon.setStyleSheet("color: #888888;")
+            apply_instructional_tooltip(
+                "这里的分类对应您在随机文案库导入的 Excel Sheet。系统将从选中的 Sheet 中随机抽取一条文案。\n\n提示：随机文案可以让不同作品拿到不同文案，降低风控概率。",
+                self._copywriting_category_help_icon,
+                position=ToolTipPosition.TOP
+            )
+            self._copywriting_category_help_icon.setVisible(False)
+            cw_l.addWidget(self._copywriting_category_help_icon, 0, Qt.AlignmentFlag.AlignVCenter)
+            
             cw_l.addStretch(1)
             layout.addWidget(cw_wrap)
 
@@ -1778,6 +1792,8 @@ class SingleTaskCreationPage(TrackedTaskMixin, BasePage):
         # 用 _get_current_copywriting_mode() 读取模式，避免此问题
         mode = self._get_current_copywriting_mode()
         self._copywriting_category_combo.setVisible(checked and mode == CopywritingMatchMode.RANDOM_CATEGORY)
+        if hasattr(self, "_copywriting_category_help_icon"):
+            self._copywriting_category_help_icon.setVisible(checked and mode == CopywritingMatchMode.RANDOM_CATEGORY)
 
     @asyncSlot()
     async def _refresh_copywriting_categories_async(self):

@@ -47,7 +47,6 @@ from src.ui.components.rubber_band_row_table import RubberBandRowSelectTable
 from src.infrastructure.storage.repositories.random_copywriting_repository import (
     RandomCopywritingRepository,
 )
-from src.ui.pages.material.copywriting_edit_dialog import CopywritingEditDialog
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +83,6 @@ class RandomCopywritingPage(TrackedTaskMixin, BasePage):
         toolbar_layout.setContentsMargins(16, 12, 16, 12)
         toolbar_layout.setSpacing(12)
 
-        self.btn_edit = PushButton("编辑选中", toolbar_card)
-        self.btn_edit.clicked.connect(self._on_edit_clicked)
-
-        self.btn_delete = PushButton("删除选中", toolbar_card)
-        self.btn_delete.clicked.connect(self._on_delete_clicked)
-
         self.btn_reload = PushButton("刷新列表", toolbar_card)
         self.btn_reload.clicked.connect(self._on_reload_clicked)
 
@@ -110,8 +103,6 @@ class RandomCopywritingPage(TrackedTaskMixin, BasePage):
         self.btn_unbind = PushButton("解除绑定", toolbar_card, FluentIcon.CLOSE)
         self.btn_unbind.clicked.connect(self._on_unbind_clicked)
 
-        toolbar_layout.addWidget(self.btn_edit)
-        toolbar_layout.addWidget(self.btn_delete)
         toolbar_layout.addWidget(self.btn_reload)
         toolbar_layout.addWidget(self.btn_bind_source)
         toolbar_layout.addWidget(self.btn_sync_active)
@@ -127,6 +118,20 @@ class RandomCopywritingPage(TrackedTaskMixin, BasePage):
         self.lbl_sync_path.mousePressEvent = _on_lbl_click
 
         toolbar_layout.addWidget(self.lbl_sync_path)
+        
+        # 帮助说明按钮，放置在工具栏最右侧
+        self.btn_help = PushButton("使用说明", toolbar_card, FluentIcon.HELP)
+        def _show_help():
+            from src.ui.utils.fluent_dialogs import show_info
+            msg = (
+                "随机文案是一个语料抽奖池。Excel 中的每一个 Sheet 代表一个“话题分类”。\n\n"
+                "在批量发布时，您可以指定一个话题分类，系统会为每个视频从中随机抽取一条文案，让您的发布内容更加丰富多样，降低平台风控风险！\n\n"
+                "更详细的说明，您可以在【关联数据源 -> 导入本地 Excel】弹窗中下载说明模板查看。"
+            )
+            show_info(self, "什么是随机文案？", msg)
+        self.btn_help.clicked.connect(_show_help)
+        toolbar_layout.addWidget(self.btn_help)
+        
         self._update_sync_path_label()
 
         # 表格和标签主容器（统一卡片背景）
@@ -271,7 +276,6 @@ class RandomCopywritingPage(TrackedTaskMixin, BasePage):
         table.setColumnCount(len(_HEADERS))
         table.setHorizontalHeaderLabels(_HEADERS)
         table.verticalHeader().setVisible(False)
-        table.doubleClicked.connect(lambda idx, t=table: self._on_table_double_clicked(idx, t))
 
         header = table.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
@@ -428,147 +432,26 @@ class RandomCopywritingPage(TrackedTaskMixin, BasePage):
 
 
 
-    # ---------- 编辑 ----------
-
-    def _on_edit_clicked(self):
-        item = self._get_single_selected_item()
-        if item is None:
-            InfoBar.info(
-                title="提示",
-                content="请先在当前列表中选择一条文案记录再点击编辑。",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                duration=3000,
-                position=InfoBarPosition.TOP,
-                parent=self,
-            )
-            return
-        self._open_edit_dialog(item)
-
-    def _on_table_double_clicked(self, index, table: RubberBandRowSelectTable):
-        if not index.isValid():
-            return
-        no_cell = table.item(index.row(), _COL_NO)
-        if no_cell:
-            data = no_cell.data(Qt.ItemDataRole.UserRole)
-            if isinstance(data, dict):
-                self._open_edit_dialog(data)
-
-    def _open_edit_dialog(self, item: Dict[str, Any]):
-        dialog = CopywritingEditDialog(self, item_data=item)
-        if not dialog.exec():
-            return
-        data = dialog.get_form_data()
-        data["id"] = item.get("id")
-        data["category"] = item.get("category") or self._get_active_category()
-        self._create_tracked_task(
-            self._save_copywriting(data, is_edit=True),
-            name="copywriting_library.save_edit",
-        )
-
-    # ---------- 保存（新建/编辑共用）----------
-
-    async def _save_copywriting(self, data: Dict[str, Any], is_edit: bool):
-        try:
-            result = await RandomCopywritingRepository.create_or_update_item(
-                category_id=data.get("category_id") or 0, 
-                data=data
-            )
-            action = "已更新" if is_edit else "已创建"
-            InfoBar.success(
-                title=action,
-                content=f"{action}文案，内容开头：{data.get('content', '')[:10]}...",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                duration=4000,
-                position=InfoBarPosition.TOP,
-                parent=self,
-            )
-            await self._reload_all()
-        except Exception as e:
-            logger.error("保存文案失败: %s", e, exc_info=True)
-            InfoBar.error(
-                title="错误",
-                content=f"保存文案时发生异常：{e}",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                duration=5000,
-                position=InfoBarPosition.TOP,
-                parent=self,
-            )
-
-    # ---------- 删除 ----------
-
-    def _on_delete_clicked(self):
-        selected = self._get_selected_items()
-        if not selected:
-            InfoBar.info(
-                title="提示",
-                content="请先选择要删除的文案记录。",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                duration=3000,
-                position=InfoBarPosition.TOP,
-                parent=self,
-            )
-            return
-
-        ids = [int(it["id"]) for it in selected if it.get("id")]
-        if not ids:
-            return
-
-        from src.ui.utils.fluent_dialogs import show_confirm
-        if not show_confirm(self, "确认删除", f"确定要删除选中的 {len(ids)} 条文案记录吗？此操作不可撤销。"):
-            return
-
-        self._create_tracked_task(self._delete_items(ids), name="copywriting_library.delete")
-
-    async def _delete_items(self, ids: List[int]):
-        try:
-            deleted = await RandomCopywritingRepository.delete_items(ids)
-            if deleted > 0:
-                InfoBar.success(
-                    title="已删除",
-                    content=f"成功删除 {deleted} 条文案记录。",
-                    orient=Qt.Orientation.Horizontal,
-                    isClosable=True,
-                    duration=4000,
-                    position=InfoBarPosition.TOP,
-                    parent=self,
-                )
-                await self._reload_all()
-            else:
-                InfoBar.info(
-                    title="提示",
-                    content="未删除任何记录，请稍后重试。",
-                    orient=Qt.Orientation.Horizontal,
-                    isClosable=True,
-                    duration=4000,
-                    position=InfoBarPosition.TOP,
-                    parent=self,
-                )
-        except Exception as e:
-            logger.error("删除文案记录失败: %s", e, exc_info=True)
-            InfoBar.error(
-                title="错误",
-                content=f"删除文案记录时发生异常：{e}",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                duration=5000,
-                position=InfoBarPosition.TOP,
-                parent=self,
-            )
-
     # ---------- Excel 导入 ----------
 
     def _export_template_excel(self, save_path: str) -> bool:
         try:
             import openpyxl
             wb = openpyxl.Workbook()
-            ws = wb.active
-            assert ws is not None
-            ws.title = "随机文案库模板"
-            headers = ["作品编号", "作品标题", "作品描述", "文案内容"]
+            ws_readme = wb.active
+            assert ws_readme is not None
+            ws_readme.title = "【请先看我】使用说明"
+            ws_readme.append(["随机文案库 - 使用说明"])
+            ws_readme.append([""])
+            ws_readme.append(["1. 什么是随机文案？"])
+            ws_readme.append(["随机文案是一个语料抽奖池。在批量发布时，您可以指定一个话题分类，系统会为每个视频从中随机抽取一条文案。"])
+            ws_readme.append([""])
+            ws_readme.append(["2. 多个 Sheet 的作用是什么？"])
+            ws_readme.append(["您可以创建多个 Sheet（例如按行业、按产品分类）。系统会自动将它们识别为不同的随机分类，在批量发布时，您可以选择某一个 Sheet 作为随机抽取的语料库。"])
+            ws_readme.column_dimensions['A'].width = 120
+
+            ws = wb.create_sheet("随机文案库模板")
+            headers = ["作品编号", "作品标题", "作品描述", "作品文案"]
             ws.append(headers)
             example1 = [
                 "A0001", "示例短标题A", "这是一个关于自媒体自动发布工具的介绍视频 #自媒体运营 #WeMediaBaby",
@@ -805,7 +688,7 @@ class RandomCopywritingPage(TrackedTaskMixin, BasePage):
     def _get_feishu_sync_config(self):
         try:
             from src.proprietary.services.feishu.feishu_config import FeishuConfig
-            return FeishuConfig.get_sync_config()
+            return FeishuConfig.get_sync_config("feishu_random_copywriting")
         except Exception:
             return None
 
@@ -929,7 +812,7 @@ class RandomCopywritingPage(TrackedTaskMixin, BasePage):
                     last_sync_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     auto_sync_on_startup=False,
                 )
-                await FeishuConfig.save_sync_config(cfg)
+                await FeishuConfig.save_sync_config(cfg, "feishu_random_copywriting")
                 QSettings("WeMediaBaby", "媒小宝").setValue("app/random_copywriting_active_source", "feishu")
                 self._update_sync_path_label()
 
@@ -987,7 +870,7 @@ class RandomCopywritingPage(TrackedTaskMixin, BasePage):
 
             if sync_result.success:
                 feishu_cfg.last_sync_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                await FeishuConfig.save_sync_config(feishu_cfg)
+                await FeishuConfig.save_sync_config(feishu_cfg, "feishu_random_copywriting")
                 self._update_sync_path_label()
 
                 # 如果存在跳过或失败，升级为模态弹窗，强制让用户确认详情

@@ -765,6 +765,20 @@ class PublishDescriptionDialog(AppMessageBoxBase):
         self.random_category_combo.setVisible(False)
         _mr.addWidget(self.random_category_combo)
 
+        from qfluentwidgets import IconWidget as _IconWidget, FluentIcon as _FluentIcon
+        from src.ui.utils.fluent_tooltips import ToolTipPosition as _ToolTipPosition
+        self.random_category_help_icon = _IconWidget(_FluentIcon.HELP, mode_row)
+        self.random_category_help_icon.setFixedSize(16, 16)
+        self.random_category_help_icon.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.random_category_help_icon.setStyleSheet("color: #888888;")
+        apply_instructional_tooltip(
+            "这里的分类对应您在随机文案库导入的 Excel Sheet。系统将从选中的 Sheet 中随机抽取一条文案。\n\n提示：随机文案可以让不同账号/作品拿到不同文案，降低风控概率。",
+            self.random_category_help_icon,
+            position=_ToolTipPosition.TOP
+        )
+        self.random_category_help_icon.setVisible(False)
+        _mr.addWidget(self.random_category_help_icon)
+
         _mr.addStretch(1)
         lay_auto.addWidget(mode_row)
 
@@ -1105,6 +1119,8 @@ class PublishDescriptionDialog(AppMessageBoxBase):
         # 指定分类下拉：可见性看模式（仅指定分类模式才出现），可用性看开关
         self.random_category_combo.setVisible(mode == CopywritingMatchMode.RANDOM_CATEGORY)
         self.random_category_combo.setEnabled(auto_enabled)
+        if hasattr(self, "random_category_help_icon"):
+            self.random_category_help_icon.setVisible(mode == CopywritingMatchMode.RANDOM_CATEGORY)
         # 应用字段始终可见，关闭自动匹配时整体禁用
         self.standard_options_widget.setVisible(True)
         self.standard_options_widget.setEnabled(auto_enabled)

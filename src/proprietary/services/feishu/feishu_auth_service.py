@@ -529,7 +529,7 @@ class FeishuAuthService:
                     "code": code,
                 },
                 headers={
-                    "Authorization": f"Bearer {self._get_app_access_token()}",
+                    "Authorization": f"Bearer {await self._get_app_access_token()}",
                     "Content-Type": "application/json; charset=utf-8",
                 },
             ) as resp:
@@ -567,7 +567,7 @@ class FeishuAuthService:
                     "refresh_token": self._refresh_token,
                 },
                 headers={
-                    "Authorization": f"Bearer {self._get_app_access_token()}",
+                    "Authorization": f"Bearer {await self._get_app_access_token()}",
                     "Content-Type": "application/json; charset=utf-8",
                 },
             ) as resp:
@@ -587,25 +587,26 @@ class FeishuAuthService:
             logger.error("刷新 Token 异常: %s", e, exc_info=True)
             return False
 
-    def _get_app_access_token(self) -> str:
+    async def _get_app_access_token(self) -> str:
         """获取 app_access_token（用于换取 user_access_token）
 
         注意：此处为简化实现，实际生产环境应缓存 app_access_token 并自动续期。
         此处为 MVP 版本，每次调用都重新获取。
         """
-        import requests
         try:
-            resp = requests.post(
+            session = self._get_http_session()
+            async with session.post(
                 f"{FEISHU_OPEN_API_BASE}/auth/v3/app_access_token/internal",
                 json={
                     "app_id": self._app_id,
                     "app_secret": self._app_secret,
-                },
-                timeout=10,
-            )
-            data = resp.json()
-            if data.get("code") == 0:
-                return data.get("app_access_token", "")
+                }
+            ) as resp:
+                data = await resp.json()
+                if data.get("code") == 0:
+                    return data.get("app_access_token", "")
+                else:
+                    logger.error("获取 app_access_token 失败，返回数据: %s", data)
         except Exception as e:
             logger.error("获取 app_access_token 失败: %s", e)
         return ""

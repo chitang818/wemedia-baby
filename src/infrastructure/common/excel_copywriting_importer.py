@@ -61,9 +61,10 @@ def parse_excel(path: str, strict: bool = True) -> Dict[str, Any]:
     
     valid_sheet_found = False
     
-    required_headers = REQUIRED_HEADERS if strict else ["作品描述"]
-
     for sheet in wb.worksheets:
+        if "使用说明" in sheet.title:
+            continue
+            
         total_sheets += 1
         sheet_has_items = False
         headers = []
@@ -73,10 +74,8 @@ def parse_excel(path: str, strict: bool = True) -> Dict[str, Any]:
                 
                 if not EXACT_HEADERS.issubset(set(headers)):
                     missing = EXACT_HEADERS - set(headers)
-                    err_msg = f"导入失败！工作表「{sheet.title}」表头缺失。\n"
-                    err_msg += f"缺少必需列: {', '.join(missing)}。\n"
-                    err_msg += "请确保表格必须包含【作品编号】、【作品标题】、【作品描述】、【作品文案】这4列（可包含其他无关备注列）。"
-                    raise ValueError(err_msg)
+                    errors.append(f"工作表「{sheet.title}」被跳过：缺少必需列 {', '.join(missing)}")
+                    break  # 跳过当前工作表
                 
                 valid_sheet_found = True
                 continue

@@ -47,7 +47,6 @@ from src.ui.components.rubber_band_row_table import RubberBandRowSelectTable
 from src.infrastructure.storage.repositories.copywriting_repository import (
     CopywritingRepository,
 )
-from src.ui.pages.material.copywriting_edit_dialog import CopywritingEditDialog
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +83,6 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
         toolbar_layout.setContentsMargins(16, 12, 16, 12)
         toolbar_layout.setSpacing(12)
 
-        self.btn_edit = PushButton("编辑选中", toolbar_card)
-        self.btn_edit.clicked.connect(self._on_edit_clicked)
-
-        self.btn_delete = PushButton("删除选中", toolbar_card)
-        self.btn_delete.clicked.connect(self._on_delete_clicked)
-
         self.btn_reload = PushButton("刷新列表", toolbar_card)
         self.btn_reload.clicked.connect(self._on_reload_clicked)
 
@@ -110,8 +103,6 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
         self.btn_unbind = PushButton("解除绑定", toolbar_card, FluentIcon.CLOSE)
         self.btn_unbind.clicked.connect(self._on_unbind_clicked)
 
-        toolbar_layout.addWidget(self.btn_edit)
-        toolbar_layout.addWidget(self.btn_delete)
         toolbar_layout.addWidget(self.btn_reload)
         toolbar_layout.addWidget(self.btn_bind_source)
         toolbar_layout.addWidget(self.btn_sync_active)
@@ -127,6 +118,20 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
         self.lbl_sync_path.mousePressEvent = _on_lbl_click
 
         toolbar_layout.addWidget(self.lbl_sync_path)
+        
+        # 帮助说明按钮，放置在工具栏最右侧
+        self.btn_help = PushButton("使用说明", toolbar_card, FluentIcon.HELP)
+        def _show_help():
+            from src.ui.utils.fluent_dialogs import show_info
+            msg = (
+                "标准文案用于与您的视频文件精准对应。在批量发布时，系统会根据“作品编号”为您自动匹配对应的标题和描述。\n\n"
+                "小提示：Excel 中的不同 Sheet 仅作为您个人的管理分类，不影响匹配逻辑。\n\n"
+                "更详细的说明，您可以在【关联数据源 -> 导入本地 Excel】弹窗中下载说明模板查看。"
+            )
+            show_info(self, "什么是标准文案？", msg)
+        self.btn_help.clicked.connect(_show_help)
+        toolbar_layout.addWidget(self.btn_help)
+        
         self._update_sync_path_label()
 
         # 表格和标签主容器（统一卡片背景）
@@ -271,7 +276,6 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
         table.setColumnCount(len(_HEADERS))
         table.setHorizontalHeaderLabels(_HEADERS)
         table.verticalHeader().setVisible(False)
-        table.doubleClicked.connect(lambda idx, t=table: self._on_table_double_clicked(idx, t))
 
         header = table.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
@@ -426,144 +430,26 @@ class CopywritingLibraryPage(TrackedTaskMixin, BasePage):
 
 
 
-    # ---------- 编辑 ----------
-
-    def _on_edit_clicked(self):
-        item = self._get_single_selected_item()
-        if item is None:
-            InfoBar.info(
-                title="提示",
-                content="请先在当前列表中选择一条文案记录再点击编辑。",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                duration=3000,
-                position=InfoBarPosition.TOP,
-                parent=self,
-            )
-            return
-        self._open_edit_dialog(item)
-
-    def _on_table_double_clicked(self, index, table: RubberBandRowSelectTable):
-        if not index.isValid():
-            return
-        no_cell = table.item(index.row(), _COL_NO)
-        if no_cell:
-            data = no_cell.data(Qt.ItemDataRole.UserRole)
-            if isinstance(data, dict):
-                self._open_edit_dialog(data)
-
-    def _open_edit_dialog(self, item: Dict[str, Any]):
-        dialog = CopywritingEditDialog(self, item_data=item)
-        if not dialog.exec():
-            return
-        data = dialog.get_form_data()
-        data["id"] = item.get("id")
-        data["category"] = item.get("category") or self._get_active_category()
-        self._create_tracked_task(
-            self._save_copywriting(data, is_edit=True),
-            name="copywriting_library.save_edit",
-        )
-
-    # ---------- 保存（新建/编辑共用）----------
-
-    async def _save_copywriting(self, data: Dict[str, Any], is_edit: bool):
-        try:
-            result = await CopywritingRepository.create_or_update_by_work_id(data)
-            action = "已更新" if is_edit else "已创建"
-            InfoBar.success(
-                title=action,
-                content=f"{action}文案，作品编号：{result.get('work_id')}",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                duration=4000,
-                position=InfoBarPosition.TOP,
-                parent=self,
-            )
-            await self._reload_all()
-        except Exception as e:
-            logger.error("保存文案失败: %s", e, exc_info=True)
-            InfoBar.error(
-                title="错误",
-                content=f"保存文案时发生异常：{e}",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                duration=5000,
-                position=InfoBarPosition.TOP,
-                parent=self,
-            )
-
-    # ---------- 删除 ----------
-
-    def _on_delete_clicked(self):
-        selected = self._get_selected_items()
-        if not selected:
-            InfoBar.info(
-                title="提示",
-                content="请先选择要删除的文案记录。",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                duration=3000,
-                position=InfoBarPosition.TOP,
-                parent=self,
-            )
-            return
-
-        ids = [int(it["id"]) for it in selected if it.get("id")]
-        if not ids:
-            return
-
-        from src.ui.utils.fluent_dialogs import show_confirm
-        if not show_confirm(self, "确认删除", f"确定要删除选中的 {len(ids)} 条文案记录吗？此操作不可撤销。"):
-            return
-
-        self._create_tracked_task(self._delete_items(ids), name="copywriting_library.delete")
-
-    async def _delete_items(self, ids: List[int]):
-        try:
-            deleted = await CopywritingRepository.delete_items(ids)
-            if deleted > 0:
-                InfoBar.success(
-                    title="已删除",
-                    content=f"成功删除 {deleted} 条文案记录。",
-                    orient=Qt.Orientation.Horizontal,
-                    isClosable=True,
-                    duration=4000,
-                    position=InfoBarPosition.TOP,
-                    parent=self,
-                )
-                await self._reload_all()
-            else:
-                InfoBar.info(
-                    title="提示",
-                    content="未删除任何记录，请稍后重试。",
-                    orient=Qt.Orientation.Horizontal,
-                    isClosable=True,
-                    duration=4000,
-                    position=InfoBarPosition.TOP,
-                    parent=self,
-                )
-        except Exception as e:
-            logger.error("删除文案记录失败: %s", e, exc_info=True)
-            InfoBar.error(
-                title="错误",
-                content=f"删除文案记录时发生异常：{e}",
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
-                duration=5000,
-                position=InfoBarPosition.TOP,
-                parent=self,
-            )
-
     # ---------- Excel 导入 ----------
 
     def _export_template_excel(self, save_path: str) -> bool:
         try:
             import openpyxl
             wb = openpyxl.Workbook()
-            ws = wb.active
-            assert ws is not None
-            ws.title = "标准文案库模板"
-            headers = ["作品编号", "作品标题", "作品描述", "文案内容"]
+            ws_readme = wb.active
+            assert ws_readme is not None
+            ws_readme.title = "【请先看我】使用说明"
+            ws_readme.append(["标准文案库 - 使用说明"])
+            ws_readme.append([""])
+            ws_readme.append(["1. 什么是标准文案？"])
+            ws_readme.append(["标准文案用于与您的视频文件精准对应。在批量发布时，系统会根据“作品编号”为您自动匹配对应的标题和描述。"])
+            ws_readme.append([""])
+            ws_readme.append(["2. 多个 Sheet 的作用是什么？"])
+            ws_readme.append(["您可以创建多个 Sheet（例如按项目、按阶段分类）。系统会自动将它们识别为不同的标签页，方便您管理。不同 Sheet 不影响匹配逻辑。"])
+            ws_readme.column_dimensions['A'].width = 120
+
+            ws = wb.create_sheet("标准文案库模板")
+            headers = ["作品编号", "作品标题", "作品描述", "作品文案"]
             ws.append(headers)
             example1 = [
                 "A0001", "示例短标题A", "这是一个关于自媒体自动发布工具的介绍视频 #自媒体运营 #WeMediaBaby",
